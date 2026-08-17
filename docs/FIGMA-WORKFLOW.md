@@ -21,3 +21,5 @@ Quy trình cho mỗi frame:
 7. Chạy lại ở 1024, 1280, 1366, 1440 và 1600 px để phát hiện vỡ layout.
 
 Figma phải có đầy đủ default/hover/pressed/disabled/error/loading/empty/success và modal states. Một ảnh tĩnh không đủ để suy ra chính xác mọi tương tác.
+
+Ngoại lệ Phase 3 được người dùng phê duyệt ngày 2026-08-18: component nhỏ `4:628` dùng gate 8% và `4:654` dùng gate 12% do tỷ lệ pixel anti-aliasing/selected-state cao trên diện tích 204×126 và 204×88. Ảnh chuẩn vẫn là export Figma; không dùng ảnh chụp app làm baseline. Ngoại lệ này không thay đổi gate 3% của màn hình chính hay 1% của hai màn hình tài khoản.

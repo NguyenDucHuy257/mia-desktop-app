@@ -15,6 +15,7 @@ const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
 export default function App() {
   const [active, setActive] = useState<NavigationKey>('invoices');
   const [view, setView] = useState<'navigation' | 'add-account'>('navigation');
+  const [connectionId, setConnectionId] = useState('');
 
   function navigate(value: NavigationKey) {
     setActive(value);
@@ -28,9 +29,9 @@ export default function App() {
       showTopbar={view !== 'add-account'}
     >
       {view === 'add-account' ? (
-        <AddAccountPage onBack={() => setView('navigation')} />
+        <AddAccountPage onBack={() => setView('navigation')} onConnectionCreated={setConnectionId} />
       ) : active === 'invoices' ? (
-        <InvoiceManagementPage onAddAccount={() => setView('add-account')} />
+        <InvoiceManagementPage connectionId={connectionId} onAddAccount={() => setView('add-account')} />
       ) : (
         <section className="placeholder-page" aria-label={labels[active]}>
           <h1>{labels[active]}</h1>

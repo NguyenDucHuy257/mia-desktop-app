@@ -16,6 +16,16 @@ Desktop sử dụng các endpoint sau:
 - `GET /v1/jobs/{job_id}/results/overview`;
 - `GET /v1/jobs/{job_id}/results/details`.
 
+## Phase 3 — job lifecycle
+
+`POST /v1/jobs` chỉ nhận các field của `CreateJobBody` tại commit production: `connection_id`, `date_from`, `date_to`, `directions`, `query_types`, `force_refresh`, `refresh_latest_month`, `result_scope`, `include_xml`, `include_mvt`. `detail_limit` và field lạ bị từ chối tại commit `63acf111…`. `Idempotency-Key` dài 8–256 ký tự; cùng key và cùng normalized request trả cùng `job_id`, khác request trả `409`.
+
+Main process validate lại request và response, persist `job_id`, `connection_id`, intent, idempotency key và timestamp trong `userData/jobs/active-job.json`. Renderer chỉ gọi IPC `jobs.start/resume/status/summary/cancel/clear`; header xác thực và idempotency không đi vào renderer bundle.
+
+Poll status chỉ dùng bảy field công khai: `job_id`, `status`, `stage`, `overall_percent`, `current_month`, `updated_at`, `error`. Terminal gồm `completed`, `completed_with_warning`, `failed`, `cancelled`, `abandoned`.
+
+UI cho phép bật/tắt tự do mọi checkbox, kể cả bỏ hết. Khi submit, desktop mới yêu cầu tối thiểu một `direction` và một phạm vi vì backend không nhận mảng hướng rỗng và `result_scope` là field đơn bắt buộc. Nếu có Chi tiết thì request dùng `result_scope=detail`, nếu chỉ có Tổng quan thì dùng `overview`. Checkbox Hóa đơn/HTML là lựa chọn giao diện chưa có field tương ứng trong create-job; việc tạo HTML thật thuộc Phase 5.
+
 ## Phase 2 — account-connections
 
 Renderer không gọi các endpoint tài khoản trực tiếp. Preload chỉ expose bốn command có kiểu:

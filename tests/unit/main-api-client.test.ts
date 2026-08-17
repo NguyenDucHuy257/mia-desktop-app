@@ -72,4 +72,24 @@ describe('Electron main-process MIA API client', () => {
       expect(error.message).not.toContain('super-secret');
     });
   });
+
+  it('uses the production job lifecycle routes and preserves idempotency', async () => {
+    const fetchImpl = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ job_id: 'job-1', status: 'queued' }, { status: 202 }))
+      .mockResolvedValueOnce(jsonResponse({ job_id: 'job-1', status: 'running' }))
+      .mockResolvedValueOnce(jsonResponse({ job_id: 'job-1', status: 'running', stages: [] }))
+      .mockResolvedValueOnce(jsonResponse({ job_id: 'job-1', status: 'cancelling' }));
+    const client = new MiaMainApiClient({ baseUrl: 'https://crawl.example.com', getAccessToken: () => 'main-process-token', fetchImpl });
+    await client.createJob({ connection_id: 'conn_123456' }, 'desktop-key-1');
+    await client.getJob('job-1');
+    await client.getJobSummary('job-1');
+    await client.cancelJob('job-1');
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
+      ['https://crawl.example.com/v1/jobs', 'POST'],
+      ['https://crawl.example.com/v1/jobs/job-1', 'GET'],
+      ['https://crawl.example.com/v1/jobs/job-1/summary', 'GET'],
+      ['https://crawl.example.com/v1/jobs/job-1/cancel', 'POST'],
+    ]);
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('Idempotency-Key')).toBe('desktop-key-1');
+  });
 });

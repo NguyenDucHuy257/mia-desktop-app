@@ -1,8 +1,13 @@
+import { useState } from 'react';
 import addIcon from '../../assets/figma/add.png';
 import calendarIcon from '../../assets/figma/calendar.png';
 import searchIcon from '../../assets/figma/search.png';
 import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
+import checkIcon from '../../assets/figma/check.svg';
+import { useJobLifecycle } from '../jobs/use-job-lifecycle';
+import { TERMINAL_JOB_STATUSES } from '../jobs/job-state-machine';
+import type { InvoiceDirection } from '../../lib/api/contracts';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending';
 
@@ -59,7 +64,42 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount }: { onAddAccount(): void }) {
+export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAccount(): void; connectionId: string }) {
+  const [menu, setMenu] = useState<'options' | 'scope' | 'direction' | null>(null);
+  const [includeInvoice, setIncludeInvoice] = useState(true);
+  const [includeXml, setIncludeXml] = useState(true);
+  const [includeHtml, setIncludeHtml] = useState(false);
+  const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
+  const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const { state: job, start, cancel, retry } = useJobLifecycle();
+
+  function startJob() {
+    if (!connectionId) { onAddAccount(); return; }
+    if (directions.length === 0 || scopes.length === 0) {
+      setSelectionError('Vui lòng chọn ít nhất một hướng và một loại dữ liệu trước khi đồng bộ.');
+      return;
+    }
+    setSelectionError(null);
+    void start({
+      connection_id: connectionId, date_from: '2023-10-01', date_to: '2023-10-31',
+      directions, query_types: ['query'], result_scope: scopes.includes('detail') ? 'detail' : 'overview', include_xml: scopes.includes('detail') && includeXml,
+    });
+  }
+
+  function toggleDirection(value: InvoiceDirection) {
+    setDirections((current) => current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value]);
+  }
+
+  function toggleScope(value: 'overview' | 'detail') {
+    setScopes((current) => current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value]);
+  }
+
+  const activeJob = Boolean(job.status && !TERMINAL_JOB_STATUSES.has(job.status.status));
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
@@ -69,9 +109,37 @@ export function InvoiceManagementPage({ onAddAccount }: { onAddAccount(): void }
             <span><small>KHOẢNG THỜI GIAN</small><strong>01/10/2023 - 31/10/2023</strong></span>
             <i className="chevron" />
           </button>
-          <button className="compact-select" type="button">Hóa đơn <i className="chevron" /></button>
-          <button className="compact-select compact-select--detail" type="button">Chi tiết <i className="chevron" /></button>
-          <button className="sync-button" type="button"><img src={syncIcon} alt="" /> Đồng bộ dữ liệu</button>
+          <div className="select-wrap">
+            <button className="compact-select" type="button" aria-expanded={menu === 'options'} onClick={() => setMenu(menu === 'options' ? null : 'options')}>Hóa đơn <i className="chevron" /></button>
+            {menu === 'options' ? <div className="figma-option-menu" data-node-id="4:628">
+              <OptionCheck checked={includeInvoice} label="Hóa đơn" onChange={() => setIncludeInvoice(!includeInvoice)} />
+              <OptionCheck checked={includeXml} label="XML" onChange={() => setIncludeXml(!includeXml)} />
+              <OptionCheck checked={includeHtml} label="HTML" title="Tùy chọn HTML sẽ được thực thi bởi luồng artifact Phase 5" onChange={() => setIncludeHtml(!includeHtml)} />
+            </div> : null}
+          </div>
+          <div className="select-wrap">
+            <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
+            {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">
+              <OptionCheck checked={directions.includes('purchase')} label="Mua vào" onChange={() => toggleDirection('purchase')} />
+              <OptionCheck checked={directions.includes('sold')} label="Bán ra" onChange={() => toggleDirection('sold')} />
+            </div> : null}
+          </div>
+          <div className="select-wrap">
+            <button className="compact-select compact-select--detail" type="button" aria-expanded={menu === 'scope'} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}>Chi tiết <i className="chevron" /></button>
+            {menu === 'scope' ? <div className="figma-option-menu figma-scope-menu" data-node-id="4:654">
+              <OptionCheck checked={scopes.includes('overview')} label="Tổng quan" onChange={() => toggleScope('overview')} />
+              <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
+            </div> : null}
+          </div>
+          <button className="sync-button" type="button" onClick={startJob}><img src={syncIcon} alt="" /> {job.phase === 'starting' ? 'Đang tạo job...' : 'Đồng bộ dữ liệu'}</button>
+          {job.status ? <div className="job-progress-panel" role="status">
+            <strong>{job.status.status}</strong><span>{job.status.overall_percent}% tổng thể</span>
+            <div className="progress-track"><span style={{ width: `${job.status.overall_percent}%` }} /></div>
+            {job.status.current_month ? <><small>Tháng {job.status.current_month.key}: {job.status.current_month.processed}/{job.status.current_month.planned}</small><div className="progress-track"><span style={{ width: `${job.status.current_month.percent}%` }} /></div></> : null}
+            {job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}
+          </div> : null}
+          {!job.status && job.message ? <div className="job-progress-panel" role="status"><span>{job.message}</span>{job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}</div> : null}
+          {selectionError ? <div className="job-progress-panel" role="alert"><span>{selectionError}</span></div> : null}
         </div>
       </section>
       <section className="invoice-content">
@@ -84,7 +152,7 @@ export function InvoiceManagementPage({ onAddAccount }: { onAddAccount(): void }
             </label>
             <button className="status-filter" type="button">Tất cả trạng thái <i className="chevron" /></button>
           </div>
-          <button className="stop-button" type="button"><img src={stopIcon} alt="" /> Dừng tải</button>
+          <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancel()}><img src={stopIcon} alt="" /> Dừng tải</button>
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
@@ -111,4 +179,8 @@ export function InvoiceManagementPage({ onAddAccount }: { onAddAccount(): void }
       </section>
     </div>
   );
+}
+
+function OptionCheck({ checked, label, disabled, title, onChange }: { checked: boolean; label: string; disabled?: boolean; title?: string; onChange?(): void }) {
+  return <label title={title}><input className="option-input" type="checkbox" checked={checked} disabled={disabled} readOnly={!onChange} onChange={onChange} /><span className="option-box" data-checked={checked}>{checked ? <img src={checkIcon} alt="" /> : null}</span>{label}</label>;
 }
