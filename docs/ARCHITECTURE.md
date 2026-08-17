@@ -35,3 +35,5 @@ Các endpoint activation chưa tồn tại trong backend production nên Phase 6
 ## Luồng job
 
 Renderer gửi command có kiểu qua IPC. Main process thêm token ngắn hạn và `Idempotency-Key`, gọi API, sanitize lỗi rồi trả DTO không chứa secret. Trạng thái job được persist tối thiểu (`job_id`, `connection_id`, intent, timestamp) để tiếp tục poll sau khi app restart. File tải về được ghi atomically vào thư mục do người dùng chọn.
+
+Phase 3 ghi intent + idempotency key atomically trước lần POST đầu tiên. Nếu app dừng trước khi nhận response, lần mở sau gửi lại đúng request/key để backend trả cùng job. Poller renderer dùng generation token để bỏ response cũ, backoff 2/4/8/16/30 giây tối đa 5 lần, dừng timer khi terminal hoặc unmount. Summary chỉ được lấy khi terminal.

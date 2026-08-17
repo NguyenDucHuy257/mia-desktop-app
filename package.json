@@ -13,7 +13,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:electron": "cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "typecheck": "tsc -b",
-    "check:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/device-identity.cjs && node --check electron/security-policy.cjs && node --check electron/mia-api-client.cjs && node --check electron/account-connection-broker.cjs",
+    "check:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/device-identity.cjs && node --check electron/security-policy.cjs && node --check electron/mia-api-client.cjs && node --check electron/account-connection-broker.cjs && node --check electron/job-lifecycle-broker.cjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:visual": "playwright test",

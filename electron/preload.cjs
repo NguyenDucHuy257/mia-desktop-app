@@ -29,4 +29,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     ),
     revoke: (connectionId) => invokeResult('mia:account-connections:revoke', connectionId),
   }),
+  jobs: Object.freeze({
+    resume: () => invokeResult('mia:jobs:resume'),
+    start: (intent) => invokeResult('mia:jobs:start', intent),
+    status: (jobId) => invokeResult('mia:jobs:status', jobId),
+    summary: (jobId) => invokeResult('mia:jobs:summary', jobId),
+    cancel: (jobId) => invokeResult('mia:jobs:cancel', jobId),
+    clear: () => invokeResult('mia:jobs:clear'),
+  }),
 }));

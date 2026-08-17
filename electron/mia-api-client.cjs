@@ -89,6 +89,26 @@ class MiaMainApiClient {
     });
   }
 
+  createJob(body, idempotencyKey) {
+    return this.request('/v1/jobs', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body,
+    });
+  }
+
+  getJob(jobId) {
+    return this.request(`/v1/jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  getJobSummary(jobId) {
+    return this.request(`/v1/jobs/${encodeURIComponent(jobId)}/summary`);
+  }
+
+  cancelJob(jobId) {
+    return this.request(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+  }
+
   async request(pathname, options = {}) {
     const token = assertAccessToken(await this.getAccessToken());
     const headers = new Headers(options.headers);
