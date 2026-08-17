@@ -1,7 +1,7 @@
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-width: 1024px; min-height: 720px; width: 100%; height: 100%; }
 body { overflow: hidden; font-family: Inter, "Segoe UI", sans-serif; color: var(--mia-text); background: #fff; }
-button, input { font: inherit; }
+button, input, textarea { font: inherit; }
 button { color: inherit; }
 .app-frame { width: 100vw; height: 100vh; min-width: 1024px; display: flex; background: #fff; }
 .sidebar { width: var(--mia-sidebar-width); flex: 0 0 var(--mia-sidebar-width); height: 100%; padding: 24px 12px; background: var(--mia-surface-sidebar); border-right: 1px solid var(--mia-border-warm); display: flex; flex-direction: column; }
@@ -81,6 +81,35 @@ button { color: inherit; }
 .pagination button[data-active="true"] { color: #fff; background: var(--mia-green-700); }
 .placeholder-page { height: calc(100% - 56px); padding: 48px; }
 .placeholder-page h1 { margin-top: 0; }
+.account-page { height: 100%; padding: 64px 24px 24px; display: flex; align-items: flex-start; justify-content: center; background: #fff; overflow: auto; }
+.account-card { width: 768px; max-width: 100%; padding: 25px; border: 1px solid var(--mia-border-warm); border-radius: 16px; background: var(--mia-surface-sidebar); box-shadow: 0 1px 1px rgb(0 0 0 / 5%); display: flex; flex-direction: column; gap: 16px; }
+.account-card-header { width: 100%; height: 91px; flex: 0 0 91px; padding-bottom: 13px; border-bottom: 1px solid var(--mia-border-warm); display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.account-back { width: max-content; height: 14px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; color: #5d5f5d; font-size: 14px; line-height: 14px; font-weight: 700; cursor: pointer; }
+.account-back img { width: 12px; height: 12px; margin-right: 6px; flex: 0 0 12px; }
+.account-card-header h1 { width: 100%; height: 29px; margin: 0; padding-top: 1px; color: var(--mia-text-strong); font-size: 22px; line-height: 27.5px; font-weight: 600; }
+.account-card-header p { width: 100%; height: 23px; margin: 0; color: var(--mia-text-muted); font-size: 16px; line-height: 22.4px; font-weight: 400; }
+.account-tabs { width: 100%; height: 25px; flex: 0 0 25px; border-bottom: 1px solid var(--mia-border-warm); display: flex; align-items: flex-start; }
+.account-tab { height: 24px; padding: 0 8px 10px; border: 0; background: transparent; color: #5d5f5d; font-size: 14px; line-height: 14px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.account-tab[data-active="false"] { margin-left: 16px; }
+.account-tab[data-active="true"] { padding-bottom: 8px; border-bottom: 2px solid var(--mia-green-700); color: var(--mia-green-700); }
+.account-form { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.account-form--single { min-height: 206px; }
+.account-form--bulk { min-height: 288px; }
+.account-field { position: relative; width: 100%; min-height: 68px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; color: var(--mia-text-strong); font-size: 14px; line-height: 14px; font-weight: 700; }
+.account-field > span { width: 100%; height: 14px; }
+.account-field input, .account-field textarea { width: 100%; border: 1px solid var(--mia-border-warm); border-radius: 16px; outline: 0; background: var(--mia-surface-topbar); color: var(--mia-text-strong); font-size: 16px; font-weight: 400; transition: border-color 120ms ease, box-shadow 120ms ease; }
+.account-field input { height: 48px; padding: 14px 13px; line-height: normal; }
+.account-field input::placeholder, .account-field textarea::placeholder { color: #6b7280; opacity: 1; }
+.account-field input:focus, .account-field textarea:focus { border-color: var(--mia-green-700); box-shadow: 0 0 0 2px rgb(22 101 52 / 12%); }
+.account-field input[aria-invalid="true"], .account-field textarea[aria-invalid="true"] { border-color: var(--mia-danger); }
+.account-field--bulk { height: 230px; flex: 0 0 230px; }
+.account-field textarea { height: 210px; padding: 14px 13px; line-height: 19px; resize: none; }
+.field-error { width: 100%; margin-top: -2px; color: #b91c1c; font-size: 12px; line-height: 16px; font-weight: 500; }
+.account-submit-row { width: 100%; min-height: 46px; padding-top: 8px; display: flex; align-items: center; gap: 12px; }
+.account-submit { min-width: 124px; height: 38px; padding: 12px 24px; border: 0; border-radius: 16px; background: var(--mia-green-700); color: #fff; font-size: 14px; line-height: 14px; font-weight: 700; text-align: center; white-space: nowrap; cursor: pointer; }
+.account-submit:disabled { cursor: wait; opacity: .72; }
+.account-feedback { color: var(--mia-green-700); font-size: 12px; line-height: 16px; font-weight: 600; }
+.account-feedback[data-kind="error"] { color: #b91c1c; }
 @media (max-width: 1250px) {
   .table-grid { grid-template-columns: 40px minmax(260px, 1fr) 125px 145px minmax(210px, 1fr) 60px; }
   .filters-left { gap: 8px; }

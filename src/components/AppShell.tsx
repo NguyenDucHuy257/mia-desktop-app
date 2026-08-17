@@ -21,6 +21,7 @@ export type NavigationKey =
 interface AppShellProps extends PropsWithChildren {
   active: NavigationKey;
   onNavigate(value: NavigationKey): void;
+  showTopbar?: boolean;
 }
 
 const primary = [
@@ -62,7 +63,7 @@ function NavigationButton({
   );
 }
 
-export function AppShell({ active, onNavigate, children }: AppShellProps) {
+export function AppShell({ active, onNavigate, showTopbar = true, children }: AppShellProps) {
   return (
     <div className="app-frame">
       <aside className="sidebar">
@@ -84,13 +85,15 @@ export function AppShell({ active, onNavigate, children }: AppShellProps) {
           ))}
         </nav>
       </aside>
-      <main className="workspace">
-        <header className="topbar">
-          <h1>CÔNG TY GIẢI PHÁP SỐ WETECH - MIA WT</h1>
-          <button className="profile-button" type="button" aria-label="Tài khoản người dùng">
-            <img src={userIcon} alt="" />
-          </button>
-        </header>
+      <main className="workspace" data-topbar={showTopbar}>
+        {showTopbar ? (
+          <header className="topbar">
+            <h1>CÔNG TY GIẢI PHÁP SỐ WETECH - MIA WT</h1>
+            <button className="profile-button" type="button" aria-label="Tài khoản người dùng">
+              <img src={userIcon} alt="" />
+            </button>
+          </header>
+        ) : null}
         {children}
       </main>
     </div>
