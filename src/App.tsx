@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { AppShell, type NavigationKey } from './components/AppShell';
+import { AddAccountPage } from './features/accounts/AddAccountPage';
 import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
@@ -13,11 +14,23 @@ const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
 
 export default function App() {
   const [active, setActive] = useState<NavigationKey>('invoices');
+  const [view, setView] = useState<'navigation' | 'add-account'>('navigation');
+
+  function navigate(value: NavigationKey) {
+    setActive(value);
+    setView('navigation');
+  }
 
   return (
-    <AppShell active={active} onNavigate={setActive}>
-      {active === 'invoices' ? (
-        <InvoiceManagementPage />
+    <AppShell
+      active={active}
+      onNavigate={navigate}
+      showTopbar={view !== 'add-account'}
+    >
+      {view === 'add-account' ? (
+        <AddAccountPage onBack={() => setView('navigation')} />
+      ) : active === 'invoices' ? (
+        <InvoiceManagementPage onAddAccount={() => setView('add-account')} />
       ) : (
         <section className="placeholder-page" aria-label={labels[active]}>
           <h1>{labels[active]}</h1>

@@ -16,6 +16,19 @@ Desktop sử dụng các endpoint sau:
 - `GET /v1/jobs/{job_id}/results/overview`;
 - `GET /v1/jobs/{job_id}/results/details`.
 
+## Phase 2 — account-connections
+
+Renderer không gọi các endpoint tài khoản trực tiếp. Preload chỉ expose bốn command có kiểu:
+
+- `accountConnections.create({ username, password })`;
+- `accountConnections.get(connectionId)`;
+- `accountConnections.reconnect(connectionId, { username, password })`;
+- `accountConnections.revoke(connectionId)`.
+
+Electron main process kiểm tra lại MST, độ dài password và định dạng `connection_id`, gắn header xác thực rồi chỉ trả DTO đã sanitize. Password không được log hoặc trả về renderer. Với development/staging, `MIA_API_BASE_URL` và `MIA_API_ACCESS_TOKEN` được đọc từ process environment; không có biến secret `VITE_*`.
+
+`scripts/account-connections-smoke.mjs` kiểm tra đủ create/get/reconnect/revoke với tài khoản staging chuyên dụng và cố gắng cleanup connection trong `finally`. Script không chạy trong CI mặc định vì cần secret và portal account được phép.
+
 Không dùng `/v1/sessions`: endpoint này đã có header `Deprecation: true` và sunset ngày 2026-12-01.
 
 ## Khoảng trống trước khi phát hành EXE

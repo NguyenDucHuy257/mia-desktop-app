@@ -2,6 +2,14 @@
 
 Không thể bảo đảm “100%” trên mọi màn hình/OS vì anti-aliasing, scale DPI và font renderer khác nhau. Tiêu chí có thể kiểm chứng là khớp pixel tại đúng môi trường chuẩn: Electron Chromium đã khóa phiên bản, viewport content 1500×1024, device scale 1 và Inter được bundle trong app.
 
+| Frame | Trạng thái | Gate |
+|---|---|---|
+| `1:2` | Quản lý HĐĐT | diff pixel ≤3% |
+| `1:368` | Thêm tài khoản đơn lẻ | diff pixel ≤1% |
+| `60:1182` | Thêm tài khoản hàng loạt | diff pixel ≤1% |
+
+Ở lần đo Phase 2 ngày 2026-08-17, hai frame tài khoản lần lượt sai khác khoảng 0,60% và 0,64% tại threshold màu 0.25. Phần chênh tập trung ở anti-alias font/icon, không phải sai khối layout.
+
 Quy trình cho mỗi frame:
 
 1. Lấy `get_design_context` theo node cụ thể, không dùng screenshot tổng để đoán CSS.

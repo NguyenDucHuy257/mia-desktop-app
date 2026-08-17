@@ -11,6 +11,16 @@
 
 `contextIsolation`, sandbox và `nodeIntegration: false` là bắt buộc. Main process chỉ nhận IPC từ đúng origin app và validate toàn bộ input.
 
+## Luồng tài khoản Phase 2
+
+1. React validate form đơn lẻ hoặc parse tối đa 100 dòng `MST|PASSWORD`.
+2. Preload chuyển DTO qua IPC allowlist; bulk submit được giới hạn ba request đồng thời.
+3. Main process validate lại input, đọc API URL/token từ process environment hoặc secure token provider trong phase xác minh máy.
+4. Main gọi `account-connections`, sanitize lỗi và trả DTO không có password/token.
+5. Renderer map error code sang thông báo tiếng Việt; không hiển thị raw backend detail.
+
+Browser preview chỉ có adapter in-memory khi URL local mang `?demo=1`. Electron luôn ưu tiên bridge thật; production `file:` không thể bật demo bằng query string. Gate `check:renderer-bundle` ngăn header/token marker lọt vào bundle Vite.
+
 ## Xác minh máy
 
 1. Lần chạy đầu, main process tạo Ed25519 keypair.

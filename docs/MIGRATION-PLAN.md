@@ -36,3 +36,15 @@ Không sang phase tiếp theo khi gate hiện tại đỏ. Test portal thật ch
 | `106:19444` | PDF Converting | 5 |
 
 Mỗi phase đi theo nhánh `feat/phase-XX-*`, có PR riêng và không merge khi một trong các gate type, unit, contract, visual hoặc packaging liên quan bị đỏ.
+
+## Trạng thái Phase 2
+
+Đã triển khai trên nhánh `feat/phase-02-account-connections`:
+
+- form đơn lẻ `1:368` và hàng loạt `60:1182`;
+- validation MST/password, parser có line number, chống trùng và giới hạn 100 dòng;
+- IPC broker create/get/reconnect/revoke, giới hạn ba request bulk đồng thời;
+- main-process API client, HTTPS policy và renderer secret scan;
+- unit, interaction và visual regression 1500×1024.
+
+Gate còn phụ thuộc môi trường bên ngoài: API staging smoke với tài khoản portal test chuyên dụng. Không dùng tài khoản khách hàng hoặc credential production cho gate này.
