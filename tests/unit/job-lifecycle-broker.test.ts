@@ -57,4 +57,13 @@ describe('job lifecycle IPC broker', () => {
     const broker = createJobLifecycleBroker(() => ({ cancelJob }), memoryStore());
     await expect(broker.cancel('job-1')).resolves.toMatchObject({ ok: true, data: { status } });
   });
+
+  it('validates and sanitizes result pages in main process', async () => {
+    const getOverviewResults = vi.fn().mockResolvedValue({ items: [{ id: 1, shdon: '1', raw_detail_path: 'secret', token: 'secret' }], total_count: 1, invoice_count: 1, row_count: 1, pagination: { limit: 200, has_more: false, next_cursor: null } });
+    const broker = createJobLifecycleBroker(() => ({ getOverviewResults }), memoryStore());
+    const result = await broker.overview('job-1', 200);
+    expect(result.data.items[0]).toEqual({ id: 1, shdon: '1' });
+    expect(() => broker.overview('job-1', 0)).not.toThrow();
+    await expect(broker.overview('job-1', 0)).resolves.toMatchObject({ ok: false, error: { code: 'invalid_result_limit' } });
+  });
 });

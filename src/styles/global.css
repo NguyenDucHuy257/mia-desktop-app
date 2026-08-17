@@ -129,3 +129,20 @@ button { color: inherit; }
   .filters-left { gap: 8px; }
   .search-box { width: 260px; }
 }
+.results-page { height: 100%; padding: 24px; overflow: hidden; display: flex; flex-direction: column; gap: 16px; background: #fff; }
+.results-back { width: max-content; border: 0; padding: 0; background: transparent; color: #5d5f5d; font-size: 14px; font-weight: 700; }
+.results-header { height: 62px; display: flex; justify-content: space-between; align-items: center; }
+.results-header h1 { margin: 0; font-size: 22px; }
+.results-header p { margin: 6px 0 0; color: var(--mia-text-muted); font-size: 13px; }
+.results-export { height: 38px; padding: 0 17px; border: 0; border-radius: 16px; color: #fff; background: var(--mia-green-700); font-weight: 700; }
+.results-tabs { height: 47px; border-bottom: 1px solid var(--mia-border-warm); display: flex; }
+.results-tabs button { min-width: 110px; border: 0; border-bottom: 2px solid transparent; background: transparent; font-weight: 700; }
+.results-tabs button[data-active="true"] { color: var(--mia-green-700); border-bottom-color: var(--mia-green-700); }
+.results-filters { height: 58px; padding: 13px; border: 1px solid var(--mia-border-warm); border-radius: 12px; display: flex; gap: 12px; }
+.results-filters select, .results-filters input { height: 32px; border: 1px solid var(--mia-border-cool); padding: 0 12px; background: #fff; }
+.results-filters select { width: 160px; }.results-filters input { width: 320px; }
+.results-table-wrap { min-height: 0; flex: 1; border: 1px solid var(--mia-border-cool); border-radius: 4px; overflow: auto; }
+.results-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.results-table-wrap th { position: sticky; top: 0; height: 34px; padding: 6px 12px; background: #f1f5f9; text-align: left; }
+.results-table-wrap td { height: 34px; padding: 6px 12px; border-top: 1px solid var(--mia-border-cool); white-space: nowrap; }
+.results-state { min-height: 120px; display: grid; place-items: center; gap: 12px; color: var(--mia-text-muted); }

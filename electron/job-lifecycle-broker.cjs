@@ -107,6 +107,30 @@ function sanitizeSummary(value) {
   };
 }
 
+function sanitizePublicValue(value, depth = 0) {
+  if (depth > 8) throw new Error('invalid API response');
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizePublicValue(item, depth + 1));
+  if (!value || typeof value !== 'object') throw new Error('invalid API response');
+  const blocked = /password|token|authorization|proxy|session|(?:^|_)path$/i;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !blocked.test(key))
+    .map(([key, item]) => [key, sanitizePublicValue(item, depth + 1)]));
+}
+
+function sanitizeResultPage(value) {
+  if (!value || typeof value !== 'object' || !Array.isArray(value.items) || !value.pagination || typeof value.pagination !== 'object') throw new Error('invalid API response');
+  const pagination = value.pagination;
+  if (!Number.isInteger(pagination.limit) || typeof pagination.has_more !== 'boolean' || !(pagination.next_cursor === null || typeof pagination.next_cursor === 'string')) throw new Error('invalid API response');
+  return {
+    items: value.items.map((item) => sanitizePublicValue(item)),
+    ...(Number.isInteger(value.total_count) ? { total_count: value.total_count } : {}),
+    ...(Number.isInteger(value.invoice_count) ? { invoice_count: value.invoice_count } : {}),
+    ...(Number.isInteger(value.row_count) ? { row_count: value.row_count } : {}),
+    pagination: { limit: pagination.limit, has_more: pagination.has_more, next_cursor: pagination.next_cursor },
+  };
+}
+
 function serializeError(error) {
   if (error instanceof MiaApiError) return {
     code: error.code, status: error.status, message: 'MIA API request failed.', requestId: error.requestId,
@@ -174,8 +198,21 @@ function createJobLifecycleBroker(getClient, store, now = () => new Date().toISO
     status: (jobId) => command(async () => sanitizeStatus(await getClient().getJob(validateJobId(jobId)))),
     summary: (jobId) => command(async () => sanitizeSummary(await getClient().getJobSummary(validateJobId(jobId)))),
     cancel: (jobId) => command(async () => sanitizeStatus(await getClient().cancelJob(validateJobId(jobId)))),
+    overview: (jobId, limit, cursor) => command(async () => sanitizeResultPage(await getClient().getOverviewResults(validateJobId(jobId), validateLimit(limit), validateCursor(cursor)))),
+    details: (jobId, limit, cursor) => command(async () => sanitizeResultPage(await getClient().getDetailResults(validateJobId(jobId), validateLimit(limit), validateCursor(cursor)))),
     clear: () => command(() => { store.clear(); return null; }),
   });
+}
+
+function validateLimit(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 1000) throw new JobInputError('invalid_result_limit');
+  return value;
+}
+
+function validateCursor(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || value.length > 4096) throw new JobInputError('invalid_result_cursor');
+  return value;
 }
 
 module.exports = { createJobLifecycleBroker, createJobStore, validateIntent, validateJobId };

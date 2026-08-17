@@ -138,6 +138,7 @@ ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
 for (const [channel, method] of [
   ['mia:jobs:resume', 'resume'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
   ['mia:jobs:summary', 'summary'], ['mia:jobs:cancel', 'cancel'], ['mia:jobs:clear', 'clear'],
+  ['mia:jobs:overview', 'overview'], ['mia:jobs:details', 'details'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
     assertTrustedSender(event);

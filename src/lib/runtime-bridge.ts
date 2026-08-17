@@ -1,4 +1,4 @@
-import type { AccountConnection, CreateJobRequest, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
+import type { AccountConnection, CreateJobRequest, JobAccepted, JobStatusResponse, JobSummaryResponse, ResultPage } from './api/contracts';
 
 export interface MiaDeviceIdentity {
   algorithm: 'Ed25519';
@@ -30,6 +30,8 @@ export interface MiaRuntimeBridge {
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;
     cancel(jobId: string): Promise<JobStatusResponse>;
+    overview(jobId: string, limit: number, cursor?: string): Promise<ResultPage<Record<string, unknown>>>;
+    details(jobId: string, limit: number, cursor?: string): Promise<ResultPage<Record<string, unknown>>>;
     clear(): Promise<void>;
   };
 }

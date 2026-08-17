@@ -153,3 +153,30 @@ test('shows bounded polling failure and lets the user retry', async ({ page }) =
   await page.goto('/');
   await expect(page.getByText('Mất kết nối tạm thời, đang thử lại…')).toBeVisible();
 });
+
+test('loads all 421 cursor results and preserves search/filter data', async ({ page }) => {
+  await page.addInitScript(() => {
+    const all = Array.from({ length: 421 }, (_, index) => ({ id: index + 1, shdon: `HD-${index + 1}`, nbmst: '0100000000', direction: index % 2 ? 'sold' : 'purchase', nlap: '2026-08-01' }));
+    const record = { job_id: 'job-results', connection_id: 'conn_demo', intent: {}, idempotency_key: 'desktop-results', created_at: 'now', updated_at: 'now' };
+    Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
+      resume: async () => record,
+      status: async () => ({ job_id: 'job-results', status: 'completed', stage: null, overall_percent: 100, current_month: null, updated_at: 'now', error: null }),
+      summary: async () => ({ job_id: 'job-results', status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
+      overview: async (_jobId: string, _limit: number, cursor?: string) => { const start = cursor ? Number(cursor) : 0; const items = all.slice(start, start + 200); const next = start + items.length; return { items, total_count: 421, invoice_count: 421, row_count: items.length, pagination: { limit: 200, has_more: next < all.length, next_cursor: next < all.length ? String(next) : null } }; },
+      details: async () => ({ items: [], invoice_count: 0, row_count: 0, pagination: { limit: 200, has_more: false, next_cursor: null } }),
+      start: async () => ({}), cancel: async () => ({}), clear: async () => undefined,
+    } } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Xem kết quả' })).toBeVisible();
+  await page.getByRole('button', { name: 'Xem kết quả' }).click();
+  await expect(page.getByText('421 dòng dữ liệu')).toBeVisible();
+  await page.getByLabel('Tìm trong kết quả').fill('HD-421');
+  await expect(page.getByText('HD-421')).toBeVisible();
+  await page.getByLabel('Lọc hướng hóa đơn').selectOption('sold');
+  await expect(page.getByText('Không tìm thấy kết quả.')).toBeVisible();
+  for (const width of [1024, 1280, 1366, 1440, 1600]) {
+    await page.setViewportSize({ width, height: 1024 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});

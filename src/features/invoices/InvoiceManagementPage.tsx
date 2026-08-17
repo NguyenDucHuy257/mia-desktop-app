@@ -64,7 +64,7 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAccount(): void; connectionId: string }) {
+export function InvoiceManagementPage({ onAddAccount, onViewResults, connectionId }: { onAddAccount(): void; onViewResults(jobId: string): void; connectionId: string }) {
   const [menu, setMenu] = useState<'options' | 'scope' | 'direction' | null>(null);
   const [includeInvoice, setIncludeInvoice] = useState(true);
   const [includeXml, setIncludeXml] = useState(true);
@@ -137,6 +137,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAcc
             <div className="progress-track"><span style={{ width: `${job.status.overall_percent}%` }} /></div>
             {job.status.current_month ? <><small>Tháng {job.status.current_month.key}: {job.status.current_month.processed}/{job.status.current_month.planned}</small><div className="progress-track"><span style={{ width: `${job.status.current_month.percent}%` }} /></div></> : null}
             {job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}
+            {job.phase === 'terminal' && job.record?.job_id ? <button type="button" onClick={() => onViewResults(job.record!.job_id!)}>Xem kết quả</button> : null}
           </div> : null}
           {!job.status && job.message ? <div className="job-progress-panel" role="status"><span>{job.message}</span>{job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}</div> : null}
           {selectionError ? <div className="job-progress-panel" role="alert"><span>{selectionError}</span></div> : null}

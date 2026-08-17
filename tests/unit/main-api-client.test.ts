@@ -92,4 +92,16 @@ describe('Electron main-process MIA API client', () => {
     ]);
     expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('Idempotency-Key')).toBe('desktop-key-1');
   });
+
+  it('keeps opaque result cursors on the production overview/detail routes', async () => {
+    const response = { items: [], pagination: { limit: 200, has_more: false, next_cursor: null } };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(response));
+    const client = new MiaMainApiClient({ baseUrl: 'https://crawl.example.com', getAccessToken: () => 'main-process-token', fetchImpl });
+    await client.getOverviewResults('job-1', 200, 'opaque+/=cursor');
+    await client.getDetailResults('job-1', 50);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://crawl.example.com/v1/jobs/job-1/results/overview?limit=200&cursor=opaque%2B%2F%3Dcursor',
+      'https://crawl.example.com/v1/jobs/job-1/results/details?limit=50',
+    ]);
+  });
 });

@@ -109,6 +109,20 @@ class MiaMainApiClient {
     return this.request(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
   }
 
+  getOverviewResults(jobId, limit = 200, cursor) {
+    return this.getResults(jobId, 'overview', limit, cursor);
+  }
+
+  getDetailResults(jobId, limit = 200, cursor) {
+    return this.getResults(jobId, 'details', limit, cursor);
+  }
+
+  getResults(jobId, kind, limit, cursor) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor) query.set('cursor', cursor);
+    return this.request(`/v1/jobs/${encodeURIComponent(jobId)}/results/${kind}?${query}`);
+  }
+
   async request(pathname, options = {}) {
     const token = assertAccessToken(await this.getAccessToken());
     const headers = new Headers(options.headers);

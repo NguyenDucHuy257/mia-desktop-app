@@ -46,3 +46,12 @@ Chưa chạy:
 - Interaction: PASS — tạo, poll hai cấp, cancel và lỗi mạng tạm thời/retry.
 - Visual node Phase 3: ACCEPTED EXCEPTION — người dùng chấp nhận ngày 2026-08-18. `4:628` lệch khoảng 1.755/25.704 pixel (6,83%), gate 8%; `4:654` lệch 1.942/17.952 pixel (10,82%), gate 12%, threshold màu 0.25. Baseline vẫn là PNG export trực tiếp từ Figma, không cập nhật bằng ảnh app. Gate màn hình chính và hai màn hình tài khoản giữ nguyên 3%/1%.
 - Staging small-job smoke: NOT RUN — thiếu tài khoản staging chuyên dụng được phép.
+
+## Phase 4 — kết quả local
+
+- Contract/backend: PASS — đối chiếu `JobResultReader` tại commit `63acf111…`.
+- Cursor regression: PASS — đủ 421 item, không trùng/thiếu; cursor rỗng/lặp bị chặn.
+- Search/filter/loading/empty/error/retry: PASS unit + interaction.
+- Responsive: PASS tại 1024, 1280, 1366, 1440, 1600 px.
+- Visual pixel Figma `1:466`, `85:16452`: NOT RUN — PNG baseline đã xuất trực tiếp từ Figma, cần hoàn thiện fixture/layout trước gate 1%.
+- Staging result smoke: NOT RUN — thiếu API staging base URL/token được quản lý.

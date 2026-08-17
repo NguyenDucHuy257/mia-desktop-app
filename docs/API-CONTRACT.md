@@ -26,6 +26,10 @@ Poll status chỉ dùng bảy field công khai: `job_id`, `status`, `stage`, `ov
 
 UI cho phép bật/tắt tự do mọi checkbox, kể cả bỏ hết. Khi submit, desktop mới yêu cầu tối thiểu một `direction` và một phạm vi vì backend không nhận mảng hướng rỗng và `result_scope` là field đơn bắt buộc. Nếu có Chi tiết thì request dùng `result_scope=detail`, nếu chỉ có Tổng quan thì dùng `overview`. Checkbox Hóa đơn/HTML là lựa chọn giao diện chưa có field tương ứng trong create-job; việc tạo HTML thật thuộc Phase 5.
 
+## Phase 4 — result cursor
+
+`overview` và `details` nhận `limit` 1–1000 cùng opaque `cursor`. Desktop chuyển nguyên cursor qua IPC/main, không giải mã và không đổi thành page number. Response production gồm `items`, `invoice_count`, `row_count`, overview có thêm `total_count`, cùng `pagination.limit/has_more/next_cursor`. Collector dừng ở trang cuối, từ chối `has_more=true` khi cursor rỗng/lặp và dedupe overlap theo `id` hoặc business composite key.
+
 ## Phase 2 — account-connections
 
 Renderer không gọi các endpoint tài khoản trực tiếp. Preload chỉ expose bốn command có kiểu:

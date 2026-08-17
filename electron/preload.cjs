@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     status: (jobId) => invokeResult('mia:jobs:status', jobId),
     summary: (jobId) => invokeResult('mia:jobs:summary', jobId),
     cancel: (jobId) => invokeResult('mia:jobs:cancel', jobId),
+    overview: (jobId, limit, cursor) => invokeResult('mia:jobs:overview', jobId, limit, cursor),
+    details: (jobId, limit, cursor) => invokeResult('mia:jobs:details', jobId, limit, cursor),
     clear: () => invokeResult('mia:jobs:clear'),
   }),
 }));
