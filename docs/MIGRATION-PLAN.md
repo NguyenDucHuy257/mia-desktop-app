@@ -1,50 +1,27 @@
-# Kế hoạch tách MIA Desktop
+# Kế hoạch MIA Desktop chạy cục bộ
 
-## Nguồn đã kiểm kê
+Roadmap mới chuyển ứng dụng sang mô hình chạy crawler và xử lý artifact trực tiếp trên máy người dùng, không gọi HTTP API nghiệp vụ.
 
-Backend production: `hvsoftware26/mia-crawl-service`, commit `63acf111c64b47ac964608141b2c83bbb6e2f688`. Không copy crawler, worker, PostgreSQL adapter, CAPTCHA model, deployment scripts hay credential sang desktop.
+```text
+React renderer -> IPC allowlist -> Electron main -> JSON-RPC stdin/stdout
+                                                -> Python child process
+                                                -> SQLite + crawler + artifacts
+```
 
-Figma: file `AvrM4nHgn649ZZeoLei2vN`, page `0:1`. Frame chính `1:2`, kích thước 1500×1024, màu chủ đạo `#166534`, sidebar 210 px, font Inter.
+Renderer không được chạy crawler, đọc credential hoặc truy cập filesystem trực tiếp. Credential được Electron main mã hóa bằng `safeStorage`/Windows DPAPI. Không nhập deployment script hoặc secret từ backend vào desktop.
 
-## Phase và cổng kiểm thử
+## Tài liệu từng phase
 
-| Phase | Phạm vi | Gate bắt buộc |
+| Phase | Tài liệu | Gate chính |
 |---|---|---|
-| 0 — Foundation | Repo, Electron sandbox, React/Vite, contract types, Figma baseline, CI | typecheck + unit + web build |
-| 1 — Shell Figma | Sidebar/topbar/Quản lý HĐĐT tại 1500×1024 | visual diff ≤3% ở môi trường chuẩn |
-| 2 — Tài khoản | create/get/reconnect/revoke connection, form và trạng thái | mock contract + API staging smoke |
-| 3 — Job lifecycle | create/idempotency/poll/cancel/progress hai cấp | state-machine unit + restart/poll E2E |
-| 4 — Kết quả | overview/detail cursor pagination, tìm kiếm/lọc | pagination contract + 421-item regression |
-| 5 — XML/HTML/PDF/MVT | Các frame Figma còn lại và output local | artifact integrity + path traversal tests + visual tests từng tab |
-| 6 — Xác minh máy | activation, Ed25519 challenge, DPAPI, token rotation/revoke | replay/clone/revoke/offline-grace security tests |
-| 7 — EXE | NSIS x64, code signing, updater, rollback | clean Windows VM install/update/uninstall smoke |
+| 0 | [Kiến trúc và kiểm kê](offline-phases/PHASE-00-ARCHITECTURE.md) | dependency/license/secret audit và prototype JSON-RPC |
+| 1 | [Python runtime và SQLite](offline-phases/PHASE-01-RUNTIME.md) | runtime, migration và phục hồi sau restart |
+| 2 | [Tài khoản cục bộ](offline-phases/PHASE-02-ACCOUNTS.md) | credential mã hóa và portal login thật |
+| 3 | [Job lifecycle offline](offline-phases/PHASE-03-JOBS.md) | state machine, idempotency, resume và cancel |
+| 4 | [Overview/detail](offline-phases/PHASE-04-RESULTS.md) | regression 421 items và visual Figma |
+| 5 | [XML/HTML/PDF/Excel](offline-phases/PHASE-05-ARTIFACTS.md) | integrity, filesystem security và tải hàng loạt |
+| 6 | [Activation](offline-phases/PHASE-06-ACTIVATION.md) | bỏ qua; ghi nhận giới hạn bảo vệ offline |
+| 7 | [Installer production](offline-phases/PHASE-07-RELEASE.md) | Windows sạch, update/rollback và signing |
+| 8 | [Acceptance/soak](offline-phases/PHASE-08-ACCEPTANCE.md) | full workflow thật và kiểm tra độ ổn định |
 
-Không sang phase tiếp theo khi gate hiện tại đỏ. Test portal thật chỉ dùng khoảng nhỏ và tài khoản test được phép; không ghi API key, password, token, MST hay payload hóa đơn vào log CI.
-
-## Ánh xạ frame Figma
-
-| Node | Màn hình/trạng thái | Phase |
-|---|---|---|
-| `1:2` | Giao diện chính / Quản lý HĐĐT | 1 |
-| `4:628`, `4:654` | Option và Declaration type | 1–3 |
-| `60:1287` | Thêm tài khoản | 2 |
-| `1:466` | Tổng quan | 4 |
-| `85:16452` | Chi tiết | 4 |
-| `1:654` | XML Downloader | 5 |
-| `104:22` | HTML Downloader | 5 |
-| `106:18856` | PDF Downloader | 5 |
-| `106:19444` | PDF Converting | 5 |
-
-Mỗi phase đi theo nhánh `feat/phase-XX-*`, có PR riêng và không merge khi một trong các gate type, unit, contract, visual hoặc packaging liên quan bị đỏ.
-
-## Trạng thái Phase 2
-
-Đã triển khai trên nhánh `feat/phase-02-account-connections`:
-
-- form đơn lẻ `1:368` và hàng loạt `60:1182`;
-- validation MST/password, parser có line number, chống trùng và giới hạn 100 dòng;
-- IPC broker create/get/reconnect/revoke, giới hạn ba request bulk đồng thời;
-- main-process API client, HTTPS policy và renderer secret scan;
-- unit, interaction và visual regression 1500×1024.
-
-Gate còn phụ thuộc môi trường bên ngoài: API staging smoke với tài khoản portal test chuyên dụng. Không dùng tài khoản khách hàng hoặc credential production cho gate này.
+Xem [quy tắc chung và thứ tự triển khai](offline-phases/README.md). Roadmap API cũ không còn là kế hoạch mục tiêu sau khi roadmap này được duyệt và merge.

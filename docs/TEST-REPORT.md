@@ -46,3 +46,22 @@ Chưa chạy:
 - Interaction: PASS — tạo, poll hai cấp, cancel và lỗi mạng tạm thời/retry.
 - Visual node Phase 3: ACCEPTED EXCEPTION — người dùng chấp nhận ngày 2026-08-18. `4:628` lệch khoảng 1.755/25.704 pixel (6,83%), gate 8%; `4:654` lệch 1.942/17.952 pixel (10,82%), gate 12%, threshold màu 0.25. Baseline vẫn là PNG export trực tiếp từ Figma, không cập nhật bằng ảnh app. Gate màn hình chính và hai màn hình tài khoản giữ nguyên 3%/1%.
 - Staging small-job smoke: NOT RUN — thiếu tài khoản staging chuyên dụng được phép.
+
+## Offline Phase 0 — kiến trúc và runtime prototype
+
+- Node.js: PASS — `v24.19.0`.
+- Python prototype: PASS — Python `3.11.9`, syntax compile không tạo bytecode trong repo.
+- Source/dependency/license audit: PASS WITH BLOCKERS — đã đối chiếu backend production `63acf111…`; không copy backend source. PyQt5 GPL, CAPTCHA model và Excel template chưa rõ provenance/license nên bị chặn khỏi runtime.
+- JSON-RPC protocol + SQLite schema: PASS — đã tài liệu hóa protocol v1, giới hạn 1 MiB, lifecycle/error và schema mục tiêu.
+- Runtime boundary unit: PASS — health/echo/error, timeout/recovery, crash, malformed/oversized response, oversized request, shutdown và environment allowlist.
+- Unit regression: PASS — 11 file, 48 test.
+- Electron/Python syntax: PASS.
+- Offline boundary scan: PASS.
+- Renderer secret scan: PASS.
+- Vite build: PASS — 48 module.
+- Playwright: PASS — 8/8; không thay đổi baseline Figma.
+- `npm audit --omit=dev`: PASS — 0 vulnerability.
+- `npm audit`: PASS — 0 vulnerability.
+- Windows NSIS x64 local: PASS — installer test tạo thành công; Phase 0 chưa đóng gói Python runtime/model/browser.
+- Windows clean-VM runtime test: NOT RUN — thuộc Phase 1 sau khi có Python runtime đóng gói.
+- Code signing: NOT RUN — thuộc Phase 7.
