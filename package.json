@@ -2,6 +2,7 @@
   "name": "mia-desktop-app",
   "version": "0.1.0",
   "private": true,
+  "author": "Nguyễn Đức Huy",
   "description": "MIA WT desktop client for the mia-crawl-service API",
   "main": "electron/main.cjs",
   "type": "module",
@@ -18,7 +19,7 @@
     "test:visual": "playwright test",
     "build:web": "vite build",
     "build": "npm run typecheck && npm run check:electron && npm run test && npm run build:web",
-    "package:win": "npm run build && electron-builder --win nsis --x64",
+    "package:win": "npm run build && electron-builder --win nsis --x64 --publish never",
     "verify": "npm run build",
     "verify:all": "npm run build && npm run test:visual"
   },
