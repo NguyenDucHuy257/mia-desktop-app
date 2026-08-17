@@ -4,8 +4,16 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
+const { createAccountConnectionBroker } = require('./account-connection-broker.cjs');
+const { createMiaApiClientFromEnvironment } = require('./mia-api-client.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
+let accountApiClient;
+
+const accountConnectionBroker = createAccountConnectionBroker(() => {
+  if (!accountApiClient) accountApiClient = createMiaApiClientFromEnvironment();
+  return accountApiClient;
+});
 
 function secureProtector() {
   return {
@@ -97,6 +105,22 @@ ipcMain.handle('mia:license-store', (event, token) => {
     { mode: 0o600 },
   );
   return true;
+});
+ipcMain.handle('mia:account-connections:create', (event, credentials) => {
+  assertTrustedSender(event);
+  return accountConnectionBroker.create(credentials);
+});
+ipcMain.handle('mia:account-connections:get', (event, connectionId) => {
+  assertTrustedSender(event);
+  return accountConnectionBroker.get(connectionId);
+});
+ipcMain.handle('mia:account-connections:reconnect', (event, connectionId, credentials) => {
+  assertTrustedSender(event);
+  return accountConnectionBroker.reconnect(connectionId, credentials);
+});
+ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
+  assertTrustedSender(event);
+  return accountConnectionBroker.revoke(connectionId);
 });
 
 app.whenReady().then(() => {

@@ -59,7 +59,7 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage() {
+export function InvoiceManagementPage({ onAddAccount }: { onAddAccount(): void }) {
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
@@ -77,7 +77,7 @@ export function InvoiceManagementPage() {
       <section className="invoice-content">
         <div className="filters">
           <div className="filters-left">
-            <button className="add-account" type="button"><img src={addIcon} alt="" /> Thêm tài khoản</button>
+            <button className="add-account" type="button" onClick={onAddAccount}><img src={addIcon} alt="" /> Thêm tài khoản</button>
             <label className="search-box">
               <img src={searchIcon} alt="" />
               <input aria-label="Tìm kiếm tài khoản" placeholder="Tìm kiếm MST, Tên công ty..." />

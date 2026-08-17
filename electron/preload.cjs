@@ -1,9 +1,32 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+async function invokeResult(channel, ...args) {
+  const result = await ipcRenderer.invoke(channel, ...args);
+  if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') {
+    throw new Error('invalid IPC response');
+  }
+  if (result.ok) return result.data;
+
+  const error = new Error(String(result.error?.message ?? 'MIA API request failed'));
+  error.name = 'MiaRuntimeError';
+  error.code = String(result.error?.code ?? 'internal_error');
+  if (Number.isInteger(result.error?.status)) error.status = result.error.status;
+  if (typeof result.error?.requestId === 'string') error.requestId = result.error.requestId;
+  throw error;
+}
+
 contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   platform: process.platform,
   getDeviceIdentity: () => ipcRenderer.invoke('mia:device-identity'),
   signDeviceChallenge: (challenge) =>
     ipcRenderer.invoke('mia:sign-device-challenge', challenge),
   storeLicenseToken: (token) => ipcRenderer.invoke('mia:license-store', token),
+  accountConnections: Object.freeze({
+    create: (credentials) => invokeResult('mia:account-connections:create', credentials),
+    get: (connectionId) => invokeResult('mia:account-connections:get', connectionId),
+    reconnect: (connectionId, credentials) => (
+      invokeResult('mia:account-connections:reconnect', connectionId, credentials)
+    ),
+    revoke: (connectionId) => invokeResult('mia:account-connections:revoke', connectionId),
+  }),
 }));
