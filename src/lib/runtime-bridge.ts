@@ -1,4 +1,4 @@
-import type { AccountConnection } from './api/contracts';
+import type { AccountConnection, CreateJobRequest, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
 
 export interface MiaDeviceIdentity {
   algorithm: 'Ed25519';
@@ -24,6 +24,23 @@ export interface MiaRuntimeBridge {
   signDeviceChallenge(challenge: string): Promise<string>;
   storeLicenseToken(token: string): Promise<boolean>;
   accountConnections: MiaAccountConnectionsBridge;
+  jobs: {
+    resume(): Promise<PersistedJob | null>;
+    start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
+    status(jobId: string): Promise<JobStatusResponse>;
+    summary(jobId: string): Promise<JobSummaryResponse>;
+    cancel(jobId: string): Promise<JobStatusResponse>;
+    clear(): Promise<void>;
+  };
+}
+
+export interface PersistedJob {
+  job_id: string | null;
+  connection_id: string;
+  intent: CreateJobRequest;
+  idempotency_key: string;
+  created_at: string;
+  updated_at: string;
 }
 
 declare global {

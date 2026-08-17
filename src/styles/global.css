@@ -33,8 +33,22 @@ button { color: inherit; }
 .chevron { width: 8px; height: 8px; border-right: 1.5px solid #64748b; border-bottom: 1.5px solid #64748b; transform: rotate(45deg) translateY(-2px); margin-left: auto; }
 .compact-select { width: 140px; padding: 9px 13px; font-size: 16px; }
 .compact-select--detail { width: 108px; }
+.compact-select--direction { width: 112px; }
+.select-wrap { position: relative; }
+.figma-option-menu { position: absolute; z-index: 10; top: 48px; left: 0; width: 204px; height: 126px; padding: 7px; border: 1px solid var(--mia-border-warm); border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / 5%); display: flex; flex-direction: column; gap: 6px; }
+.figma-option-menu label { height: 32px; padding: 8px 12px; border-radius: 8px; display: flex; align-items: center; gap: 12px; color: var(--mia-text-strong); font-size: 14px; line-height: 14px; font-weight: 700; white-space: nowrap; }
+.option-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.option-box { width: 16px; height: 16px; flex: 0 0 16px; border: 1px solid #bbf7d0; border-radius: 4px; background: #fff; display: grid; place-items: center; overflow: hidden; }
+.option-box[data-checked="true"] { width: 18px; height: 18px; flex-basis: 18px; margin: -1px; border-color: transparent; background: #15803d; }
+.option-box img { width: 16px; height: 16px; display: block; }
+.figma-scope-menu { width: 204px; height: 88px; }
+.figma-direction-menu { width: 204px; height: 88px; }
 .sync-button { position: absolute; left: 11px; bottom: 8px; width: 165px; height: 36px; border: 0; border-radius: 16px; background: var(--mia-green-700); color: #fff; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .sync-button img { width: 10px; height: 12px; }
+.job-progress-panel { position: absolute; left: 190px; right: 12px; bottom: 7px; min-height: 38px; padding: 3px 8px; display: grid; grid-template-columns: 140px 110px 1fr; align-items: center; gap: 6px; color: var(--mia-text-muted); font-size: 11px; }
+.job-progress-panel strong { color: var(--mia-green-700); }
+.job-progress-panel small { grid-column: 2; }
+.job-progress-panel button { border: 0; color: var(--mia-green-700); background: transparent; font-weight: 700; }
 .invoice-content { height: calc(100% - 164px); padding: 0 24px 17px; display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
 .filters { height: 42px; flex: 0 0 42px; display: flex; align-items: center; justify-content: space-between; }
 .filters-left { height: 42px; display: flex; gap: 12px; }

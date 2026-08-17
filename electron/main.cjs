@@ -6,14 +6,27 @@ const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs')
 const { isTrustedAppUrl } = require('./security-policy.cjs');
 const { createAccountConnectionBroker } = require('./account-connection-broker.cjs');
 const { createMiaApiClientFromEnvironment } = require('./mia-api-client.cjs');
+const { createJobLifecycleBroker, createJobStore } = require('./job-lifecycle-broker.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let accountApiClient;
+let jobLifecycleBroker;
 
 const accountConnectionBroker = createAccountConnectionBroker(() => {
   if (!accountApiClient) accountApiClient = createMiaApiClientFromEnvironment();
   return accountApiClient;
 });
+
+function jobs() {
+  if (!jobLifecycleBroker) {
+    const store = createJobStore(path.join(app.getPath('userData'), 'jobs', 'active-job.json'));
+    jobLifecycleBroker = createJobLifecycleBroker(() => {
+      if (!accountApiClient) accountApiClient = createMiaApiClientFromEnvironment();
+      return accountApiClient;
+    }, store);
+  }
+  return jobLifecycleBroker;
+}
 
 function secureProtector() {
   return {
@@ -122,6 +135,15 @@ ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
   assertTrustedSender(event);
   return accountConnectionBroker.revoke(connectionId);
 });
+for (const [channel, method] of [
+  ['mia:jobs:resume', 'resume'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
+  ['mia:jobs:summary', 'summary'], ['mia:jobs:cancel', 'cancel'], ['mia:jobs:clear', 'clear'],
+]) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event);
+    return jobs()[method](...args);
+  });
+}
 
 app.whenReady().then(() => {
   createWindow();

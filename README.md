@@ -1,6 +1,6 @@
 # MIA WT Desktop
 
-Desktop client tách riêng cho backend `mia-crawl-service`. Ứng dụng dùng Electron + React + TypeScript, không chứa crawler và không nhúng credential production. Phase 2 đã có màn hình thêm tài khoản đơn lẻ/hàng loạt và Electron main-process broker cho `account-connections`.
+Desktop client tách riêng cho backend `mia-crawl-service`. Ứng dụng dùng Electron + React + TypeScript, không chứa crawler và không nhúng credential production. Phase 3 bổ sung job lifecycle qua Electron main-process broker: tạo idempotent, resume sau restart, poll tiến trình hai cấp và hủy job.
 
 ## Chạy local
 

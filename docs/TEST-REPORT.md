@@ -38,3 +38,11 @@ Chưa chạy:
 - Cài đặt/gỡ cài đặt trên Windows VM sạch và kiểm tra app sau khi mở.
 - API staging/portal smoke: script đã có, chưa chạy vì cần account test chuyên dụng và token staging được phép.
 - Code signing/updater: thuộc Phase 7 và cần certificate/release channel.
+
+## Phase 3 — kết quả local
+
+- Baseline trước phát triển: PASS — 21 unit, 4 Playwright; sửa command webServer Playwright sang npm script để chạy đa nền tảng Windows/Linux, không đổi ảnh baseline.
+- Job state machine/broker/API: PASS — bao phủ 9 backend status, validation, sanitize, idempotency, crash/restart resume, cancel và progress clamp.
+- Interaction: PASS — tạo, poll hai cấp, cancel và lỗi mạng tạm thời/retry.
+- Visual node Phase 3: ACCEPTED EXCEPTION — người dùng chấp nhận ngày 2026-08-18. `4:628` lệch khoảng 1.755/25.704 pixel (6,83%), gate 8%; `4:654` lệch 1.942/17.952 pixel (10,82%), gate 12%, threshold màu 0.25. Baseline vẫn là PNG export trực tiếp từ Figma, không cập nhật bằng ảnh app. Gate màn hình chính và hai màn hình tài khoản giữ nguyên 3%/1%.
+- Staging small-job smoke: NOT RUN — thiếu tài khoản staging chuyên dụng được phép.

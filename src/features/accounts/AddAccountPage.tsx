@@ -17,6 +17,7 @@ type AccountTab = 'single' | 'bulk';
 
 interface AddAccountPageProps {
   onBack(): void;
+  onConnectionCreated?(connectionId: string): void;
   gateway?: AccountConnectionGateway;
 }
 
@@ -25,7 +26,7 @@ interface Feedback {
   message: string;
 }
 
-export function AddAccountPage({ onBack, gateway: gatewayOverride }: AddAccountPageProps) {
+export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOverride }: AddAccountPageProps) {
   const gateway = useMemo(
     () => gatewayOverride ?? createAccountConnectionGateway(),
     [gatewayOverride],
@@ -58,6 +59,7 @@ export function AddAccountPage({ onBack, gateway: gatewayOverride }: AddAccountP
     setSubmitting(true);
     try {
       const connection = await gateway.create(credentials);
+      onConnectionCreated?.(connection.connection_id);
       setUsername(connection.username);
       setPassword('');
       setFeedback({
