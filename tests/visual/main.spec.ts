@@ -272,11 +272,11 @@ test('artifact default frames use direct Figma exports as visual baselines', asy
   await page.getByRole('button', { name: 'XML' }).click();
   await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-xml-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
   await page.getByRole('button', { name: 'HTML', exact: true }).click();
-  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-html-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.3 });
+  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-html-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-pdf-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
   await page.getByRole('button', { name: 'Tải HTML hàng loạt' }).click();
-  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-pdf-progress-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.3 });
+  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-pdf-progress-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
 });
 
 test('PDF tab validates folder and exposes converting/cancel states', async ({ page }) => {
