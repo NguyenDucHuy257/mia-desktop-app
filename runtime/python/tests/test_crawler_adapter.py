@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -11,6 +12,28 @@ from mia_storage import Storage
 
 
 class CrawlerAdapterTests(unittest.TestCase):
+    def test_account_verification_returns_only_company_name(self):
+        import mia_runtime
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(mia_runtime, "configure_logging"):
+                mia_runtime.dispatch("storage.initialize", {"data_dir": str(Path(directory).resolve())})
+            with patch("app.services.portal_session.TaxPortalSession") as session_type:
+                session = session_type.return_value
+                session.get_company_info.return_value = {"name": "Synthetic Company", "token": "must-not-return"}
+                result, should_stop = mia_runtime.dispatch("crawler.verify_account", {
+                    "username": "0100000000", "password": "synthetic-password",
+                })
+            self.assertEqual(result, {"company_name": "Synthetic Company"})
+            self.assertFalse(should_stop)
+            session.login.assert_called_once_with()
+            self.assertNotIn("token", result)
+
+    def test_account_verification_revalidates_credentials_at_runtime_boundary(self):
+        import mia_runtime
+        with self.assertRaises(mia_runtime.RpcError) as raised:
+            mia_runtime.dispatch("crawler.verify_account", {"username": "../unsafe", "password": ""})
+        self.assertEqual(raised.exception.message, "invalid_params")
+
     def test_imports_vendored_overview_and_detail_without_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

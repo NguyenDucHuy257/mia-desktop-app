@@ -80,6 +80,30 @@ test('local account list starts empty, persists in the gateway and supports dele
   await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
 });
 
+test('verified runtime account immediately shows portal company information', async ({ page }) => {
+  await page.addInitScript(() => {
+    const accounts: Array<Record<string, unknown>> = [];
+    Object.defineProperty(window, 'miaRuntime', { value: { accountConnections: {
+      list: async () => accounts,
+      create: async ({ username }: { username: string }) => {
+        const account = { connection_id: 'verified-1', username, company_name: 'Công ty đã xác thực', status: 'connected', token_generation: 0, created_at: 'now', updated_at: 'now', reused: false };
+        accounts.push(account);
+        return account;
+      },
+      get: async () => accounts[0], reconnect: async () => accounts[0], revoke: async () => undefined,
+    } } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  await page.getByLabel('Mã số thuế (MST)').fill('0100000000');
+  await page.getByLabel('Mật khẩu').fill('synthetic-password');
+  await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: /Quay lại/ }).click();
+  await expect(page.getByText('Công ty đã xác thực')).toBeVisible();
+  await expect(page.getByText('Chưa kiểm tra đăng nhập')).toHaveCount(0);
+});
+
 test('invoice scope menu follows Figma node 4:654 and closes outside', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
@@ -154,6 +178,8 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Tổng quan')).not.toBeChecked();
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Chi tiết')).not.toBeChecked();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
+  await page.getByLabel('Từ ngày đồng bộ').fill('2026-01-01');
+  await page.getByLabel('Đến ngày đồng bộ').fill('2026-01-31');
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Vui lòng chọn ít nhất');
   await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
@@ -162,8 +188,8 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ directions: ['sold'], scopes: ['detail'], data_types: ['invoice'] });
+  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'] });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {

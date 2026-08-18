@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -117,6 +118,9 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 return storage.get_account_secret(params["account_id"]), False
             if method == "accounts.update":
                 return storage.update_account(params), False
+            if method == "accounts.update_company":
+                storage.update_account_company(params["account_id"], params["company_name"], params["timestamp"])
+                return storage.get_account(params["account_id"]), False
             if method == "accounts.delete":
                 storage.delete_account(params["account_id"])
                 return None, False
@@ -177,6 +181,28 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if logger is not None:
                 logger.exception("crawler_health_failed")
             raise RpcError(-32050, "crawler_runtime_unavailable") from None
+    if method == "crawler.verify_account":
+        if (not isinstance(params, dict)
+                or not isinstance(params.get("username"), str)
+                or re.fullmatch(r"\d{10}(?:-\d{3})?", params["username"]) is None
+                or not isinstance(params.get("password"), str)
+                or not 1 <= len(params["password"]) <= 256):
+            raise RpcError(-32602, "invalid_params")
+        if storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from app.services.portal_session import TaxPortalSession
+            portal = TaxPortalSession(username=params["username"], password=params["password"])
+            portal.login()
+            company = portal.get_company_info()
+            company_name = str(company.get("name") or "").strip()
+            if not company_name:
+                raise ValueError("missing_company_name")
+            return {"company_name": company_name[:300]}, False
+        except Exception:
+            if logger is not None:
+                logger.warning("portal_account_verification_failed")
+            raise RpcError(-32051, "authentication_failed") from None
     if method == "artifacts.pdf_health":
         try:
             from playwright.sync_api import sync_playwright
