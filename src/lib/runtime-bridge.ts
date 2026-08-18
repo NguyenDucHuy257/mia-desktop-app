@@ -37,6 +37,8 @@ export interface MiaRuntimeBridge {
   artifacts: {
     selectDirectory(): Promise<string | null>;
     export(request: { destination: string; connection_ids: string[]; kinds: Array<'xml' | 'html' | 'pdf' | 'excel'> }): Promise<{ count: number; files: string[] }>;
+    list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
+    openDirectory(directory: string): Promise<boolean>;
   };
   updates: {
     status(): Promise<UpdateStatus>;
@@ -52,6 +54,8 @@ export interface MiaRuntimeBridge {
 }
 
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
+export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: 'purchase' | 'sold' | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
+export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: 'purchase' | 'sold' | null; size: number; updated_at: number }
 
 export interface ResultQuery { connection_id: string; cursor?: string | null; limit?: number; search?: string; direction?: 'purchase' | 'sold' | null }
 export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }

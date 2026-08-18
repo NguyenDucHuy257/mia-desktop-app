@@ -9,6 +9,7 @@ coverage/
 build/
 runtime/build/
 runtime/dist/
+runtime/browsers/
 __pycache__/
 *.py[cod]
 .env

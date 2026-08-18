@@ -24,10 +24,11 @@
     "build:web": "vite build",
     "build": "npm run typecheck && npm run check:electron && npm run check:runtime && npm run check:offline-boundary && npm run test && npm run build:web && npm run check:renderer-bundle",
     "prepare:runtime-builder": "python -m pip install --disable-pip-version-check -r runtime/requirements-build.txt -r runtime/requirements-crawler.txt",
+    "prepare:runtime-browser": "cross-env PLAYWRIGHT_BROWSERS_PATH=runtime/browsers python -m playwright install chromium",
     "build:runtime:win": "cross-env SETUPTOOLS_USE_DISTUTILS=local python -m PyInstaller --noconfirm --clean --distpath runtime/dist --workpath runtime/build runtime/mia-runtime.spec",
     "test:runtime:packaged": "node scripts/smoke-packaged-runtime.mjs",
     "scan:package": "node scripts/scan-packaged-secrets.mjs",
-    "package:win": "npm run prepare:runtime-builder && npm run build:runtime:win && npm run test:runtime:packaged && npm run build && electron-builder --win nsis --x64 --publish never && npm run scan:package",
+    "package:win": "npm run prepare:runtime-builder && npm run prepare:runtime-browser && npm run build:runtime:win && npm run test:runtime:packaged && npm run build && electron-builder --win nsis --x64 --publish never && npm run scan:package",
     "verify": "npm run build",
     "verify:all": "npm run build && npm run test:visual"
   },
@@ -65,6 +66,10 @@
       {
         "from": "runtime/dist/mia-runtime",
         "to": "runtime"
+      },
+      {
+        "from": "runtime/browsers",
+        "to": "runtime-browsers"
       }
     ],
     "directories": {
