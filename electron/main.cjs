@@ -9,6 +9,7 @@ const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 const { createResultBroker } = require('./result-broker.cjs');
 const { createArtifactBroker } = require('./artifact-file-broker.cjs');
+const { readPreferences, readSanitizedLogs, writePreferences } = require('./local-preferences.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let jobLifecycleBroker;
@@ -138,6 +139,18 @@ ipcMain.handle('mia:artifacts:open-directory', async (event, directory) => {
   const error = await shell.openPath(path.resolve(directory));
   if (error) throw new Error('artifact_directory_open_failed');
   return true;
+});
+ipcMain.handle('mia:preferences:get', (event) => {
+  assertTrustedSender(event);
+  return readPreferences(app.getPath('userData'));
+});
+ipcMain.handle('mia:preferences:set', (event, value) => {
+  assertTrustedSender(event);
+  return writePreferences(app.getPath('userData'), value);
+});
+ipcMain.handle('mia:logs:list', (event) => {
+  assertTrustedSender(event);
+  return readSanitizedLogs(app.getPath('userData'));
 });
 function localAccounts() {
   if (!localAccountBroker) localAccountBroker = createLocalAccountBroker(() => offlineRuntime, secureProtector());

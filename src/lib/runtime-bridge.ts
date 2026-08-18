@@ -40,12 +40,18 @@ export interface MiaRuntimeBridge {
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     openDirectory(directory: string): Promise<boolean>;
   };
+  preferences: {
+    get(): Promise<LocalPreferences>;
+    set(value: LocalPreferences): Promise<LocalPreferences>;
+  };
+  logs: { list(): Promise<string[]> };
   results: {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
   };
 }
 
+export interface LocalPreferences { concurrency: number; retries: number }
 export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: 'purchase' | 'sold' | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
 export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: 'purchase' | 'sold' | null; size: number; updated_at: number }
 export interface ResultQuery { connection_id: string; cursor?: string | null; limit?: number; search?: string; direction?: 'purchase' | 'sold' | null }
