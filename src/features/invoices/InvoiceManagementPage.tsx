@@ -127,8 +127,8 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   const activeJob = Boolean(job.status && !TERMINAL_JOB_STATUSES.has(job.status.status));
   const allRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
     taxCode: account.username,
-    company: '—',
-    status: account.status === 'active' ? 'completed' : 'pending',
+    company: account.company_name || '—',
+    status: account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending',
     selected: account.connection_id === connectionId,
     progress: 0,
     progressLabel: account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status,

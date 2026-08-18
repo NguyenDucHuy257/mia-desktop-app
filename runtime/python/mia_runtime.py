@@ -15,11 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mia_logging import configure_logging
 from mia_storage import Storage, StorageError
+from mia_crawler import CrawlerCoordinator
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
-RUNTIME_VERSION = "0.4.0"
+RUNTIME_VERSION = "0.4.1"
 storage: Storage | None = None
+crawler: CrawlerCoordinator | None = None
 logger = None
 
 
@@ -58,7 +60,7 @@ def validate_request(value: Any) -> tuple[str | int, str, Any]:
 
 
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
-    global storage, logger
+    global storage, crawler, logger
     if method == "system.health":
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -86,6 +88,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         storage = Storage(data_dir / "mia.sqlite3")
         try:
             result = storage.initialize()
+            crawler = CrawlerCoordinator(storage, data_dir)
             logger = configure_logging(data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO"))
             logger.info("storage_initialized schema_version=%s", result["schema_version"])
             return result, False
@@ -108,6 +111,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 return storage.list_accounts(), False
             if method == "accounts.get":
                 return storage.get_account(params["account_id"]), False
+            if method == "accounts.secret":
+                return storage.get_account_secret(params["account_id"]), False
             if method == "accounts.update":
                 return storage.update_account(params), False
             if method == "accounts.delete":
@@ -134,7 +139,10 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 return storage.job_summary(params["job_id"]), False
             if method == "jobs.cancel":
                 timestamp = params.get("timestamp") or datetime.now(timezone.utc).isoformat()
-                return storage.cancel_job(params["job_id"], timestamp), False
+                result = storage.cancel_job(params["job_id"], timestamp)
+                if crawler is not None:
+                    crawler.cancel(params["job_id"])
+                return result, False
             if method == "jobs.transition":
                 return storage.transition_job(params), False
             if method == "jobs.clear":
@@ -144,6 +152,27 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32030, error.code) from None
+    if method == "crawler.start":
+        if storage is None or crawler is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            required = ("job_id", "connection_id", "username", "password", "intent")
+            if not isinstance(params, dict) or any(key not in params for key in required):
+                raise RpcError(-32602, "invalid_params")
+            return crawler.start(dict(params)), False
+        except RpcError:
+            raise
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+    if method == "crawler.health":
+        if crawler is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            return crawler.health(), False
+        except Exception:
+            if logger is not None:
+                logger.exception("crawler_health_failed")
+            raise RpcError(-32050, "crawler_runtime_unavailable") from None
     if method.startswith("results."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")

@@ -47,7 +47,7 @@ class StorageTests(unittest.TestCase):
             connection = sqlite3.connect(database)
             connection.execute("BEGIN")
             connection.execute(
-                "INSERT INTO accounts VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO accounts(account_id, normalized_tax_code, encrypted_password, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                 ("account", "tax-code", b"encrypted", "unchecked", "now", "now"),
             )
             connection.close()

@@ -18,7 +18,7 @@ let runtimeShutdownStarted = false;
 
 function jobs() {
   if (!jobLifecycleBroker) {
-    jobLifecycleBroker = createJobLifecycleBroker(() => offlineRuntime);
+    jobLifecycleBroker = createJobLifecycleBroker(() => offlineRuntime, () => new Date().toISOString(), secureProtector());
   }
   return jobLifecycleBroker;
 }
