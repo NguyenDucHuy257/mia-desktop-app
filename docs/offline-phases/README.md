@@ -35,3 +35,7 @@ Ngoài ra phải kiểm tra child-process cleanup, secret scan cho mã Python, S
 - `BLOCKED`: thiếu điều kiện bên ngoài không thể thay thế hợp lệ.
 
 Không cập nhật baseline visual bằng ảnh của app để che regression. Baseline phải xuất trực tiếp từ Figma.
+
+## Thứ tự phase
+
+Phase 0–6 → [Phase 6.5 hoàn thiện toàn bộ UI/UX](PHASE-06-5-FULL-UI.md) → Phase 7 release → Phase 8 acceptance/soak.
