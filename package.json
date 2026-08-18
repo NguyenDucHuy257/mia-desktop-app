@@ -13,7 +13,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:electron": "cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "typecheck": "tsc -b",
-    "check:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/device-identity.cjs && node --check electron/security-policy.cjs && node --check electron/mia-api-client.cjs && node --check electron/account-connection-broker.cjs && node --check electron/local-account-broker.cjs && node --check electron/job-lifecycle-broker.cjs && node --check electron/result-broker.cjs && node --check electron/artifact-file-broker.cjs && node --check electron/local-preferences.cjs && node --check electron/python-runtime-client.cjs && node --check electron/offline-runtime-manager.cjs",
+    "check:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/device-identity.cjs && node --check electron/security-policy.cjs && node --check electron/mia-api-client.cjs && node --check electron/account-connection-broker.cjs && node --check electron/local-account-broker.cjs && node --check electron/job-lifecycle-broker.cjs && node --check electron/result-broker.cjs && node --check electron/artifact-file-broker.cjs && node --check electron/local-preferences.cjs && node --check electron/release-updater.cjs && node --check electron/python-runtime-client.cjs && node --check electron/offline-runtime-manager.cjs",
     "check:runtime": "python -m unittest discover -s runtime/python/tests -p test_*.py",
     "check:offline-boundary": "node scripts/check-offline-boundary.mjs && node scripts/verify-vendored-crawler.mjs",
     "test": "vitest run",
@@ -27,12 +27,14 @@
     "prepare:runtime-browser": "cross-env PLAYWRIGHT_BROWSERS_PATH=runtime/browsers python -m playwright install chromium",
     "build:runtime:win": "cross-env SETUPTOOLS_USE_DISTUTILS=local python -m PyInstaller --noconfirm --clean --distpath runtime/dist --workpath runtime/build runtime/mia-runtime.spec",
     "test:runtime:packaged": "node scripts/smoke-packaged-runtime.mjs",
-    "package:win": "npm run prepare:runtime-builder && npm run prepare:runtime-browser && npm run build:runtime:win && npm run test:runtime:packaged && npm run build && electron-builder --win nsis --x64 --publish never",
+    "scan:package": "node scripts/scan-packaged-secrets.mjs",
+    "package:win": "npm run prepare:runtime-builder && npm run prepare:runtime-browser && npm run build:runtime:win && npm run test:runtime:packaged && npm run build && electron-builder --win nsis --x64 --publish never && npm run scan:package",
     "verify": "npm run build",
     "verify:all": "npm run build && npm run test:visual"
   },
   "dependencies": {
     "@fontsource/inter": "5.3.0",
+    "electron-updater": "^6.8.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
@@ -77,10 +79,13 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
+    "publish": [{ "provider": "github", "owner": "NguyenDucHuy257", "repo": "mia-desktop-app", "releaseType": "release" }],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
