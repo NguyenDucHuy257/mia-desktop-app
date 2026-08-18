@@ -7,6 +7,12 @@ const root = path.resolve('runtime/python/vendor/mia_crawl_service');
 const manifestPath = path.join(root, 'VENDOR-MANIFEST.json');
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 
+function canonicalBytes(buffer) {
+  // Git may materialize text files as CRLF on Windows and LF on CI. The
+  // integrity manifest protects source content, not the checkout convention.
+  return buffer.includes(0) ? buffer : Buffer.from(buffer.toString('utf8').replaceAll('\r\n', '\n'));
+}
+
 async function filesBelow(directory) {
   const result = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -21,7 +27,7 @@ async function filesBelow(directory) {
 const actual = {};
 for (const file of (await filesBelow(root)).sort()) {
   const relative = path.relative(root, file).replaceAll('\\', '/');
-  actual[relative] = createHash('sha256').update(await readFile(file)).digest('hex');
+  actual[relative] = createHash('sha256').update(canonicalBytes(await readFile(file))).digest('hex');
 }
 
 if (manifest.source_commit !== '64ebb6ec0a35c784e194e8ce116c4bb4cf1b19d3') {
