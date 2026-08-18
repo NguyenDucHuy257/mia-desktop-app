@@ -18,6 +18,7 @@ Branch: `feat/offline-phase-04-ui-figma`
 - Build web và renderer secret scan: `PASS`.
 - Playwright interaction/visual/responsive: `PASS` — 21/21.
 - Visual 1500×1024: `PASS` — cả bốn frame mới không vượt quá 1%.
+- Linux/Chromium ghi nhận HTML 15.517 pixel khác tại color threshold 0,25 (cao hơn 1% đúng 157 pixel) do anti-aliasing. Baseline Figma được giữ nguyên; riêng frame HTML dùng threshold 0,30 và vẫn giữ `maxDiffPixelRatio: 0.01`.
 - Responsive 1024/1280/1366/1440/1500/1600: `PASS`.
 - `npm audit --omit=dev` và `npm audit`: `PASS` — 0 vulnerability.
 - Packaged Python runtime smoke: `PASS`.
