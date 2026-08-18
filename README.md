@@ -6,7 +6,7 @@
 React renderer -> IPC allowlist -> Electron main -> JSON-RPC -> Python runtime -> SQLite
 ```
 
-Node.js bắt buộc từ phiên bản 24. Python system hiện chỉ dùng cho prototype Phase 0; runtime đóng gói thuộc Phase 1.
+Node.js bắt buộc từ phiên bản 24. Python system chỉ cần trên máy phát triển; Phase 1 đóng gói `mia-runtime.exe` vào installer để máy người dùng không phải cài Python.
 
 ## Chạy local
 
@@ -49,3 +49,4 @@ Xem:
 - [SQLite schema](docs/offline-phases/OFFLINE-SQLITE-SCHEMA.md)
 - [Source audit](docs/offline-phases/OFFLINE-SOURCE-AUDIT.md)
 - [Báo cáo test](docs/TEST-REPORT.md)
+- [Hướng dẫn kiểm chứng tay Phase 1](docs/offline-phases/PHASE-01-MANUAL-TEST.md)
