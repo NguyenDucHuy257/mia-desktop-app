@@ -1,4 +1,5 @@
 import json
+import importlib
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -17,7 +18,8 @@ class CrawlerAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(mia_runtime, "configure_logging"):
                 mia_runtime.dispatch("storage.initialize", {"data_dir": str(Path(directory).resolve())})
-            with patch("app.services.portal_session.TaxPortalSession") as session_type:
+            portal_session = importlib.import_module("app.services.portal_session")
+            with patch.object(portal_session, "TaxPortalSession") as session_type:
                 session = session_type.return_value
                 session.get_company_info.return_value = {"name": "Synthetic Company", "token": "must-not-return"}
                 result, should_stop = mia_runtime.dispatch("crawler.verify_account", {
