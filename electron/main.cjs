@@ -4,21 +4,17 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
-const { createAccountConnectionBroker } = require('./account-connection-broker.cjs');
 const { createMiaApiClientFromEnvironment } = require('./mia-api-client.cjs');
 const { createJobLifecycleBroker, createJobStore } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
+const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let accountApiClient;
 let jobLifecycleBroker;
 let offlineRuntime;
+let localAccountBroker;
 let runtimeShutdownStarted = false;
-
-const accountConnectionBroker = createAccountConnectionBroker(() => {
-  if (!accountApiClient) accountApiClient = createMiaApiClientFromEnvironment();
-  return accountApiClient;
-});
 
 function jobs() {
   if (!jobLifecycleBroker) {
@@ -122,21 +118,30 @@ ipcMain.handle('mia:license-store', (event, token) => {
   );
   return true;
 });
+function localAccounts() {
+  if (!localAccountBroker) localAccountBroker = createLocalAccountBroker(() => offlineRuntime, secureProtector());
+  return localAccountBroker;
+}
+
 ipcMain.handle('mia:account-connections:create', (event, credentials) => {
   assertTrustedSender(event);
-  return accountConnectionBroker.create(credentials);
+  return localAccounts().create(credentials);
+});
+ipcMain.handle('mia:account-connections:list', (event) => {
+  assertTrustedSender(event);
+  return localAccounts().list();
 });
 ipcMain.handle('mia:account-connections:get', (event, connectionId) => {
   assertTrustedSender(event);
-  return accountConnectionBroker.get(connectionId);
+  return localAccounts().get(connectionId);
 });
 ipcMain.handle('mia:account-connections:reconnect', (event, connectionId, credentials) => {
   assertTrustedSender(event);
-  return accountConnectionBroker.reconnect(connectionId, credentials);
+  return localAccounts().reconnect(connectionId, credentials);
 });
 ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
   assertTrustedSender(event);
-  return accountConnectionBroker.revoke(connectionId);
+  return localAccounts().revoke(connectionId);
 });
 for (const [channel, method] of [
   ['mia:jobs:resume', 'resume'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],

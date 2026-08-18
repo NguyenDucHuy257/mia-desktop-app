@@ -13,6 +13,7 @@ export interface MiaAccountCredentials {
 
 export interface MiaAccountConnectionsBridge {
   create(credentials: MiaAccountCredentials): Promise<AccountConnection>;
+  list(): Promise<AccountConnection[]>;
   get(connectionId: string): Promise<AccountConnection>;
   reconnect(connectionId: string, credentials: MiaAccountCredentials): Promise<AccountConnection>;
   revoke(connectionId: string): Promise<void>;

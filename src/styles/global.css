@@ -68,6 +68,7 @@ button { color: inherit; }
 .table-header { height: 48px; padding: 0 12px; background: #f1f5f9; color: #464958; font-size: 13px; font-weight: 600; }
 .selection-box { width: 17px; height: 17px; border: 1px solid #94a3b8; border-radius: 2px; color: #fff; display: grid; place-items: center; font-size: 12px; line-height: 1; }
 .selection-box[data-checked="true"] { border-color: #1d4ed8; background: #1d4ed8; }
+.selection-button { border: 0; padding: 0; background: transparent; cursor: pointer; }
 .table-body { height: calc(100% - 48px); overflow: hidden; }
 .table-row { height: 63px; padding: 0 12px; border-bottom: 1px solid var(--mia-border-cool); font-size: 13px; }
 .table-row[data-status="failed"] { color: var(--mia-danger); background: #fff1f2; }
