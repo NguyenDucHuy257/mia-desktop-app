@@ -26,3 +26,11 @@ Branch: `feat/offline-phase-04-results`
 - Regression 421 items đạt tuyệt đối.
 - Kết quả đúng sau restart.
 - Visual đạt gate hoặc có ngoại lệ được người dùng duyệt và ghi số diff thật.
+
+## Hiện trạng triển khai
+
+- SQLite schema v3, upsert overview/detail idempotent và opaque keyset cursor.
+- Renderer chỉ được đọc overview/detail qua IPC allowlist; import chỉ dành cho Python worker.
+- UI mở từ nút ba chấm tài khoản, có Tổng quan/Chi tiết, search, direction filter, loading, empty, error/retry và Tải thêm.
+- Regression synthetic 421 items PASS tuyệt đối; crawler portal thật vẫn BLOCKED bởi gate provenance/license.
+- Visual Figma hai frame mới NOT RUN cho đến khi có baseline export trực tiếp từ Figma.

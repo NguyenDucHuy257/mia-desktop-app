@@ -88,6 +88,24 @@ button { color: inherit; }
 .failure-message strong { font-size: 12px; font-weight: 500; }
 .failure-message span { color: #555b68; font-size: 11px; }
 .row-actions { color: #64748b; font-size: 18px; letter-spacing: 4px; text-align: center; }
+.row-action-group { display: flex; justify-content: center; gap: 4px; }
+.row-action-group button { width: 28px; height: 30px; padding: 0; border: 0; background: transparent; color: #64748b; font-size: 18px; cursor: pointer; }
+.results-page { height: 100%; padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow: auto; background: #fff; }
+.results-header { display: flex; align-items: center; gap: 18px; }
+.results-header h1 { margin: 0; font-size: 22px; }
+.results-header button, .results-tabs button { border: 0; background: transparent; color: var(--mia-green-700); font-weight: 700; }
+.results-tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--mia-border-warm); }
+.results-tabs button { padding: 10px 16px; }
+.results-tabs button[data-active="true"] { border-bottom: 2px solid var(--mia-green-700); }
+.results-filters { display: flex; gap: 12px; }
+.results-filters input, .results-filters select { height: 42px; padding: 0 12px; border: 1px solid var(--mia-border-cool); border-radius: 8px; background: #fff; }
+.results-filters input { width: 320px; }
+.results-table { border: 1px solid var(--mia-border-cool); border-radius: 8px; overflow: hidden; }
+.results-row { min-height: 48px; padding: 8px 14px; display: grid; grid-template-columns: 120px 220px minmax(0, 1fr); align-items: center; gap: 12px; border-bottom: 1px solid var(--mia-border-cool); font-size: 13px; }
+.results-row span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.results-row--header { background: #f1f5f9; font-weight: 700; }
+.results-state { padding: 48px; display: grid; place-items: center; gap: 12px; color: var(--mia-text-muted); }
+.results-more { align-self: center; min-width: 120px; height: 38px; border: 0; border-radius: 12px; color: #fff; background: var(--mia-green-700); }
 .pagination { height: 58px; flex: 0 0 58px; padding: 0 24px; background: #f8fafc; display: flex; align-items: center; justify-content: space-between; color: #464958; font-size: 12px; }
 .pagination > div { display: flex; align-items: center; gap: 4px; }
 .pagination button { min-width: 32px; height: 32px; border: 0; background: transparent; }

@@ -112,3 +112,16 @@ Chưa chạy:
 - Offline boundary, renderer secret scan và npm audit: PASS — 0 vulnerability.
 - Small-job portal thật: BLOCKED — crawler/CAPTCHA artifacts chưa vượt gate provenance/license, không giả lập thành PASS.
 - Kiểm chứng tay Windows Phase 3: PASS — người dùng nghiệm thu ngày 2026-08-18 theo `PHASE-03-MANUAL-TEST.md`.
+
+## Offline Phase 4 — overview/detail local
+
+- SQLite schema v3 + idempotent upsert: PASS.
+- Regression overview/detail 421 items: PASS — duyệt hết cursor đủ 421, không trùng, không thiếu; import lặp không nhân dòng.
+- Cursor rỗng/hỏng/trang cuối và repeated-cursor guard: PASS.
+- Search + purchase/sold filter: PASS.
+- IPC broker validation và renderer allowlist: PASS; import không expose renderer.
+- UI loading/empty/error/retry, Tổng quan/Chi tiết và Tải thêm: PASS — Playwright 11/11.
+- Unit hiện tại: PASS — Python 10/10; Vitest 60/60.
+- Portal dataset thật: BLOCKED — crawler/CAPTCHA artifacts chưa vượt provenance/license gate.
+- Visual Figma `1:466`, `85:16452`: NOT RUN — chưa có baseline export trực tiếp trong repo.
+- Kiểm chứng tay Windows Phase 4: NOT RUN — theo `PHASE-04-MANUAL-TEST.md`.

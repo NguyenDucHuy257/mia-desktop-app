@@ -174,6 +174,47 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(unchanged["status"], "completed")
             self.assertEqual(unchanged["event_sequence"], completed["event_sequence"])
 
+    def test_overview_cursor_reads_all_421_without_duplicate_or_missing_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Storage(Path(directory) / "mia.sqlite3")
+            storage.initialize()
+            storage.create_account({"account_id": "account-1", "tax_code": "0101234567", "encrypted_password": "ciphertext", "timestamp": "now"})
+            items = [{
+                "direction": "purchase" if index % 2 else "sold",
+                "business_key": f"invoice-{index:04d}",
+                "payload": {"invoice_number": f"HD-{index:04d}", "company": f"Company {index}"},
+            } for index in range(421)]
+            storage.import_overviews({"connection_id": "account-1", "items": items, "timestamp": "now"})
+            storage.import_overviews({"connection_id": "account-1", "items": items, "timestamp": "later"})
+            found, cursor = [], None
+            while True:
+                page = storage.query_overviews({"connection_id": "account-1", "limit": 37, "cursor": cursor})
+                found.extend(item["business_key"] for item in page["items"])
+                cursor = page["pagination"]["next_cursor"]
+                if not page["pagination"]["has_more"]:
+                    break
+            self.assertEqual(len(found), 421)
+            self.assertEqual(len(set(found)), 421)
+            self.assertEqual(storage.query_overviews({"connection_id": "account-1", "direction": "purchase", "limit": 200})["items"][0]["direction"], "purchase")
+            self.assertEqual(len(storage.query_overviews({"connection_id": "account-1", "search": "HD-0420", "limit": 10})["items"]), 1)
+            with self.assertRaisesRegex(StorageError, "invalid_result_cursor"):
+                storage.query_overviews({"connection_id": "account-1", "cursor": "broken", "limit": 10})
+            details = [{
+                "direction": item["direction"], "business_key": item["business_key"],
+                "line_key": "line-1", "payload": {"product": f"Product {index}", "amount": index},
+            } for index, item in enumerate(items)]
+            storage.import_details({"connection_id": "account-1", "items": details})
+            storage.import_details({"connection_id": "account-1", "items": details})
+            detail_keys, cursor = [], None
+            while True:
+                page = storage.query_details({"connection_id": "account-1", "limit": 41, "cursor": cursor})
+                detail_keys.extend((item["business_key"], item["line_key"]) for item in page["items"])
+                cursor = page["pagination"]["next_cursor"]
+                if not page["pagination"]["has_more"]:
+                    break
+            self.assertEqual(len(detail_keys), 421)
+            self.assertEqual(len(set(detail_keys)), 421)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,15 @@ Business method sẽ được version hóa và thêm theo từng phase. Credenti
 | `jobs.transition` | Worker nội bộ cập nhật trạng thái/progress bằng optimistic `expected_sequence`; không expose qua renderer IPC |
 | `jobs.clear` | Xóa các job terminal; không xóa job đang chạy |
 
+## Method Phase 4
+
+| Method | Mục đích |
+|---|---|
+| `results.import_overviews` | Worker nội bộ upsert overview theo business key; không expose renderer |
+| `results.import_details` | Worker nội bộ upsert detail theo invoice + line key; không expose renderer |
+| `results.overview` | Đọc overview bằng opaque keyset cursor, search và direction filter |
+| `results.details` | Đọc detail bằng opaque keyset cursor, search và direction filter |
+
 ## Error
 
 Runtime dùng JSON-RPC code chuẩn `-32700`, `-32600`, `-32601`, `-32602`, `-32603` và message ổn định, không trả exception/raw traceback. Electron chuyển lỗi thành code sanitize cho renderer.

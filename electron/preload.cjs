@@ -38,4 +38,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     cancel: (jobId) => invokeResult('mia:jobs:cancel', jobId),
     clear: () => invokeResult('mia:jobs:clear'),
   }),
+  results: Object.freeze({
+    overview: (query) => invokeResult('mia:results:overview', query),
+    details: (query) => invokeResult('mia:results:details', query),
+  }),
 }));

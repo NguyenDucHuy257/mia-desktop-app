@@ -199,3 +199,29 @@ test('shows job errors in a centered red error dialog', async ({ page }) => {
   await expect(page.locator('.notice-icon[data-kind="error"]')).toHaveText('×');
   await expect(page.getByRole('button', { name: 'Đóng' })).toBeVisible();
 });
+
+test('opens local overview/detail results and paginates by cursor', async ({ page }) => {
+  await page.addInitScript(() => {
+    const pageFor = (kind: string, cursor?: string | null) => ({
+      items: [{ overview_id: cursor ? 2 : 1, detail_id: cursor ? 2 : 1, direction: 'purchase', business_key: `${kind}-${cursor ?? 'first'}`, line_key: 'line-1', payload: { company: 'Demo' } }],
+      pagination: { limit: 50, has_more: !cursor, next_cursor: cursor ? null : 'djE6MQ' },
+    });
+    Object.defineProperty(window, 'miaRuntime', { value: { results: {
+      overview: async (query: { cursor?: string | null }) => pageFor('overview', query.cursor),
+      details: async (query: { cursor?: string | null }) => pageFor('detail', query.cursor),
+    } } });
+  });
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
+  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: /Quay lại/ }).click();
+  await page.getByRole('button', { name: 'Xem kết quả 0101234567' }).click();
+  await expect(page.getByText('overview-first')).toBeVisible();
+  await page.getByRole('button', { name: 'Tải thêm' }).click();
+  await expect(page.getByText('overview-djE6MQ')).toBeVisible();
+  await page.getByRole('button', { name: 'Chi tiết' }).click();
+  await expect(page.getByText('detail-first')).toBeVisible();
+});

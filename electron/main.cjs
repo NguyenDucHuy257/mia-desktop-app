@@ -7,11 +7,13 @@ const { isTrustedAppUrl } = require('./security-policy.cjs');
 const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
+const { createResultBroker } = require('./result-broker.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let jobLifecycleBroker;
 let offlineRuntime;
 let localAccountBroker;
+let resultBroker;
 let runtimeShutdownStarted = false;
 
 function jobs() {
@@ -116,6 +118,10 @@ function localAccounts() {
   if (!localAccountBroker) localAccountBroker = createLocalAccountBroker(() => offlineRuntime, secureProtector());
   return localAccountBroker;
 }
+function results() {
+  if (!resultBroker) resultBroker = createResultBroker(() => offlineRuntime);
+  return resultBroker;
+}
 
 ipcMain.handle('mia:account-connections:create', (event, credentials) => {
   assertTrustedSender(event);
@@ -144,6 +150,12 @@ for (const [channel, method] of [
   ipcMain.handle(channel, (event, ...args) => {
     assertTrustedSender(event);
     return jobs()[method](...args);
+  });
+}
+for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:results:details', 'details']]) {
+  ipcMain.handle(channel, (event, query) => {
+    assertTrustedSender(event);
+    return results()[method](query);
   });
 }
 
