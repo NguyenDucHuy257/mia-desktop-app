@@ -95,6 +95,9 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
     );
     const successful = results.filter((result) => result.status === 'fulfilled').length;
     const failed = results.length - successful;
+    for (const result of results) {
+      if (result.status === 'fulfilled') onConnectionCreated?.(result.value.connection_id);
+    }
 
     if (failed === 0) {
       setBulkValue('');

@@ -131,7 +131,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
     setSelectionError(null);
     startMany(selectedAccountIds.map((connection_id) => ({
       connection_id, date_from: dateFrom, date_to: dateTo,
-      directions, query_types: ['query'], scopes, data_types: ['invoice'],
+      directions, query_types: ['query', 'sco-query'], scopes, data_types: ['invoice'],
     })));
   }
 

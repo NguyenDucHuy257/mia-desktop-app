@@ -39,10 +39,10 @@ function validateConnectionId(value) {
 function serializeError(error) {
   const localCodes = new Set([
     'account_not_found', 'account_duplicate', 'account_in_use', 'database_locked', 'database_unavailable',
-    'job_not_found', 'job_conflict', 'stale_job_update', 'invalid_job_transition',
+    'job_not_found', 'job_conflict', 'stale_job_update', 'invalid_job_transition', 'authentication_failed',
   ]);
   if (localCodes.has(error?.message)) {
-    return { code: error.message, message: 'Local account operation failed.' };
+    return { code: error.message, message: error.message === 'authentication_failed' ? 'Account verification failed.' : 'Local account operation failed.' };
   }
   if (error instanceof MiaApiError) {
     return {
