@@ -17,3 +17,4 @@
 - Clean Windows install/update/network-loss/rollback/uninstall matrix: NOT RUN.
 - Unsigned installer is a test artifact only and must not be called production.
 - Local NSIS retry: FAIL (`EPERM` while electron-builder renamed a freshly extracted `win-unpacked.tmp` directory); runtime build and packaged-runtime smoke passed. CI Windows packaging is the authoritative retry because earlier stacked phase jobs package successfully there.
+- Bundled-browser gate: PASS; packaged `mia-runtime.exe` launched Chromium from the packaged resource path during smoke testing.
