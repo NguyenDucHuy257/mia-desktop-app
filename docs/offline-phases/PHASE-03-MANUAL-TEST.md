@@ -1,5 +1,7 @@
 # Phase 3 — hướng dẫn kiểm chứng tay
 
+Trạng thái: **PASS** — người dùng nghiệm thu trên Windows ngày 2026-08-18. Gate portal thật ở cuối tài liệu vẫn `BLOCKED` độc lập.
+
 ## Chuẩn bị
 
 1. Cài artifact Windows của PR Phase 3 và mở app.
