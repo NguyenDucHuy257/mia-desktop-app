@@ -4,13 +4,11 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
-const { createMiaApiClientFromEnvironment } = require('./mia-api-client.cjs');
-const { createJobLifecycleBroker, createJobStore } = require('./job-lifecycle-broker.cjs');
+const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
-let accountApiClient;
 let jobLifecycleBroker;
 let offlineRuntime;
 let localAccountBroker;
@@ -18,11 +16,7 @@ let runtimeShutdownStarted = false;
 
 function jobs() {
   if (!jobLifecycleBroker) {
-    const store = createJobStore(path.join(app.getPath('userData'), 'jobs', 'active-job.json'));
-    jobLifecycleBroker = createJobLifecycleBroker(() => {
-      if (!accountApiClient) accountApiClient = createMiaApiClientFromEnvironment();
-      return accountApiClient;
-    }, store);
+    jobLifecycleBroker = createJobLifecycleBroker(() => offlineRuntime);
   }
   return jobLifecycleBroker;
 }

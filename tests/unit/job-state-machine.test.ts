@@ -32,4 +32,16 @@ describe('job lifecycle state machine', () => {
     } });
     expect(recovered).toMatchObject({ phase: 'polling', retryCount: 0, message: null });
   });
+
+  it('does not let an older poll response overwrite a newer transition', () => {
+    const newer = jobReducer(initialJobState, { type: 'status', value: {
+      job_id: 'job-1', status: 'cancelling', stage: 'cancelling', overall_percent: 60,
+      current_month: null, event_sequence: 4, updated_at: '2026-08-18T00:04:00Z', error: null,
+    } });
+    const stale = jobReducer(newer, { type: 'status', value: {
+      job_id: 'job-1', status: 'running', stage: 'running', overall_percent: 40,
+      current_month: null, event_sequence: 3, updated_at: '2026-08-18T00:03:00Z', error: null,
+    } });
+    expect(stale).toBe(newer);
+  });
 });

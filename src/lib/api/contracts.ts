@@ -27,6 +27,8 @@ export interface CreateJobRequest {
   date_to: string;
   directions: InvoiceDirection[];
   query_types: InvoiceQueryType[];
+  scopes?: Array<'overview' | 'detail'>;
+  data_types?: Array<'invoice' | 'xml' | 'html' | 'pdf'>;
   force_refresh?: boolean;
   refresh_latest_month?: boolean;
   result_scope?: 'overview' | 'detail';
@@ -46,6 +48,7 @@ export interface JobStatusResponse {
   status: JobStatus;
   stage: string | null;
   overall_percent: number;
+  event_sequence?: number;
   current_month: null | {
     key: string;
     index: number;

@@ -6,6 +6,8 @@ import json
 import os
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ from mia_storage import Storage, StorageError
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
-RUNTIME_VERSION = "0.2.0"
+RUNTIME_VERSION = "0.3.0"
 storage: Storage | None = None
 logger = None
 
@@ -115,6 +117,33 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32020, error.code) from None
+    if method.startswith("jobs."):
+        if storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            if method == "jobs.start":
+                value = dict(params)
+                value["job_id"] = value.get("job_id") or f"job_{uuid.uuid4()}"
+                value["timestamp"] = value.get("timestamp") or datetime.now(timezone.utc).isoformat()
+                return storage.create_job(value), False
+            if method == "jobs.resume":
+                return storage.resume_job(), False
+            if method == "jobs.status":
+                return storage.get_job(params["job_id"]), False
+            if method == "jobs.summary":
+                return storage.job_summary(params["job_id"]), False
+            if method == "jobs.cancel":
+                timestamp = params.get("timestamp") or datetime.now(timezone.utc).isoformat()
+                return storage.cancel_job(params["job_id"], timestamp), False
+            if method == "jobs.transition":
+                return storage.transition_job(params), False
+            if method == "jobs.clear":
+                storage.clear_terminal_jobs()
+                return None, False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+        except StorageError as error:
+            raise RpcError(-32030, error.code) from None
     raise RpcError(-32601, "method_not_found")
 
 

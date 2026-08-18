@@ -28,8 +28,8 @@ describe('OfflineRuntimeManager', () => {
     const first = runtime.start();
     const second = runtime.start();
     expect(first).toBe(second);
-    await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.2.0' });
-    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 1, integrity: 'ok' });
+    await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.3.0' });
+    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 2, integrity: 'ok' });
   });
 
   it('restarts after a crash and preserves the database', async () => {
@@ -37,7 +37,26 @@ describe('OfflineRuntimeManager', () => {
     await runtime.start();
     runtime.terminateForRecoveryTest();
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 1, integrity: 'ok' });
+    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 2, integrity: 'ok' });
+  });
+
+  it('resumes the same idempotent job after a runtime crash', async () => {
+    const runtime = await manager();
+    await runtime.start();
+    await runtime.invoke('accounts.create', {
+      account_id: 'account-1', tax_code: '0101234567', encrypted_password: 'ciphertext', timestamp: 'now',
+    });
+    const request = {
+      job_id: 'job_1', connection_id: 'account-1', idempotency_key: 'desktop-fixed',
+      intent: { directions: ['purchase'] }, timestamp: '2026-08-18T00:00:00Z',
+    };
+    const first = await runtime.invoke('jobs.start', request);
+    runtime.terminateForRecoveryTest();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const resumed = await runtime.invoke('jobs.resume');
+    const duplicate = await runtime.invoke('jobs.start', { ...request, job_id: 'job_2' });
+    expect(resumed.job_id).toBe(first.job_id);
+    expect(duplicate).toMatchObject({ job_id: first.job_id, reused: true });
   });
 
   it('enforces the bounded restart limit', async () => {

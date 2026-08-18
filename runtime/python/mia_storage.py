@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+TERMINAL_JOB_STATUSES = {"completed", "completed_with_warning", "failed", "cancelled", "abandoned"}
+JOB_TRANSITIONS = {
+    "queued": {"waiting_account", "running", "cancelling", "cancelled", "failed", "abandoned"},
+    "waiting_account": {"queued", "running", "cancelling", "cancelled", "failed", "abandoned"},
+    "running": {"cancelling", "completed", "completed_with_warning", "failed", "abandoned"},
+    "cancelling": {"cancelled", "failed", "abandoned"},
+}
 
 
 class StorageError(Exception):
@@ -131,6 +139,132 @@ class Storage:
                 connection.commit()
         except sqlite3.IntegrityError:
             raise StorageError("account_in_use") from None
+
+    def create_job(self, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    "SELECT job_id FROM jobs WHERE idempotency_key = ?", (value["idempotency_key"],)
+                ).fetchone()
+                if existing:
+                    connection.commit()
+                    return self._get_job(connection, existing[0], reused=True)
+                account = connection.execute(
+                    "SELECT 1 FROM accounts WHERE account_id = ?", (value["connection_id"],)
+                ).fetchone()
+                if not account:
+                    raise StorageError("account_not_found")
+                connection.execute(
+                    "INSERT INTO jobs(job_id, account_id, idempotency_key, intent_json, status, overall_percent, stage, event_sequence, created_at, updated_at) VALUES (?, ?, ?, ?, 'queued', 0, 'queued', 1, ?, ?)",
+                    (value["job_id"], value["connection_id"], value["idempotency_key"], json.dumps(value["intent"], separators=(",", ":"), sort_keys=True), value["timestamp"], value["timestamp"]),
+                )
+                connection.execute(
+                    "INSERT INTO job_events(job_id, sequence, event_type, payload_json, created_at) VALUES (?, 1, 'queued', '{}', ?)",
+                    (value["job_id"], value["timestamp"]),
+                )
+                connection.commit()
+                return self._get_job(connection, value["job_id"], reused=False)
+        except StorageError:
+            raise
+        except sqlite3.IntegrityError:
+            raise StorageError("job_conflict") from None
+
+    def resume_job(self) -> dict[str, Any] | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT job_id FROM jobs WHERE status NOT IN ('completed','completed_with_warning','failed','cancelled','abandoned') ORDER BY updated_at DESC, job_id DESC LIMIT 1"
+            ).fetchone()
+            return self._get_job(connection, row[0], reused=True) if row else None
+
+    def get_job(self, job_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            return self._get_job(connection, job_id, reused=True)
+
+    def cancel_job(self, job_id: str, timestamp: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = self._get_job(connection, job_id, reused=True)
+            if current["status"] in TERMINAL_JOB_STATUSES or current["status"] == "cancelling":
+                connection.commit()
+                return current
+            target = "cancelled" if current["status"] in {"queued", "waiting_account"} else "cancelling"
+            sequence = current["event_sequence"] + 1
+            connection.execute(
+                "UPDATE jobs SET status = ?, stage = ?, event_sequence = ?, updated_at = ? WHERE job_id = ?",
+                (target, target, sequence, timestamp, job_id),
+            )
+            connection.execute(
+                "INSERT INTO job_events(job_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, '{}', ?)",
+                (job_id, sequence, target, timestamp),
+            )
+            connection.commit()
+            return self._get_job(connection, job_id, reused=True)
+
+    def transition_job(self, value: dict[str, Any]) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = self._get_job(connection, value["job_id"], reused=True)
+            expected = value["expected_sequence"]
+            target = value["status"]
+            if expected != current["event_sequence"]:
+                raise StorageError("stale_job_update")
+            if target == current["status"]:
+                connection.commit()
+                return current
+            if target not in JOB_TRANSITIONS.get(current["status"], set()):
+                raise StorageError("invalid_job_transition")
+            progress = max(0, min(100, int(value.get("overall_percent", current["overall_percent"]))))
+            month = value.get("current_month")
+            if month is not None:
+                month = dict(month)
+                month["percent"] = max(0, min(100, int(month.get("percent", 0))))
+            sequence = expected + 1
+            payload = {"overall_percent": progress, "current_month": month}
+            connection.execute(
+                "UPDATE jobs SET status=?, stage=?, overall_percent=?, current_month_json=?, error_json=?, event_sequence=?, updated_at=? WHERE job_id=?",
+                (target, value.get("stage"), progress, json.dumps(month, separators=(",", ":")) if month else None,
+                 json.dumps(value.get("error"), separators=(",", ":")) if value.get("error") else None,
+                 sequence, value["timestamp"], value["job_id"]),
+            )
+            connection.execute(
+                "INSERT INTO job_events(job_id, sequence, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+                (value["job_id"], sequence, target, json.dumps(payload, separators=(",", ":")), value["timestamp"]),
+            )
+            connection.commit()
+            return self._get_job(connection, value["job_id"], reused=True)
+
+    def job_summary(self, job_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            job = self._get_job(connection, job_id, reused=True)
+            events = connection.execute(
+                "SELECT sequence, event_type, payload_json, created_at FROM job_events WHERE job_id = ? ORDER BY sequence",
+                (job_id,),
+            ).fetchall()
+            return {"job_id": job_id, "status": job["status"], "warning_count": 0, "events": [
+                {"sequence": row[0], "type": row[1], "payload": json.loads(row[2]), "created_at": row[3]} for row in events
+            ]}
+
+    def clear_terminal_jobs(self) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute("DELETE FROM jobs WHERE status IN ('completed','completed_with_warning','failed','cancelled','abandoned')")
+            connection.commit()
+
+    @staticmethod
+    def _get_job(connection: sqlite3.Connection, job_id: str, reused: bool) -> dict[str, Any]:
+        row = connection.execute(
+            "SELECT job_id, account_id, idempotency_key, intent_json, status, overall_percent, stage, current_month_json, error_json, event_sequence, created_at, updated_at FROM jobs WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if not row:
+            raise StorageError("job_not_found")
+        return {
+            "job_id": row[0], "connection_id": row[1], "idempotency_key": row[2],
+            "intent": json.loads(row[3]), "status": row[4], "overall_percent": max(0, min(100, row[5])),
+            "stage": row[6], "current_month": json.loads(row[7]) if row[7] else None,
+            "error": json.loads(row[8]) if row[8] else None, "event_sequence": row[9],
+            "created_at": row[10], "updated_at": row[11], "reused": reused,
+        }
 
     @staticmethod
     def _account_row(row: tuple[Any, ...], reused: bool) -> dict[str, Any]:

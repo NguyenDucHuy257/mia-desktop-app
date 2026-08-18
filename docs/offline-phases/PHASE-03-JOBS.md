@@ -26,3 +26,15 @@ Branch: `feat/offline-phase-03-job-lifecycle`
 
 - Small-job thật hoàn tất không cần HTTP API.
 - Restart không mất hoặc nhân đôi job.
+
+## Hiện trạng triển khai
+
+- SQLite schema v2 lưu snapshot job và event sequence; create và event đầu tiên nằm trong cùng transaction.
+- Electron broker chỉ gọi Python JSON-RPC, không còn dùng HTTP API hay file `active-job.json`.
+- `jobs.transition` dành riêng cho worker Python, dùng optimistic sequence để từ chối cập nhật cũ; renderer không được gọi method này.
+- Idempotency key là SHA-256 của intent đã chuẩn hóa và chỉ được trao đổi giữa Electron main với runtime.
+- Runtime lifecycle và UI interaction có thể kiểm thử ngay. Gate tải hóa đơn thật vẫn `BLOCKED` cho đến khi crawler/CAPTCHA artifacts vượt kiểm tra provenance/license.
+
+## Kiểm chứng tay
+
+Thực hiện [PHASE-03-MANUAL-TEST.md](PHASE-03-MANUAL-TEST.md). Không dùng MST/password thật trong log, ảnh chụp hoặc command.
