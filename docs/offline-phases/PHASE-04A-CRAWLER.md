@@ -2,6 +2,8 @@
 
 Branch: `feat/offline-phase-04a-crawler`
 
+Điều kiện bắt đầu: [Phase 4-UI](PHASE-04-UI-FIGMA.md) đã merge, UI contract và typed demo adapter đã được khóa.
+
 Nguồn chuẩn: `https://github.com/hvsoftware26/mia-crawl-service`, phải pin exact commit trước khi nhập. Không theo branch trôi nổi.
 
 ## Chính sách bê nguyên source
