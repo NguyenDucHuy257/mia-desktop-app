@@ -17,9 +17,10 @@ describe('artifact filesystem boundary', () => {
   });
 
   it('sanitizes the export DTO and rejects traversal-like account ids', () => {
-    expect(validateExportRequest({ destination: 'D:\\MIA', connection_ids: ['conn_1'], kinds: ['xml', 'excel'] })).toEqual({ destination: 'D:\\MIA', connection_ids: ['conn_1'], kinds: ['xml', 'excel'] });
-    expect(() => validateExportRequest({ destination: 'D:\\MIA', connection_ids: ['../account'], kinds: ['xml'] })).toThrow();
-    expect(() => validateExportRequest({ destination: 'D:\\MIA', connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
+    const destination = path.resolve(tmpdir(), 'MIA');
+    expect(validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'excel'] })).toEqual({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'excel'] });
+    expect(() => validateExportRequest({ destination, connection_ids: ['../account'], kinds: ['xml'] })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
   });
 
   it('writes atomically and preserves duplicates with a suffix', async () => {
