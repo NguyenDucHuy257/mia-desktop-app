@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+release-phase*/
 runtime/smoke-data/
 playwright-report/
 test-results/

@@ -43,6 +43,13 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     selectDirectory: () => ipcRenderer.invoke('mia:artifacts:select-directory'),
     export: (request) => invokeResult('mia:artifacts:export', request),
   }),
+  updates: Object.freeze({
+    status: () => ipcRenderer.invoke('mia:updates:status'),
+    check: () => ipcRenderer.invoke('mia:updates:check'),
+    download: () => ipcRenderer.invoke('mia:updates:download'),
+    install: () => ipcRenderer.invoke('mia:updates:install'),
+    setChannel: (channel) => ipcRenderer.invoke('mia:updates:channel', channel),
+  }),
   results: Object.freeze({
     overview: (query) => invokeResult('mia:results:overview', query),
     details: (query) => invokeResult('mia:results:details', query),

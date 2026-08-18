@@ -38,11 +38,20 @@ export interface MiaRuntimeBridge {
     selectDirectory(): Promise<string | null>;
     export(request: { destination: string; connection_ids: string[]; kinds: Array<'xml' | 'html' | 'pdf' | 'excel'> }): Promise<{ count: number; files: string[] }>;
   };
+  updates: {
+    status(): Promise<UpdateStatus>;
+    check(): Promise<UpdateStatus>;
+    download(): Promise<UpdateStatus>;
+    install(): Promise<void>;
+    setChannel(channel: 'stable' | 'beta'): Promise<UpdateStatus>;
+  };
   results: {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
   };
 }
+
+export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
 
 export interface ResultQuery { connection_id: string; cursor?: string | null; limit?: number; search?: string; direction?: 'purchase' | 'sold' | null }
 export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }
