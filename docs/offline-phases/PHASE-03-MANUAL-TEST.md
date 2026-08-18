@@ -7,14 +7,17 @@
 
 ## Job local lifecycle
 
-1. Mở từng menu và xác nhận có thể chọn/bỏ độc lập Mua vào, Bán ra, Tổng quan, Chi tiết, Hóa đơn, XML, HTML và PDF.
-2. Khi một menu đang mở, click ra vùng trống hoặc nhấn `Esc`; xác nhận menu tự đóng.
-3. Bỏ hết một nhóm rồi nhấn **Đồng bộ dữ liệu**; xác nhận modal có dấu chấm than, nội dung cảnh báo và nút **Đóng**.
-4. Với một lỗi job, xác nhận modal nằm giữa màn hình và có biểu tượng lỗi màu đỏ cùng nút **Đóng**.
-5. Chọn lại ít nhất một mục ở mỗi nhóm rồi đồng bộ; xác nhận trạng thái `queued` và tiến trình nằm trong 0–100%.
-6. Đóng và mở lại app; xác nhận job `queued` được resume, không xuất hiện job thứ hai.
-7. Nhấn **Dừng tải**; job queued phải chuyển thẳng sang `cancelled`.
-8. Đóng/mở lại app; job terminal không được tự chạy lại.
+1. Xác nhận tab Hóa đơn không còn menu chọn Hóa đơn/XML/HTML/PDF; các loại artifact nằm ở tab riêng.
+2. Mở từng menu còn lại và xác nhận có thể chọn/bỏ độc lập Mua vào, Bán ra, Tổng quan và Chi tiết.
+3. Khi một menu đang mở, click ra vùng trống hoặc nhấn `Esc`; xác nhận menu tự đóng.
+4. Bỏ hết một nhóm rồi nhấn **Đồng bộ dữ liệu**; xác nhận modal có dấu chấm than, nội dung cảnh báo và nút **Đóng**.
+5. Với một lỗi job, xác nhận modal nằm giữa màn hình và có biểu tượng lỗi màu đỏ cùng nút **Đóng**.
+6. Tại bảng MST, click checkbox tài khoản nhiều lần; xác nhận có thể tích và bỏ tích.
+7. Xác nhận nút **Thêm tài khoản** luôn nằm trên một dòng.
+8. Chọn lại ít nhất một mục ở mỗi nhóm rồi đồng bộ; xác nhận trạng thái `queued` và tiến trình nằm trong 0–100%.
+9. Đóng và mở lại app; xác nhận job `queued` được resume, không xuất hiện job thứ hai.
+10. Nhấn **Dừng tải**; job queued phải chuyển thẳng sang `cancelled`.
+11. Đóng/mở lại app; job terminal không được tự chạy lại.
 
 ## Bảo mật và dữ liệu
 
