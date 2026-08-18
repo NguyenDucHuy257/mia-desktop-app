@@ -218,12 +218,42 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await page.getByRole('button', { name: 'Xem kết quả 0101234567' }).click();
+  await page.getByRole('button', { name: 'Mở tác vụ 0101234567' }).click();
+  await page.getByRole('menuitem', { name: 'Xem kết quả' }).click();
   await expect(page.getByText('overview-first')).toBeVisible();
   await page.getByRole('button', { name: 'Tải thêm' }).click();
   await expect(page.getByText('overview-djE6MQ')).toBeVisible();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await expect(page.getByText('detail-first')).toBeVisible();
+});
+
+test('row action menu exports one or all selected accounts and closes with Escape', async ({ page }) => {
+  await page.addInitScript(() => {
+    const exports: unknown[] = [];
+    Object.defineProperty(window, 'artifactExports', { value: exports });
+    Object.defineProperty(window, 'miaRuntime', { value: { artifacts: {
+      selectDirectory: async () => 'D:\\MIA',
+      export: async (request: unknown) => { exports.push(request); return { count: 1, files: ['D:\\MIA\\demo.xlsx'] }; },
+    } } });
+  });
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
+  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: /Quay lại/ }).click();
+  const trigger = page.getByRole('button', { name: 'Mở tác vụ 0101234567' });
+  await trigger.click();
+  await expect(page.getByRole('menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await trigger.click();
+  await page.getByRole('menuitem', { name: 'Tải Excel tài khoản này' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Đã xuất 1 file Excel');
+  const calls = await page.evaluate(() => (window as typeof window & { artifactExports: Array<{ connection_ids: string[]; kinds: string[] }> }).artifactExports);
+  expect(calls[0]?.connection_ids).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ kinds: ['excel'] });
 });
 
 test('XML and HTML tabs provide Figma-aligned filtering and download interactions', async ({ page }) => {
