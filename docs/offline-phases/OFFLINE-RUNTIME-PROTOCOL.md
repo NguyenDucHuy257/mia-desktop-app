@@ -24,6 +24,18 @@ Transport là JSON-RPC 2.0 qua `stdin/stdout`, UTF-8, mỗi message kết thúc 
 
 Business method sẽ được version hóa và thêm theo từng phase. Credential không được xuất hiện trong response/error.
 
+## Method Phase 3
+
+| Method | Mục đích |
+|---|---|
+| `jobs.start` | Tạo job idempotent và event `queued` trong cùng transaction |
+| `jobs.resume` | Lấy job chưa terminal mới nhất sau khi mở lại app |
+| `jobs.status` | Đọc snapshot hiện tại cùng `event_sequence` |
+| `jobs.summary` | Đọc lịch sử event có thứ tự |
+| `jobs.cancel` | Cancel idempotent; queued/waiting thành cancelled, running thành cancelling |
+| `jobs.transition` | Worker nội bộ cập nhật trạng thái/progress bằng optimistic `expected_sequence`; không expose qua renderer IPC |
+| `jobs.clear` | Xóa các job terminal; không xóa job đang chạy |
+
 ## Error
 
 Runtime dùng JSON-RPC code chuẩn `-32700`, `-32600`, `-32601`, `-32602`, `-32603` và message ổn định, không trả exception/raw traceback. Electron chuyển lỗi thành code sanitize cho renderer.

@@ -154,8 +154,8 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; result_scope?: string } }).capturedIntent);
-  expect(captured).toMatchObject({ directions: ['sold'], result_scope: 'detail' });
+  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
+  expect(captured).toMatchObject({ directions: ['sold'], scopes: ['detail'], data_types: ['xml', 'html'] });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {

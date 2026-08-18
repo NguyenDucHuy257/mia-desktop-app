@@ -90,6 +90,90 @@ class StorageTests(unittest.TestCase):
             storage.delete_account("account-1")
             self.assertEqual(storage.list_accounts(), [])
 
+    def test_job_idempotency_resume_cancel_and_event_order_survive_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "mia.sqlite3"
+            storage = Storage(database)
+            storage.initialize()
+            storage.create_account({
+                "account_id": "account-1", "tax_code": "0101234567",
+                "encrypted_password": "ciphertext", "timestamp": "2026-08-18T00:00:00Z",
+            })
+            value = {
+                "job_id": "job_1", "connection_id": "account-1", "idempotency_key": "desktop-key",
+                "intent": {"directions": ["purchase"]}, "timestamp": "2026-08-18T00:01:00Z",
+            }
+            created = storage.create_job(value)
+            duplicate = storage.create_job({**value, "job_id": "job_2"})
+            self.assertEqual(created["job_id"], duplicate["job_id"])
+            self.assertTrue(duplicate["reused"])
+            reopened = Storage(database)
+            self.assertEqual(reopened.resume_job()["job_id"], "job_1")
+            cancelled = reopened.cancel_job("job_1", "2026-08-18T00:02:00Z")
+            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertEqual(cancelled["event_sequence"], 2)
+            self.assertIsNone(reopened.resume_job())
+            summary = reopened.job_summary("job_1")
+            self.assertEqual([event["type"] for event in summary["events"]], ["queued", "cancelled"])
+
+    def test_running_cancel_is_bounded_and_terminal_cancel_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "mia.sqlite3"
+            storage = Storage(database)
+            storage.initialize()
+            storage.create_account({
+                "account_id": "account-1", "tax_code": "0101234567",
+                "encrypted_password": "ciphertext", "timestamp": "now",
+            })
+            storage.create_job({
+                "job_id": "job_1", "connection_id": "account-1", "idempotency_key": "desktop-key",
+                "intent": {}, "timestamp": "2026-08-18T00:00:00Z",
+            })
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("UPDATE jobs SET status='running', stage='running' WHERE job_id='job_1'")
+                connection.commit()
+            first = storage.cancel_job("job_1", "2026-08-18T00:01:00Z")
+            second = storage.cancel_job("job_1", "2026-08-18T00:02:00Z")
+            self.assertEqual(first["status"], "cancelling")
+            self.assertEqual(second["event_sequence"], first["event_sequence"])
+
+    def test_worker_transitions_clamp_progress_and_reject_stale_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Storage(Path(directory) / "mia.sqlite3")
+            storage.initialize()
+            storage.create_account({
+                "account_id": "account-1", "tax_code": "0101234567",
+                "encrypted_password": "ciphertext", "timestamp": "now",
+            })
+            storage.create_job({
+                "job_id": "job_1", "connection_id": "account-1", "idempotency_key": "desktop-key",
+                "intent": {}, "timestamp": "2026-08-18T00:00:00Z",
+            })
+            waiting = storage.transition_job({
+                "job_id": "job_1", "expected_sequence": 1, "status": "waiting_account",
+                "stage": "login", "overall_percent": -10, "timestamp": "2026-08-18T00:01:00Z",
+            })
+            running = storage.transition_job({
+                "job_id": "job_1", "expected_sequence": 2, "status": "running", "stage": "overview",
+                "overall_percent": 140, "current_month": {"key": "2026-08", "percent": 125},
+                "timestamp": "2026-08-18T00:02:00Z",
+            })
+            self.assertEqual(waiting["overall_percent"], 0)
+            self.assertEqual(running["overall_percent"], 100)
+            self.assertEqual(running["current_month"]["percent"], 100)
+            with self.assertRaisesRegex(StorageError, "stale_job_update"):
+                storage.transition_job({
+                    "job_id": "job_1", "expected_sequence": 2, "status": "completed",
+                    "timestamp": "2026-08-18T00:03:00Z",
+                })
+            completed = storage.transition_job({
+                "job_id": "job_1", "expected_sequence": 3, "status": "completed",
+                "stage": "done", "overall_percent": 100, "timestamp": "2026-08-18T00:04:00Z",
+            })
+            unchanged = storage.cancel_job("job_1", "2026-08-18T00:05:00Z")
+            self.assertEqual(unchanged["status"], "completed")
+            self.assertEqual(unchanged["event_sequence"], completed["event_sequence"])
+
 
 if __name__ == "__main__":
     unittest.main()

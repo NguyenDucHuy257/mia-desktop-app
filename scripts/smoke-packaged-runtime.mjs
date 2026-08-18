@@ -13,7 +13,7 @@ try {
   await client.start();
   const health = await client.call('system.health');
   const storage = await client.call('storage.initialize', { data_dir: dataDirectory });
-  if (health.runtime_version !== '0.2.0' || storage.schema_version !== 1 || storage.integrity !== 'ok') {
+  if (health.runtime_version !== '0.3.0' || storage.schema_version !== 2 || storage.integrity !== 'ok') {
     throw new Error('Packaged runtime returned an unexpected response.');
   }
   const account = await client.call('accounts.create', {
@@ -24,6 +24,20 @@ try {
   if (account.status !== 'unchecked' || accounts.length !== 1 || JSON.stringify(accounts).includes('synthetic-ciphertext')) {
     throw new Error('Packaged account storage smoke failed.');
   }
+  const job = await client.call('jobs.start', {
+    job_id: 'job_smoke', connection_id: 'smoke-account', idempotency_key: 'desktop-smoke-key',
+    intent: { directions: ['purchase'] }, timestamp: '2026-08-18T00:01:00Z',
+  });
+  const duplicate = await client.call('jobs.start', {
+    job_id: 'job_duplicate', connection_id: 'smoke-account', idempotency_key: 'desktop-smoke-key',
+    intent: { directions: ['purchase'] }, timestamp: '2026-08-18T00:01:00Z',
+  });
+  const resumed = await client.call('jobs.resume');
+  const cancelled = await client.call('jobs.cancel', { job_id: job.job_id, timestamp: '2026-08-18T00:02:00Z' });
+  if (duplicate.job_id !== job.job_id || resumed.job_id !== job.job_id || cancelled.status !== 'cancelled') {
+    throw new Error('Packaged job lifecycle smoke failed.');
+  }
+  await client.call('jobs.clear');
   await client.call('accounts.delete', { account_id: 'smoke-account' });
   process.stdout.write('packaged Python runtime smoke: PASS\n');
 } finally {

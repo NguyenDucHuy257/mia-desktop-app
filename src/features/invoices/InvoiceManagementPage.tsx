@@ -73,6 +73,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   const [includeInvoice, setIncludeInvoice] = useState(true);
   const [includeXml, setIncludeXml] = useState(true);
   const [includeHtml, setIncludeHtml] = useState(false);
+  const [includePdf, setIncludePdf] = useState(false);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
   const [selectionError, setSelectionError] = useState<string | null>(null);
@@ -80,14 +81,15 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
 
   function startJob() {
     if (!connectionId) { onAddAccount(); return; }
-    if (directions.length === 0 || scopes.length === 0) {
-      setSelectionError('Vui lòng chọn ít nhất một hướng và một loại dữ liệu trước khi đồng bộ.');
+    const dataTypes = [includeInvoice && 'invoice', includeXml && 'xml', includeHtml && 'html', includePdf && 'pdf'].filter(Boolean) as Array<'invoice' | 'xml' | 'html' | 'pdf'>;
+    if (directions.length === 0 || scopes.length === 0 || dataTypes.length === 0) {
+      setSelectionError('Vui lòng chọn ít nhất một hướng, phạm vi và loại dữ liệu trước khi đồng bộ.');
       return;
     }
     setSelectionError(null);
     void start({
       connection_id: connectionId, date_from: '2023-10-01', date_to: '2023-10-31',
-      directions, query_types: ['query'], result_scope: scopes.includes('detail') ? 'detail' : 'overview', include_xml: scopes.includes('detail') && includeXml,
+      directions, query_types: ['query'], scopes, data_types: dataTypes,
     });
   }
 
@@ -127,6 +129,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
               <OptionCheck checked={includeInvoice} label="Hóa đơn" onChange={() => setIncludeInvoice(!includeInvoice)} />
               <OptionCheck checked={includeXml} label="XML" onChange={() => setIncludeXml(!includeXml)} />
               <OptionCheck checked={includeHtml} label="HTML" title="Tùy chọn HTML sẽ được thực thi bởi luồng artifact Phase 5" onChange={() => setIncludeHtml(!includeHtml)} />
+              <OptionCheck checked={includePdf} label="PDF" title="Tùy chọn PDF sẽ được thực thi bởi luồng artifact Phase 5" onChange={() => setIncludePdf(!includePdf)} />
             </div> : null}
           </div>
           <div className="select-wrap">
