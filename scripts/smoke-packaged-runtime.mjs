@@ -16,6 +16,15 @@ try {
   if (health.runtime_version !== '0.2.0' || storage.schema_version !== 1 || storage.integrity !== 'ok') {
     throw new Error('Packaged runtime returned an unexpected response.');
   }
+  const account = await client.call('accounts.create', {
+    account_id: 'smoke-account', tax_code: '0100000000',
+    encrypted_password: 'synthetic-ciphertext', timestamp: '2026-08-18T00:00:00Z',
+  });
+  const accounts = await client.call('accounts.list');
+  if (account.status !== 'unchecked' || accounts.length !== 1 || JSON.stringify(accounts).includes('synthetic-ciphertext')) {
+    throw new Error('Packaged account storage smoke failed.');
+  }
+  await client.call('accounts.delete', { account_id: 'smoke-account' });
   process.stdout.write('packaged Python runtime smoke: PASS\n');
 } finally {
   await client.stop();

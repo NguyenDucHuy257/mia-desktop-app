@@ -4,6 +4,7 @@ import type { AccountCredentials } from './account-form';
 
 export interface AccountConnectionGateway {
   create(credentials: AccountCredentials): Promise<AccountConnection>;
+  list(): Promise<AccountConnection[]>;
   get(connectionId: string): Promise<AccountConnection>;
   reconnect(connectionId: string, credentials: AccountCredentials): Promise<AccountConnection>;
   revoke(connectionId: string): Promise<void>;
@@ -27,6 +28,8 @@ class RuntimeAccountConnectionGateway implements AccountConnectionGateway {
   create(credentials: AccountCredentials) {
     return this.bridge.create(credentials);
   }
+
+  list() { return this.bridge.list(); }
 
   get(connectionId: string) {
     return this.bridge.get(connectionId);
@@ -57,7 +60,7 @@ export class InMemoryAccountConnectionGateway implements AccountConnectionGatewa
     const connection: AccountConnection = {
       connection_id: this.createId(),
       username: credentials.username,
-      status: 'active',
+      status: 'unchecked',
       token_generation: 1,
       created_at: timestamp,
       updated_at: timestamp,
@@ -66,6 +69,8 @@ export class InMemoryAccountConnectionGateway implements AccountConnectionGatewa
     this.connections.set(connection.connection_id, connection);
     return { ...connection };
   }
+
+  async list() { return [...this.connections.values()].map((item) => ({ ...item })); }
 
   async get(connectionId: string) {
     const connection = this.connections.get(connectionId);
@@ -78,7 +83,7 @@ export class InMemoryAccountConnectionGateway implements AccountConnectionGatewa
     const updated: AccountConnection = {
       ...connection,
       username: credentials.username,
-      status: 'active',
+      status: 'unchecked',
       token_generation: connection.token_generation + 1,
       updated_at: this.now(),
       reused: false,
@@ -103,6 +108,7 @@ class UnavailableAccountConnectionGateway implements AccountConnectionGateway {
   }
 
   async create(): Promise<AccountConnection> { return this.reject(); }
+  async list(): Promise<AccountConnection[]> { return this.reject(); }
   async get(): Promise<AccountConnection> { return this.reject(); }
   async reconnect(): Promise<AccountConnection> { return this.reject(); }
   async revoke(): Promise<void> { return this.reject(); }

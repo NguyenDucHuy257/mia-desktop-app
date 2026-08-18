@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   storeLicenseToken: (token) => ipcRenderer.invoke('mia:license-store', token),
   accountConnections: Object.freeze({
     create: (credentials) => invokeResult('mia:account-connections:create', credentials),
+    list: () => invokeResult('mia:account-connections:list'),
     get: (connectionId) => invokeResult('mia:account-connections:get', connectionId),
     reconnect: (connectionId, credentials) => (
       invokeResult('mia:account-connections:reconnect', connectionId, credentials)

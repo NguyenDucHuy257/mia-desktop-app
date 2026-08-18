@@ -37,6 +37,10 @@ function validateConnectionId(value) {
 }
 
 function serializeError(error) {
+  const localCodes = new Set(['account_not_found', 'account_duplicate', 'account_in_use', 'database_locked', 'database_unavailable']);
+  if (localCodes.has(error?.message)) {
+    return { code: error.message, message: 'Local account operation failed.' };
+  }
   if (error instanceof MiaApiError) {
     return {
       code: error.code,

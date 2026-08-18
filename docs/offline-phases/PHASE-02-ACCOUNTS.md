@@ -23,3 +23,7 @@ Branch: `feat/offline-phase-02-accounts`
 
 - Không có credential plaintext trên disk hoặc trong log.
 - Tài khoản test đăng nhập portal thành công trên Windows thật.
+
+## Kiểm chứng tay
+
+Thực hiện [PHASE-02-MANUAL-TEST.md](PHASE-02-MANUAL-TEST.md). Local CRUD và encrypted-at-rest có thể nghiệm thu độc lập; portal verification vẫn là gate bắt buộc, không được thay bằng mock.

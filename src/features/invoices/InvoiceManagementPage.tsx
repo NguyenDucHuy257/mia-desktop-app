@@ -7,7 +7,7 @@ import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { useJobLifecycle } from '../jobs/use-job-lifecycle';
 import { TERMINAL_JOB_STATUSES } from '../jobs/job-state-machine';
-import type { InvoiceDirection } from '../../lib/api/contracts';
+import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending';
 
@@ -64,7 +64,13 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAccount(): void; connectionId: string }) {
+export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, onDeleteAccount, onSelectAccount }: {
+  onAddAccount(): void;
+  connectionId: string;
+  accounts: AccountConnection[] | null;
+  onDeleteAccount(id: string): Promise<void>;
+  onSelectAccount(id: string): void;
+}) {
   const [menu, setMenu] = useState<'options' | 'scope' | 'direction' | null>(null);
   const [includeInvoice, setIncludeInvoice] = useState(true);
   const [includeXml, setIncludeXml] = useState(true);
@@ -100,6 +106,15 @@ export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAcc
   }
 
   const activeJob = Boolean(job.status && !TERMINAL_JOB_STATUSES.has(job.status.status));
+  const visibleRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
+    taxCode: account.username,
+    company: 'Tài khoản hóa đơn điện tử',
+    period: 'Chưa đồng bộ',
+    status: account.status === 'active' ? 'completed' : 'pending',
+    selected: account.connection_id === connectionId,
+    progress: 0,
+    progressLabel: account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status,
+  }));
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
@@ -160,20 +175,20 @@ export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAcc
             <span>MST</span><span>Kỳ tải</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
-            {rows.map((row, index) => (
+            {visibleRows.map((row, index) => (
               <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
-                <SelectionBox checked={row.selected} />
+                {accounts ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(accounts[index]!.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <div className="company-cell"><span>{row.taxCode}</span><strong>{row.company}</strong></div>
                 <span>{row.period}</span>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
-                <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>
+                {accounts ? <button className="row-actions" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(accounts[index]!.connection_id)}>×</button> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
               </div>
             ))}
           </div>
         </div>
         <footer className="pagination">
-          <span>Hiển thị 1 - 50 trong tổng số 128 hóa đơn</span>
+          <span>{accounts ? `Hiển thị ${accounts.length} tài khoản` : 'Hiển thị 1 - 50 trong tổng số 128 hóa đơn'}</span>
           <div><span>Chọn trang:</span><button>‹</button><button data-active="true">1</button><button>2</button><button>3</button><span>...</span><button>3</button><button>›</button></div>
         </footer>
       </section>
