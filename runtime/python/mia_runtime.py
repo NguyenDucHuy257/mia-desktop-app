@@ -175,6 +175,16 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if logger is not None:
                 logger.exception("crawler_health_failed")
             raise RpcError(-32050, "crawler_runtime_unavailable") from None
+    if method == "artifacts.export":
+        if storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_artifacts import ArtifactExporter
+            return ArtifactExporter(storage, data_dir).export(dict(params)), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+        except OSError:
+            raise RpcError(-32060, "artifact_write_failed") from None
     if method.startswith("results."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")

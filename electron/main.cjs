@@ -8,12 +8,14 @@ const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 const { createResultBroker } = require('./result-broker.cjs');
+const { createArtifactBroker } = require('./artifact-file-broker.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let jobLifecycleBroker;
 let offlineRuntime;
 let localAccountBroker;
 let resultBroker;
+let artifactBroker;
 let runtimeShutdownStarted = false;
 
 function jobs() {
@@ -113,6 +115,17 @@ ipcMain.handle('mia:license-store', (event, token) => {
     { mode: 0o600 },
   );
   return true;
+});
+ipcMain.handle('mia:artifacts:select-directory', async (event) => {
+  assertTrustedSender(event);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(owner, { properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('mia:artifacts:export', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.export(request);
 });
 function localAccounts() {
   if (!localAccountBroker) localAccountBroker = createLocalAccountBroker(() => offlineRuntime, secureProtector());

@@ -34,6 +34,10 @@ export interface MiaRuntimeBridge {
     cancel(jobId: string): Promise<JobStatusResponse>;
     clear(): Promise<void>;
   };
+  artifacts: {
+    selectDirectory(): Promise<string | null>;
+    export(request: { destination: string; connection_ids: string[]; kinds: Array<'xml' | 'html' | 'pdf' | 'excel'> }): Promise<{ count: number; files: string[] }>;
+  };
   results: {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
