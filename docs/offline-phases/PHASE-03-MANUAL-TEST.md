@@ -8,11 +8,13 @@
 ## Job local lifecycle
 
 1. Mở từng menu và xác nhận có thể chọn/bỏ độc lập Mua vào, Bán ra, Tổng quan, Chi tiết, Hóa đơn, XML, HTML và PDF.
-2. Bỏ hết một nhóm rồi nhấn **Đồng bộ dữ liệu**; xác nhận app cảnh báo cần chọn ít nhất một hướng, phạm vi và loại dữ liệu.
-3. Chọn lại ít nhất một mục ở mỗi nhóm rồi đồng bộ; xác nhận trạng thái `queued` và tiến trình nằm trong 0–100%.
-4. Đóng và mở lại app; xác nhận job `queued` được resume, không xuất hiện job thứ hai.
-5. Nhấn **Dừng tải**; job queued phải chuyển thẳng sang `cancelled`.
-6. Đóng/mở lại app; job terminal không được tự chạy lại.
+2. Khi một menu đang mở, click ra vùng trống hoặc nhấn `Esc`; xác nhận menu tự đóng.
+3. Bỏ hết một nhóm rồi nhấn **Đồng bộ dữ liệu**; xác nhận modal có dấu chấm than, nội dung cảnh báo và nút **Đóng**.
+4. Với một lỗi job, xác nhận modal nằm giữa màn hình và có biểu tượng lỗi màu đỏ cùng nút **Đóng**.
+5. Chọn lại ít nhất một mục ở mỗi nhóm rồi đồng bộ; xác nhận trạng thái `queued` và tiến trình nằm trong 0–100%.
+6. Đóng và mở lại app; xác nhận job `queued` được resume, không xuất hiện job thứ hai.
+7. Nhấn **Dừng tải**; job queued phải chuyển thẳng sang `cancelled`.
+8. Đóng/mở lại app; job terminal không được tự chạy lại.
 
 ## Bảo mật và dữ liệu
 

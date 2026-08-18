@@ -33,6 +33,8 @@ Branch: `feat/offline-phase-03-job-lifecycle`
 - Electron broker chỉ gọi Python JSON-RPC, không còn dùng HTTP API hay file `active-job.json`.
 - `jobs.transition` dành riêng cho worker Python, dùng optimistic sequence để từ chối cập nhật cũ; renderer không được gọi method này.
 - Idempotency key là SHA-256 của intent đã chuẩn hóa và chỉ được trao đổi giữa Electron main với runtime.
+- Thông báo dùng modal đồng bộ giao diện: lỗi có biểu tượng đỏ ở giữa, cảnh báo/thông tin có dấu chấm than và nút Đóng.
+- Menu lựa chọn tự đóng khi click ra ngoài hoặc nhấn `Esc`.
 - Runtime lifecycle và UI interaction có thể kiểm thử ngay. Gate tải hóa đơn thật vẫn `BLOCKED` cho đến khi crawler/CAPTCHA artifacts vượt kiểm tra provenance/license.
 
 ## Kiểm chứng tay

@@ -81,5 +81,7 @@ export function useJobLifecycle() {
     void poll(jobId, 0, generation.current);
   }, [poll, state.record?.job_id, stop]);
 
-  return { state, start, cancel, retry };
+  const dismissMessage = useCallback(() => dispatch({ type: 'dismiss-message' }), []);
+
+  return { state, start, cancel, retry, dismissMessage };
 }
