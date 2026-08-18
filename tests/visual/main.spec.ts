@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('main invoice screen follows the 1500x1024 Figma reference', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?figma=1');
   await page.evaluate(() => document.fonts.ready);
   const screenshot = await page.screenshot({ animations: 'disabled' });
   await expect(screenshot).toMatchSnapshot('figma-main-1500x1024.png', {
@@ -11,7 +11,7 @@ test('main invoice screen follows the 1500x1024 Figma reference', async ({ page 
 });
 
 test('single account form follows Figma frame 1:368', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?figma=1');
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   const screenshot = await page.screenshot({ animations: 'disabled' });
@@ -22,7 +22,7 @@ test('single account form follows Figma frame 1:368', async ({ page }) => {
 });
 
 test('bulk account form follows Figma frame 60:1182', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?figma=1');
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByRole('tab', { name: 'Thêm hàng loạt' }).click();
@@ -227,7 +227,7 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
 });
 
 test('XML and HTML tabs provide Figma-aligned filtering and download interactions', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'XML' }).click();
   await expect(page.locator('[data-node-id="1:654"]')).toBeVisible();
   await expect(page.getByRole('table', { name: 'Danh sách XML' }).getByRole('row')).toHaveCount(5);
@@ -242,8 +242,33 @@ test('XML and HTML tabs provide Figma-aligned filtering and download interaction
   await expect(page.getByRole('button', { name: 'Tải HTML hàng loạt' })).toBeVisible();
 });
 
-test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
+test('production artifact tabs render runtime files instead of demo rows', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_local', username: '0100000000', company_name: 'Công ty Runtime', status: 'connected', token_generation: 0, created_at: 'now', updated_at: 'now', reused: false };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      artifacts: {
+        list: async (request: { cursor?: string | null; search?: string }) => {
+          const filename = request.search ? `tim-${request.search}.xml` : request.cursor ? 'hoa-don-trang-2.xml' : 'hoa-don-runtime.xml';
+          return { items: [{ artifact_id: `job:${filename}`, connection_id: 'conn_local', job_id: 'job_1', filename, kind: 'xml', direction: 'purchase', size: 128, updated_at: Date.now() * 1_000_000 }], pagination: { limit: 50, has_more: !request.cursor && !request.search, next_cursor: !request.cursor && !request.search ? 'cursor-2' : null } };
+        },
+        export: async () => ({ count: 1, files: ['D:\\MIA\\hoa-don-runtime.xml'] }), selectDirectory: async () => 'D:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  });
   await page.goto('/');
+  await page.getByRole('button', { name: 'XML' }).click();
+  await expect(page.getByRole('table', { name: 'Danh sách XML' })).toContainText('hoa-don-runtime.xml');
+  await expect(page.getByRole('table', { name: 'Danh sách XML' })).not.toContainText('HD-2023-001');
+  await expect(page.getByLabel('Chọn công ty')).toContainText('Công ty Runtime');
+  await page.getByRole('button', { name: 'Tải trang sau' }).click();
+  await expect(page.getByRole('table', { name: 'Danh sách XML' })).toContainText('hoa-don-trang-2.xml');
+  await page.getByLabel('Tìm kiếm XML').fill('ABC-123');
+  await expect(page.getByRole('table', { name: 'Danh sách XML' })).toContainText('tim-ABC-123.xml');
+});
+
+test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
+  await page.goto('/?figma=1');
   await page.getByLabel('Từ ngày đồng bộ').fill('2023-09-01');
   await page.getByLabel('Đến ngày đồng bộ').fill('2023-09-30');
   await page.getByLabel('Tìm kiếm tài khoản').fill('0101234567');
@@ -257,6 +282,7 @@ test('date, company, search, status and pagination controls update the UI', asyn
   await page.getByRole('button', { name: 'Cài đặt tài khoản' }).click();
   await expect(page.getByRole('heading', { name: 'Cài đặt' })).toBeVisible();
 
+  await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'XML' }).click();
   await page.getByLabel('Từ ngày').fill('2023-09-01');
   await page.getByLabel('Đến ngày').fill('2023-09-30');
@@ -267,7 +293,7 @@ test('date, company, search, status and pagination controls update the UI', asyn
 });
 
 test('artifact default frames use direct Figma exports as visual baselines', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?demo=1');
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole('button', { name: 'XML' }).click();
   await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-xml-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
@@ -280,7 +306,7 @@ test('artifact default frames use direct Figma exports as visual baselines', asy
 });
 
 test('PDF tab validates folder and exposes converting/cancel states', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(page.locator('[data-node-id="106:18856"]')).toBeVisible();
   const folder = page.getByLabel('Thư mục lưu trữ');
@@ -297,7 +323,7 @@ test('PDF tab validates folder and exposes converting/cancel states', async ({ p
 for (const width of [1024, 1280, 1366, 1440, 1500, 1600]) {
   test(`artifact layout remains usable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1024 });
-    await page.goto('/');
+    await page.goto('/?demo=1');
     await page.getByRole('button', { name: 'XML' }).click();
     await expect(page.locator('.artifact-page')).toBeVisible();
     await expect(page.locator('.artifact-page')).toHaveJSProperty('scrollWidth', width - 200);

@@ -69,10 +69,12 @@ describe('PythonRuntimeClient', () => {
       PORTAL_PASSWORD: 'must-not-cross-boundary',
     }, {
       MIA_RUNTIME_DATA_DIR: 'safe-data-directory',
+      PLAYWRIGHT_BROWSERS_PATH: 'safe-browser-directory',
       ARBITRARY_SECRET: 'must-not-cross-boundary',
     });
     expect(env.PATH).toBe('safe-path');
     expect(env.MIA_RUNTIME_DATA_DIR).toBe('safe-data-directory');
+    expect(env.PLAYWRIGHT_BROWSERS_PATH).toBe('safe-browser-directory');
     expect(env).not.toHaveProperty('MIA_API_ACCESS_TOKEN');
     expect(env).not.toHaveProperty('PORTAL_PASSWORD');
     expect(env).not.toHaveProperty('ARBITRARY_SECRET');

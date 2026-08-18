@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   artifacts: Object.freeze({
     selectDirectory: () => ipcRenderer.invoke('mia:artifacts:select-directory'),
     export: (request) => invokeResult('mia:artifacts:export', request),
+    list: (request) => invokeResult('mia:artifacts:list', request),
+    openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
   }),
   results: Object.freeze({
     overview: (query) => invokeResult('mia:results:overview', query),
