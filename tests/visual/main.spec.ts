@@ -225,3 +225,81 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await expect(page.getByText('detail-first')).toBeVisible();
 });
+
+test('XML and HTML tabs provide Figma-aligned filtering and download interactions', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'XML' }).click();
+  await expect(page.locator('[data-node-id="1:654"]')).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Danh sách XML' }).getByRole('row')).toHaveCount(5);
+  await page.getByRole('button', { name: 'Mua vào' }).click();
+  await expect(page.getByRole('table', { name: 'Danh sách XML' }).getByRole('row')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Tải XML hàng loạt' }).click();
+  await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('2 file XML');
+  await page.getByRole('button', { name: 'Đóng' }).click();
+
+  await page.getByRole('button', { name: 'HTML', exact: true }).click();
+  await expect(page.locator('[data-node-id="104:22"]')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Tải HTML hàng loạt' })).toBeVisible();
+});
+
+test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('Từ ngày đồng bộ').fill('2023-09-01');
+  await page.getByLabel('Đến ngày đồng bộ').fill('2023-09-30');
+  await page.getByLabel('Tìm kiếm tài khoản').fill('0101234567');
+  await expect(page.locator('.table-row')).toHaveCount(1);
+  await page.getByLabel('Lọc trạng thái').selectOption('failed');
+  await expect(page.locator('.table-row')).toHaveCount(0);
+  await page.getByLabel('Lọc trạng thái').selectOption('completed');
+  await expect(page.locator('.table-row')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('2');
+  await page.getByRole('button', { name: 'Cài đặt tài khoản' }).click();
+  await expect(page.getByRole('heading', { name: 'Cài đặt' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'XML' }).click();
+  await page.getByLabel('Từ ngày').fill('2023-09-01');
+  await page.getByLabel('Đến ngày').fill('2023-09-30');
+  await page.getByLabel('Chọn công ty').selectOption('company-b');
+  await expect(page.getByLabel('Chọn công ty')).toHaveValue('company-b');
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await expect(page.locator('.artifact-pager button[data-active="true"]').first()).toHaveText('2');
+});
+
+test('artifact default frames use direct Figma exports as visual baselines', async ({ page }) => {
+  await page.goto('/');
+  await page.evaluate(() => document.fonts.ready);
+  await page.getByRole('button', { name: 'XML' }).click();
+  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-xml-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
+  await page.getByRole('button', { name: 'HTML', exact: true }).click();
+  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-html-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
+  await page.getByRole('button', { name: 'PDF', exact: true }).click();
+  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-pdf-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
+  await page.getByRole('button', { name: 'Tải HTML hàng loạt' }).click();
+  await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-pdf-progress-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
+});
+
+test('PDF tab validates folder and exposes converting/cancel states', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'PDF', exact: true }).click();
+  await expect(page.locator('[data-node-id="106:18856"]')).toBeVisible();
+  const folder = page.getByLabel('Thư mục lưu trữ');
+  await folder.fill('');
+  await expect(page.getByRole('button', { name: 'Tải HTML hàng loạt' })).toBeDisabled();
+  await folder.fill('D:\\MIA\\PDF');
+  await page.getByRole('button', { name: 'Tải HTML hàng loạt' }).click();
+  await expect(page.locator('[data-node-id="106:19444"]')).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('31%');
+  await page.getByRole('button', { name: 'Dừng lại' }).click();
+  await expect(page.locator('[data-node-id="106:18856"]')).toBeVisible();
+});
+
+for (const width of [1024, 1280, 1366, 1440, 1500, 1600]) {
+  test(`artifact layout remains usable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1024 });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'XML' }).click();
+    await expect(page.locator('.artifact-page')).toBeVisible();
+    await expect(page.locator('.artifact-page')).toHaveJSProperty('scrollWidth', width - 200);
+  });
+}

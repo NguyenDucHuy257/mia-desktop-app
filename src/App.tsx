@@ -5,6 +5,7 @@ import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage
 import { createAccountConnectionGateway } from './features/accounts/account-gateway';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
+import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
@@ -43,7 +44,7 @@ export default function App() {
     <AppShell
       active={active}
       onNavigate={navigate}
-      showTopbar={view !== 'add-account'}
+      showTopbar={view === 'navigation' && active === 'invoices'}
     >
       {view === 'add-account' ? (
         <AddAccountPage gateway={gateway} onBack={() => setView('navigation')} onConnectionCreated={(id) => { setConnectionId(id); void refreshAccounts(); }} />
@@ -51,12 +52,10 @@ export default function App() {
         <ResultsPage connectionId={connectionId} onBack={() => setView('navigation')} />
       ) : active === 'invoices' ? (
         <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setConnectionId((current) => current === id ? '' : id)} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
-      ) : (
-        <section className="placeholder-page" aria-label={labels[active]}>
-          <h1>{labels[active]}</h1>
-          <p>Màn hình này sẽ được chuyển từ frame Figma tương ứng ở phase kế tiếp.</p>
-        </section>
-      )}
+      ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" />
+        : active === 'html' ? <ArtifactDownloaderPage kind="html" />
+          : active === 'pdf' ? <PdfDownloaderPage />
+            : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
     </AppShell>
   );
 }
