@@ -31,10 +31,15 @@ function defaultRuntimeScript() {
   return path.join(__dirname, '..', 'runtime', 'python', 'mia_runtime.py');
 }
 
+function packagedRuntimeExecutable(resourcesPath = process.resourcesPath) {
+  return path.join(resourcesPath, 'runtime', 'mia-runtime.exe');
+}
+
 class PythonRuntimeClient {
   constructor(options = {}) {
     this.pythonExecutable = options.pythonExecutable || process.env.MIA_PYTHON_EXECUTABLE || 'python';
     this.runtimeScript = options.runtimeScript || defaultRuntimeScript();
+    this.runtimeExecutable = options.runtimeExecutable;
     this.defaultTimeoutMs = options.defaultTimeoutMs || 5000;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs || 1000;
     this.maxMessageBytes = options.maxMessageBytes || DEFAULT_MAX_MESSAGE_BYTES;
@@ -48,8 +53,10 @@ class PythonRuntimeClient {
 
   async start() {
     if (this.child) return;
-    const child = spawn(this.pythonExecutable, ['-I', '-u', this.runtimeScript], {
-      cwd: path.dirname(this.runtimeScript),
+    const executable = this.runtimeExecutable || this.pythonExecutable;
+    const args = this.runtimeExecutable ? [] : ['-I', '-u', this.runtimeScript];
+    const child = spawn(executable, args, {
+      cwd: this.runtimeExecutable ? path.dirname(this.runtimeExecutable) : path.dirname(this.runtimeScript),
       env: runtimeEnvironment(process.env, this.extraEnv),
       shell: false,
       windowsHide: true,
@@ -189,5 +196,6 @@ module.exports = {
   PythonRuntimeClient,
   RuntimeProtocolError,
   defaultRuntimeScript,
+  packagedRuntimeExecutable,
   runtimeEnvironment,
 };
