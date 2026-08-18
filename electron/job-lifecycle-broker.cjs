@@ -77,6 +77,11 @@ function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString
       await launchCrawler(record);
       return record;
     }),
+    resumeAll: () => runBrokerCommand(async () => {
+      const records = await getRuntime().invoke('jobs.resume_all');
+      for (const record of records.slice(0, 2)) await launchCrawler(record);
+      return records;
+    }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
       const record = await getRuntime().invoke('jobs.start', {

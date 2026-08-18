@@ -6,8 +6,7 @@ import searchIcon from '../../assets/figma/search.png';
 import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
-import { useJobLifecycle } from '../jobs/use-job-lifecycle';
-import { TERMINAL_JOB_STATUSES } from '../jobs/job-state-machine';
+import { useBatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending';
@@ -42,8 +41,8 @@ const statusLabels: Record<RowStatus, string> = {
   pending: 'Chờ xử lý',
 };
 
-function SelectionBox({ checked }: { checked: boolean }) {
-  return <span className="selection-box" data-checked={checked}>{checked ? '✓' : ''}</span>;
+function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
+  return <span className="selection-box" data-checked={checked || indeterminate}>{indeterminate ? '−' : checked ? '✓' : ''}</span>;
 }
 
 function ProgressCell({ row }: { row: InvoiceRow }) {
@@ -63,12 +62,14 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, onDeleteAccount, onSelectAccount, onViewResults }: {
+export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountIds, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
   onAddAccount(): void;
   connectionId: string;
+  selectedAccountIds: string[];
   accounts: AccountConnection[] | null;
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
+  onSelectAccounts(ids: string[]): void;
   onViewResults(id: string): void;
 }) {
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
@@ -80,7 +81,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   const [dateFrom, setDateFrom] = useState('2023-10-01');
   const [dateTo, setDateTo] = useState('2023-10-31');
   const [page, setPage] = useState(1);
-  const { state: job, start, cancel, retry, dismissMessage } = useJobLifecycle();
+  const { items: batchItems, startMany, cancelAll, message, dismissMessage } = useBatchJobLifecycle();
 
   useEffect(() => {
     if (!menu) return;
@@ -100,16 +101,16 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   }, [menu]);
 
   function startJob() {
-    if (!connectionId) { onAddAccount(); return; }
+    if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
     if (directions.length === 0 || scopes.length === 0) {
       setSelectionError('Vui lòng chọn ít nhất một hướng và phạm vi dữ liệu trước khi đồng bộ.');
       return;
     }
     setSelectionError(null);
-    void start({
-      connection_id: connectionId, date_from: dateFrom, date_to: dateTo,
+    startMany(selectedAccountIds.map((connection_id) => ({
+      connection_id, date_from: dateFrom, date_to: dateTo,
       directions, query_types: ['query'], scopes, data_types: ['invoice'],
-    });
+    })));
   }
 
   function toggleDirection(value: InvoiceDirection) {
@@ -124,19 +125,24 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
       : [...current, value]);
   }
 
-  const activeJob = Boolean(job.status && !TERMINAL_JOB_STATUSES.has(job.status.status));
+  const terminal = ['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned'];
+  const activeJob = Object.values(batchItems).some((item) => Boolean(item.record && (!item.status || !terminal.includes(item.status.status))));
+  const primaryStatus = Object.values(batchItems).find((item) => item.status)?.status;
   const allRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
     taxCode: account.username,
     company: account.company_name || '—',
     status: account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending',
-    selected: account.connection_id === connectionId,
-    progress: 0,
-    progressLabel: account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status,
+    selected: selectedAccountIds.includes(account.connection_id),
+    progress: batchItems[account.connection_id]?.status?.overall_percent ?? 0,
+    progressLabel: batchItems[account.connection_id]?.status?.stage ?? (account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status),
   }));
   const visibleRows = allRows.filter((row) => {
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
   });
+  const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
+  const visibleAccountIds = visibleRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
+  const selectedVisibleCount = visibleAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
@@ -159,12 +165,11 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
-          <button className="sync-button" type="button" onClick={startJob}><img src={syncIcon} alt="" /> {job.phase === 'starting' ? 'Đang tạo job...' : 'Đồng bộ dữ liệu'}</button>
-          {job.status ? <div className="job-progress-panel" role="status">
-            <strong>{job.status.status}</strong><span>{job.status.overall_percent}% tổng thể</span>
-            <div className="progress-track"><span style={{ width: `${job.status.overall_percent}%` }} /></div>
-            {job.status.current_month ? <><small>Tháng {job.status.current_month.key}: {job.status.current_month.processed}/{job.status.current_month.planned}</small><div className="progress-track"><span style={{ width: `${job.status.current_month.percent}%` }} /></div></> : null}
-            {job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}
+          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu ({selectedAccountIds.length})</button>
+          {primaryStatus ? <div className="job-progress-panel" role="status">
+            <strong>{primaryStatus.status}</strong><span>{primaryStatus.overall_percent}% tổng thể</span>
+            <div className="progress-track"><span style={{ width: `${primaryStatus.overall_percent}%` }} /></div>
+            {primaryStatus.current_month ? <><small>Tháng {primaryStatus.current_month.key}: {primaryStatus.current_month.processed}/{primaryStatus.current_month.planned}</small><div className="progress-track"><span style={{ width: `${primaryStatus.current_month.percent}%` }} /></div></> : null}
           </div> : null}
         </div>
       </section>
@@ -178,24 +183,25 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
             </label>
             <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Thất bại</option><option value="pending">Chờ xử lý</option></select>
           </div>
-          <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancel()}><img src={stopIcon} alt="" /> Dừng tải</button>
+          <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> Dừng tải</button>
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
-            <SelectionBox checked={false} />
+            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản" onClick={() => onSelectAccounts(selectedVisibleCount === visibleAccountIds.length ? selectedAccountIds.filter((id) => !visibleAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...visibleAccountIds])])}><SelectionBox checked={visibleAccountIds.length > 0 && selectedVisibleCount === visibleAccountIds.length} indeterminate={selectedVisibleCount > 0 && selectedVisibleCount < visibleAccountIds.length} /></button>
             <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
-            {visibleRows.map((row, index) => (
-              <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
-                {accounts ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(accounts[index]!.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
+            {visibleRows.map((row, index) => {
+              const account = accountByTaxCode.get(row.taxCode);
+              return <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
+                {account ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <span>{row.taxCode}</span>
                 <strong className="company-name">{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
-                {accounts ? <span className="row-action-group"><button type="button" aria-label={`Xem kết quả ${row.taxCode}`} onClick={() => onViewResults(accounts[index]!.connection_id)}>⋮</button><button type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(accounts[index]!.connection_id)}>×</button></span> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
+                {account ? <span className="row-action-group"><button type="button" aria-label={`Xem kết quả ${row.taxCode}`} onClick={() => onViewResults(account.connection_id)}>⋮</button><button type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button></span> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
               </div>
-            ))}
+            })}
           </div>
         </div>
         <footer className="pagination">
@@ -203,8 +209,8 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
           <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>‹</button>{[1, 2, 3].map((value) => <button type="button" key={value} data-active={page === value} onClick={() => setPage(value)}>{value}</button>)}<span>...</span><button type="button" onClick={() => setPage(3)}>3</button><button type="button" aria-label="Trang sau" disabled={page === 3} onClick={() => setPage((value) => Math.min(3, value + 1))}>›</button></div>
         </footer>
       </section>
-      {!job.status && job.message ? <NoticeDialog kind={job.phase === 'error' ? 'error' : 'notice'} message={job.message} onClose={dismissMessage} actionLabel={job.phase === 'error' ? 'Thử lại' : undefined} onAction={job.phase === 'error' ? () => { dismissMessage(); retry(); } : undefined} /> : null}
       {selectionError ? <NoticeDialog kind="notice" message={selectionError} onClose={() => setSelectionError(null)} /> : null}
+      {message ? <NoticeDialog kind={message.kind} message={message.text} onClose={dismissMessage} /> : null}
     </div>
   );
 }

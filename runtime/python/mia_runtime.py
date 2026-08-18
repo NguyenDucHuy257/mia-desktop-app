@@ -133,6 +133,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 return storage.create_job(value), False
             if method == "jobs.resume":
                 return storage.resume_job(), False
+            if method == "jobs.resume_all":
+                return storage.resume_jobs(), False
             if method == "jobs.status":
                 return storage.get_job(params["job_id"]), False
             if method == "jobs.summary":

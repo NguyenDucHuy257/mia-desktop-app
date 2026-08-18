@@ -27,6 +27,7 @@ export interface MiaRuntimeBridge {
   accountConnections: MiaAccountConnectionsBridge;
   jobs: {
     resume(): Promise<PersistedJob | null>;
+    resumeAll(): Promise<PersistedJob[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;

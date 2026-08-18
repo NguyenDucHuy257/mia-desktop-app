@@ -197,6 +197,13 @@ class Storage:
             ).fetchone()
             return self._get_job(connection, row[0], reused=True) if row else None
 
+    def resume_jobs(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT job_id FROM jobs WHERE status NOT IN ('completed','completed_with_warning','failed','cancelled','abandoned') ORDER BY created_at, job_id"
+            ).fetchall()
+            return [self._get_job(connection, row[0], reused=True) for row in rows]
+
     def get_job(self, job_id: str) -> dict[str, Any]:
         with closing(self._connect()) as connection:
             return self._get_job(connection, job_id, reused=True)

@@ -48,12 +48,23 @@ describe('offline job lifecycle IPC broker', () => {
     }), { timeoutMs: 15000 });
   });
 
-  it.each(['resume', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
+  it.each(['resume', 'resumeAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }), () => 'now');
     await broker[method](...(method === 'resume' || method === 'clear' ? [] : ['job_1']));
-    if (method === 'resume' || method === 'clear') expect(invoke).toHaveBeenCalledWith(`jobs.${method}`);
+    if (method === 'resume' || method === 'resumeAll' || method === 'clear') expect(invoke).toHaveBeenCalledWith(method === 'resumeAll' ? 'jobs.resume_all' : `jobs.${method}`);
     else expect(invoke).toHaveBeenCalledWith(`jobs.${method}`, expect.any(Object));
+  });
+
+  it('resumes multiple child jobs and caps immediate crawler launches', async () => {
+    const records = Array.from({ length: 3 }, (_, index) => ({
+      job_id: `job_${index}`, connection_id: `conn_${index}`, intent: { ...intent, connection_id: `conn_${index}` }, status: 'queued',
+    }));
+    const invoke = vi.fn(async (method: string) => method === 'jobs.resume_all' ? records : method === 'accounts.secret'
+      ? { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') } : null);
+    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).resumeAll();
+    expect(result).toMatchObject({ ok: true, data: records });
+    expect(invoke.mock.calls.filter(([method]) => method === 'crawler.start')).toHaveLength(2);
   });
 
   it('sanitizes runtime failures without returning intent data', async () => {
