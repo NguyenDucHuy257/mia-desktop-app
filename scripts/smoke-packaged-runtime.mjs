@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -13,7 +13,8 @@ try {
   await client.start();
   const health = await client.call('system.health');
   const storage = await client.call('storage.initialize', { data_dir: dataDirectory });
-  if (health.runtime_version !== '0.4.0' || storage.schema_version !== 3 || storage.integrity !== 'ok') {
+  const crawler = await client.call('crawler.health', {}, { timeoutMs: 30000 });
+  if (health.runtime_version !== '0.4.1' || storage.schema_version !== 4 || storage.integrity !== 'ok' || crawler.ready !== true) {
     throw new Error('Packaged runtime returned an unexpected response.');
   }
   const account = await client.call('accounts.create', {
@@ -40,6 +41,10 @@ try {
   await client.call('jobs.clear');
   await client.call('accounts.delete', { account_id: 'smoke-account' });
   process.stdout.write('packaged Python runtime smoke: PASS\n');
+} catch (error) {
+  const diagnostic = await readFile(path.join(dataDirectory, 'logs', 'runtime.log'), 'utf8').catch(() => 'runtime log unavailable');
+  process.stderr.write(`${diagnostic}\n`);
+  throw error;
 } finally {
   await client.stop();
   await rm(dataDirectory, { recursive: true, force: true });

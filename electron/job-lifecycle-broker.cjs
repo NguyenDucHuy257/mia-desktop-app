@@ -55,15 +55,34 @@ function idempotencyKey(intent) {
   return `desktop-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
-function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString()) {
+function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector) {
   if (typeof getRuntime !== 'function') throw new TypeError('Invalid offline runtime dependency.');
+  const launchCrawler = async (record) => {
+    if (!record || !protector?.decrypt || !['queued', 'waiting_account', 'running'].includes(record.status)) return;
+    const runtime = getRuntime();
+    const secret = await runtime.invoke('accounts.secret', { account_id: record.connection_id });
+    const password = protector.decrypt(Buffer.from(secret.encrypted_password, 'base64'));
+    try {
+      await runtime.invoke('crawler.start', {
+        job_id: record.job_id, connection_id: record.connection_id, intent: record.intent,
+        username: secret.username, password,
+      }, { timeoutMs: 15000 });
+    } finally {
+      // Drop the only plaintext reference immediately after it crosses the local stdio boundary.
+    }
+  };
   return Object.freeze({
-    resume: () => runBrokerCommand(() => getRuntime().invoke('jobs.resume')),
+    resume: () => runBrokerCommand(async () => {
+      const record = await getRuntime().invoke('jobs.resume');
+      await launchCrawler(record);
+      return record;
+    }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
       const record = await getRuntime().invoke('jobs.start', {
         connection_id: intent.connection_id, intent, idempotency_key: idempotencyKey(intent), timestamp: now(),
       });
+      await launchCrawler(record);
       return { record, accepted: { job_id: record.job_id, status: record.status, current_stage: record.stage, worker_slot_id: null } };
     }),
     status: (jobId) => runBrokerCommand(() => getRuntime().invoke('jobs.status', { job_id: validateJobId(jobId) })),

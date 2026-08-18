@@ -8,7 +8,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 TERMINAL_JOB_STATUSES = {"completed", "completed_with_warning", "failed", "cancelled", "abandoned"}
 JOB_TRANSITIONS = {
     "queued": {"waiting_account", "running", "cancelling", "cancelled", "failed", "abandoned"},
@@ -83,7 +83,7 @@ class Storage:
         try:
             with closing(self._connect()) as connection:
                 existing = connection.execute(
-                    "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts WHERE normalized_tax_code = ?",
+                    "SELECT account_id, normalized_tax_code, status, created_at, updated_at, company_name FROM accounts WHERE normalized_tax_code = ?",
                     (value["tax_code"],),
                 ).fetchone()
                 if existing:
@@ -94,7 +94,7 @@ class Storage:
                 )
                 connection.commit()
                 row = connection.execute(
-                    "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts WHERE account_id = ?",
+                    "SELECT account_id, normalized_tax_code, status, created_at, updated_at, company_name FROM accounts WHERE account_id = ?",
                     (value["account_id"],),
                 ).fetchone()
                 return self._account_row(row, reused=False)
@@ -106,19 +106,38 @@ class Storage:
     def list_accounts(self) -> list[dict[str, Any]]:
         with closing(self._connect()) as connection:
             rows = connection.execute(
-                "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts ORDER BY created_at, account_id"
+                "SELECT account_id, normalized_tax_code, status, created_at, updated_at, company_name FROM accounts ORDER BY created_at, account_id"
             ).fetchall()
             return [self._account_row(row, reused=False) for row in rows]
 
     def get_account(self, account_id: str) -> dict[str, Any]:
         with closing(self._connect()) as connection:
             row = connection.execute(
-                "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts WHERE account_id = ?",
+                "SELECT account_id, normalized_tax_code, status, created_at, updated_at, company_name FROM accounts WHERE account_id = ?",
                 (account_id,),
             ).fetchone()
             if not row:
                 raise StorageError("account_not_found")
             return self._account_row(row, reused=False)
+
+    def get_account_secret(self, account_id: str) -> dict[str, str]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT normalized_tax_code, encrypted_password FROM accounts WHERE account_id = ?", (account_id,),
+            ).fetchone()
+            if not row:
+                raise StorageError("account_not_found")
+            return {"username": row[0], "encrypted_password": row[1]}
+
+    def update_account_company(self, account_id: str, company_name: str, timestamp: str) -> None:
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                "UPDATE accounts SET company_name=?, status='connected', updated_at=? WHERE account_id=?",
+                (company_name[:300] or None, timestamp, account_id),
+            )
+            if cursor.rowcount != 1:
+                raise StorageError("account_not_found")
+            connection.commit()
 
     def update_account(self, value: dict[str, Any]) -> dict[str, Any]:
         with closing(self._connect()) as connection:
@@ -234,6 +253,19 @@ class Storage:
             )
             connection.commit()
             return self._get_job(connection, value["job_id"], reused=True)
+
+    def update_job_progress(self, job_id: str, percent: int, stage: str, timestamp: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            current = self._get_job(connection, job_id, reused=True)
+            if current["status"] != "running":
+                return current
+            progress = max(current["overall_percent"], min(99, max(0, int(percent))))
+            connection.execute(
+                "UPDATE jobs SET overall_percent=?, stage=?, updated_at=? WHERE job_id=?",
+                (progress, stage[:128], timestamp, job_id),
+            )
+            connection.commit()
+            return self._get_job(connection, job_id, reused=True)
 
     def job_summary(self, job_id: str) -> dict[str, Any]:
         with closing(self._connect()) as connection:
@@ -389,6 +421,7 @@ class Storage:
             "token_generation": 0,
             "created_at": row[3],
             "updated_at": row[4],
+            "company_name": row[5] if len(row) > 5 else None,
             "reused": reused,
         }
 

@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve('runtime/python');
+const vendorRoot = path.join(root, 'vendor', 'mia_crawl_service');
 const forbiddenNames = new Set(['.env', 'id_rsa', 'credentials.json']);
 const forbiddenExtensions = new Set(['.pt', '.pth', '.pem', '.key', '.xlsx']);
 const forbiddenContent = [
@@ -21,6 +22,9 @@ async function files(directory) {
 
 const failures = [];
 for (const file of await files(root)) {
+  // Phase 4A permits only the pinned, hash-verified crawler distribution. The
+  // following manifest check rejects additions or byte changes in this tree.
+  if (file.startsWith(`${vendorRoot}${path.sep}`)) continue;
   const basename = path.basename(file).toLowerCase();
   const extension = path.extname(file).toLowerCase();
   if (forbiddenNames.has(basename) || forbiddenExtensions.has(extension)) {

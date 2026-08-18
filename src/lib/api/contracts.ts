@@ -14,6 +14,7 @@ export type JobStatus =
 export interface AccountConnection {
   connection_id: string;
   username: string;
+  company_name?: string | null;
   status: string;
   token_generation: number;
   created_at: string;

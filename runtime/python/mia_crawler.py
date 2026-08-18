@@ -1,0 +1,182 @@
+"""Adapter around the byte-for-byte vendored tax-portal crawler."""
+
+from __future__ import annotations
+
+import json
+import sys
+import threading
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any
+
+VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
+if str(VENDOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(VENDOR_ROOT))
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class CrawlCancelled(RuntimeError):
+    pass
+
+
+class CrawlerCoordinator:
+    def __init__(self, storage, data_dir: Path) -> None:
+        self.storage = storage
+        self.data_dir = data_dir
+        self._lock = threading.Lock()
+        self._workers: dict[str, tuple[threading.Thread, threading.Event]] = {}
+
+    @staticmethod
+    def health() -> dict[str, Any]:
+        from app.captcha.solver import CaptchaSolver
+        solver = CaptchaSolver()
+        return {"ready": True, "model_charset_size": len(solver.charset)}
+
+    def start(self, value: dict[str, Any]) -> dict[str, Any]:
+        job_id = value["job_id"]
+        with self._lock:
+            current = self._workers.get(job_id)
+            if current and current[0].is_alive():
+                return {"accepted": True, "reused": True}
+            cancel = threading.Event()
+            worker = threading.Thread(target=self._run, args=(value, cancel), daemon=True, name=f"crawl-{job_id}")
+            self._workers[job_id] = (worker, cancel)
+            worker.start()
+        return {"accepted": True, "reused": False}
+
+    def cancel(self, job_id: str) -> bool:
+        with self._lock:
+            worker = self._workers.get(job_id)
+            if not worker:
+                return False
+            worker[1].set()
+            return True
+
+    def _transition(self, job_id: str, status: str, percent: int, stage: str, error=None) -> dict[str, Any]:
+        current = self.storage.get_job(job_id)
+        if current["status"] == status:
+            return current
+        return self.storage.transition_job({
+            "job_id": job_id, "expected_sequence": current["event_sequence"], "status": status,
+            "overall_percent": percent, "stage": stage, "timestamp": utc_now(), "error": error,
+        })
+
+    def _run(self, value: dict[str, Any], cancel: threading.Event) -> None:
+        job_id = value["job_id"]
+        password = value.pop("password")
+        try:
+            from app.config.crawl_config import adaptive_paging_options_from_config, load_crawl_config
+            from app.crawlers.invoice_crawler import InvoiceCrawler
+            from app.crawlers.invoice_detail_crawler import InvoiceDetailCrawler
+            from app.repositories.invoice_detail_repository import InvoiceDetailRepository
+            from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+            from app.services.invoice_detail_download_service import InvoiceDetailDownloadService
+            from app.services.invoice_detail_storage_service import InvoiceDetailStorageService
+            from app.services.invoice_overview_storage_service import InvoiceOverviewStorageService
+            from app.services.overview_downloader import OverviewDownloader
+            from app.services.portal_session import TaxPortalSession
+
+            self._transition(job_id, "running", 2, "authenticating")
+            portal = TaxPortalSession(username=value["username"], password=password)
+            portal.login()
+            company = portal.get_company_info()
+            self.storage.update_account_company(value["connection_id"], str(company.get("name") or "").strip(), utc_now())
+            if cancel.is_set():
+                self._transition(job_id, "cancelling", 2, "cancelling")
+                self._transition(job_id, "cancelled", 2, "cancelled")
+                return
+
+            intent = value["intent"]
+            config = load_crawl_config()
+            def cancellable_get(*args, **kwargs):
+                if cancel.is_set():
+                    raise CrawlCancelled("cancelled")
+                return portal.get(*args, **kwargs)
+            crawler = InvoiceCrawler(
+                portal.client, request_get=cancellable_get, reauthenticate=portal.login,
+                paging_options=adaptive_paging_options_from_config(
+                    config.overview, authentication_attempts=config.common.authentication_attempts, profile=config.profile,
+                ),
+            )
+            raw_root = self.data_dir / "crawler-data"
+            output_root = self.data_dir / "exports" / job_id
+            jobs = [(direction, query_type) for direction in intent["directions"] for query_type in intent["query_types"]]
+            for index, (direction, query_type) in enumerate(jobs):
+                if cancel.is_set():
+                    self._transition(job_id, "cancelling", max(2, int(index * 90 / len(jobs))), "cancelling")
+                    self._transition(job_id, "cancelled", max(2, int(index * 90 / len(jobs))), "cancelled")
+                    return
+                category = "electronic" if query_type == "query" else "cash_register"
+                downloader = OverviewDownloader(
+                    crawler=crawler, headers_provider=lambda: portal.headers,
+                    template_dir=VENDOR_ROOT / "resources" / "templates",
+                    storage_service=InvoiceOverviewStorageService(raw_root), company_tax_code=value["username"],
+                )
+                downloader.download(
+                    begin_date=date.fromisoformat(intent["date_from"]), end_date=date.fromisoformat(intent["date_to"]),
+                    output_dir=output_root, directions=(direction,), categories=(category,), overwrite=True,
+                )
+                self._import_raw(value["connection_id"], value["username"], raw_root, direction, query_type)
+                if "detail" in intent["scopes"]:
+                    database = raw_root / value["username"] / "db" / "invoices.sqlite3"
+                    detail_repository = InvoiceDetailRepository(database)
+                    detail_service = InvoiceDetailDownloadService(
+                        detail_crawler=InvoiceDetailCrawler(portal.client, request_get=cancellable_get),
+                        overview_repository=InvoiceOverviewRepository(database),
+                        detail_storage_service=InvoiceDetailStorageService(raw_root, detail_repository),
+                        detail_repository=detail_repository,
+                    )
+                    detail_service.download_invoice_details(
+                        headers=portal.headers, company_tax_code=value["username"], direction=direction,
+                        query_type=query_type, from_date=intent["date_from"], to_date=intent["date_to"],
+                    )
+                    self._import_details(value["connection_id"], value["username"], raw_root, direction, query_type)
+                percent = 5 + int((index + 1) * 90 / len(jobs))
+                self.storage.update_job_progress(job_id, percent, f"overview:{direction}:{query_type}", utc_now())
+            self._transition(job_id, "completed", 100, "completed")
+        except Exception as error:
+            safe_code = "portal_auth_failed" if "auth" in type(error).__name__.lower() else "crawler_failed"
+            try:
+                current = self.storage.get_job(job_id)
+                if current["status"] == "cancelling" or cancel.is_set():
+                    self._transition(job_id, "cancelled", current["overall_percent"], "cancelled")
+                elif current["status"] not in {"failed", "cancelled"}:
+                    self._transition(job_id, "failed", current["overall_percent"], "failed", {"code": safe_code})
+            except Exception:
+                pass
+        finally:
+            password = ""
+            value.pop("username", None)
+            with self._lock:
+                self._workers.pop(job_id, None)
+
+    def _import_raw(self, connection_id: str, tax_code: str, root: Path, direction: str, query_type: str) -> None:
+        raw_dir = root / tax_code / "raw" / "invoice_lists" / direction / query_type
+        items = []
+        for raw_file in sorted(raw_dir.glob("*.json")):
+            document = json.loads(raw_file.read_text(encoding="utf-8"))
+            for payload in document.get("datas", []):
+                parts = [str(payload.get(key, "")) for key in ("nbmst", "khhdon", "shdon", "khmshdon")]
+                if all(parts):
+                    items.append({"direction": direction, "business_key": "|".join(parts), "payload": payload})
+        for offset in range(0, len(items), 5000):
+            self.storage.import_overviews({
+                "connection_id": connection_id, "items": items[offset:offset + 5000], "timestamp": utc_now(),
+            })
+
+    def _import_details(self, connection_id: str, tax_code: str, root: Path, direction: str, query_type: str) -> None:
+        detail_root = root / tax_code / "raw" / "invoice_details" / direction / query_type
+        items = []
+        for raw_file in sorted(detail_root.glob("**/*.json")):
+            document = json.loads(raw_file.read_text(encoding="utf-8"))
+            key = document.get("invoice_key") or {}
+            parts = [str(key.get(name, "")) for name in ("nbmst", "khhdon", "shdon", "khmshdon")]
+            if all(parts):
+                items.append({
+                    "direction": direction, "business_key": "|".join(parts),
+                    "line_key": "detail", "payload": document.get("detail") or {},
+                })
+        for offset in range(0, len(items), 10000):
+            self.storage.import_details({"connection_id": connection_id, "items": items[offset:offset + 10000]})

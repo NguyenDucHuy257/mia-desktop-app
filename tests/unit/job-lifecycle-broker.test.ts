@@ -34,6 +34,20 @@ describe('offline job lifecycle IPC broker', () => {
     }));
   });
 
+  it('decrypts the account secret only in main and starts the local crawler', async () => {
+    const invoke = vi.fn(async (method: string) => {
+      if (method === 'jobs.start') return { job_id: 'job_1', connection_id: intent.connection_id, intent, status: 'queued', stage: 'queued' };
+      if (method === 'accounts.secret') return { username: 'masked-user', encrypted_password: Buffer.from('cipher').toString('base64') };
+      return { accepted: true };
+    });
+    const protector = { decrypt: vi.fn(() => 'plain-in-memory') };
+    await createJobLifecycleBroker(() => ({ invoke }), () => 'now', protector).start(intent);
+    expect(protector.decrypt).toHaveBeenCalledWith(Buffer.from('cipher'));
+    expect(invoke).toHaveBeenCalledWith('crawler.start', expect.objectContaining({
+      job_id: 'job_1', username: 'masked-user', password: 'plain-in-memory', intent,
+    }), { timeoutMs: 15000 });
+  });
+
   it.each(['resume', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }), () => 'now');
