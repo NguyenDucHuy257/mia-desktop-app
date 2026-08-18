@@ -75,6 +75,11 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
+  const [dateFrom, setDateFrom] = useState('2023-10-01');
+  const [dateTo, setDateTo] = useState('2023-10-31');
+  const [page, setPage] = useState(1);
   const { state: job, start, cancel, retry, dismissMessage } = useJobLifecycle();
 
   useEffect(() => {
@@ -102,7 +107,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
     }
     setSelectionError(null);
     void start({
-      connection_id: connectionId, date_from: '2023-10-01', date_to: '2023-10-31',
+      connection_id: connectionId, date_from: dateFrom, date_to: dateTo,
       directions, query_types: ['query'], scopes, data_types: ['invoice'],
     });
   }
@@ -120,7 +125,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   }
 
   const activeJob = Boolean(job.status && !TERMINAL_JOB_STATUSES.has(job.status.status));
-  const visibleRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
+  const allRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
     taxCode: account.username,
     company: '—',
     status: account.status === 'active' ? 'completed' : 'pending',
@@ -128,15 +133,18 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
     progress: 0,
     progressLabel: account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status,
   }));
+  const visibleRows = allRows.filter((row) => {
+    const term = search.trim().toLocaleLowerCase('vi');
+    return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
+  });
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
         <div className="toolbar-card">
-          <button className="date-picker" type="button">
+          <fieldset className="date-picker">
             <img src={calendarIcon} alt="" />
-            <span><small>KHOẢNG THỜI GIAN</small><strong>01/10/2023 - 31/10/2023</strong></span>
-            <i className="chevron" />
-          </button>
+            <legend>KHOẢNG THỜI GIAN</legend><input aria-label="Từ ngày đồng bộ" type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} /><span>–</span><input aria-label="Đến ngày đồng bộ" type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
+          </fieldset>
           <div className="select-wrap">
             <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
             {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">
@@ -166,9 +174,9 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
             <button className="add-account" type="button" onClick={onAddAccount}><img src={addIcon} alt="" /> Thêm tài khoản</button>
             <label className="search-box">
               <img src={searchIcon} alt="" />
-              <input aria-label="Tìm kiếm tài khoản" placeholder="Tìm kiếm MST, Tên công ty..." />
+              <input aria-label="Tìm kiếm tài khoản" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
             </label>
-            <button className="status-filter" type="button">Tất cả trạng thái <i className="chevron" /></button>
+            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Thất bại</option><option value="pending">Chờ xử lý</option></select>
           </div>
           <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancel()}><img src={stopIcon} alt="" /> Dừng tải</button>
         </div>
@@ -191,8 +199,8 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
           </div>
         </div>
         <footer className="pagination">
-          <span>{accounts ? `Hiển thị ${accounts.length} tài khoản` : 'Hiển thị 1 - 50 trong tổng số 128 hóa đơn'}</span>
-          <div><span>Chọn trang:</span><button>‹</button><button data-active="true">1</button><button>2</button><button>3</button><span>...</span><button>3</button><button>›</button></div>
+          <span>{accounts ? `Hiển thị ${visibleRows.length} tài khoản` : `Hiển thị trang ${page} trong tổng số 128 hóa đơn`}</span>
+          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>‹</button>{[1, 2, 3].map((value) => <button type="button" key={value} data-active={page === value} onClick={() => setPage(value)}>{value}</button>)}<span>...</span><button type="button" onClick={() => setPage(3)}>3</button><button type="button" aria-label="Trang sau" disabled={page === 3} onClick={() => setPage((value) => Math.min(3, value + 1))}>›</button></div>
         </footer>
       </section>
       {!job.status && job.message ? <NoticeDialog kind={job.phase === 'error' ? 'error' : 'notice'} message={job.message} onClose={dismissMessage} actionLabel={job.phase === 'error' ? 'Thử lại' : undefined} onAction={job.phase === 'error' ? () => { dismissMessage(); retry(); } : undefined} /> : null}

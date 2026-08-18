@@ -24,7 +24,7 @@ jobs:
       - run: npm run verify
 
   visual:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,7 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install chromium
       - run: npm run test:visual
 
   windows-package:

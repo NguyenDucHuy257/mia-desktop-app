@@ -89,7 +89,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
         {showTopbar ? (
           <header className="topbar">
             <h1>CÔNG TY GIẢI PHÁP SỐ WETECH - MIA WT</h1>
-            <button className="profile-button" type="button" aria-label="Tài khoản người dùng">
+            <button className="profile-button" type="button" aria-label="Cài đặt tài khoản" onClick={() => onNavigate('settings')}>
               <img src={userIcon} alt="" />
             </button>
           </header>
