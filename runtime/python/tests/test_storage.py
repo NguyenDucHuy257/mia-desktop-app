@@ -137,6 +137,23 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(first["status"], "cancelling")
             self.assertEqual(second["event_sequence"], first["event_sequence"])
 
+    def test_resume_jobs_returns_every_non_terminal_child_in_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Storage(Path(directory) / "mia.sqlite3")
+            storage.initialize()
+            for index in range(3):
+                account_id = f"account-{index}"
+                storage.create_account({
+                    "account_id": account_id, "tax_code": f"01012345{index:02d}",
+                    "encrypted_password": "ciphertext", "timestamp": f"2026-08-18T00:0{index}:00Z",
+                })
+                storage.create_job({
+                    "job_id": f"job_{index}", "connection_id": account_id, "idempotency_key": f"key-{index}",
+                    "intent": {}, "timestamp": f"2026-08-18T00:0{index}:00Z",
+                })
+            storage.cancel_job("job_1", "2026-08-18T00:10:00Z")
+            self.assertEqual([job["job_id"] for job in storage.resume_jobs()], ["job_0", "job_2"])
+
     def test_worker_transitions_clamp_progress_and_reject_stale_updates(self):
         with tempfile.TemporaryDirectory() as directory:
             storage = Storage(Path(directory) / "mia.sqlite3")
