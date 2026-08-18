@@ -28,3 +28,5 @@ Branch: `feat/offline-phase-01-runtime`
 ## Kiểm chứng tay
 
 Thực hiện checklist tại [PHASE-01-MANUAL-TEST.md](PHASE-01-MANUAL-TEST.md) trên một Windows VM không cài Python. Automated CI packaging không thay thế gate clean-VM này.
+
+Trạng thái: `PASS` — người dùng xác nhận ngày 2026-08-18.
