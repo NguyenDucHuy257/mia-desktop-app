@@ -218,12 +218,42 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await page.getByRole('button', { name: 'Xem kết quả 0101234567' }).click();
+  await page.getByRole('button', { name: 'Mở tác vụ 0101234567' }).click();
+  await page.getByRole('menuitem', { name: 'Xem kết quả' }).click();
   await expect(page.getByText('overview-first')).toBeVisible();
   await page.getByRole('button', { name: 'Tải thêm' }).click();
   await expect(page.getByText('overview-djE6MQ')).toBeVisible();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await expect(page.getByText('detail-first')).toBeVisible();
+});
+
+test('row action menu exports one or all selected accounts and closes with Escape', async ({ page }) => {
+  await page.addInitScript(() => {
+    const exports: unknown[] = [];
+    Object.defineProperty(window, 'artifactExports', { value: exports });
+    Object.defineProperty(window, 'miaRuntime', { value: { artifacts: {
+      selectDirectory: async () => 'D:\\MIA',
+      export: async (request: unknown) => { exports.push(request); return { count: 1, files: ['D:\\MIA\\demo.xlsx'] }; },
+    } } });
+  });
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
+  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: /Quay lại/ }).click();
+  const trigger = page.getByRole('button', { name: 'Mở tác vụ 0101234567' });
+  await trigger.click();
+  await expect(page.getByRole('menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await trigger.click();
+  await page.getByRole('menuitem', { name: 'Tải Excel tài khoản này' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Đã xuất 1 file Excel');
+  const calls = await page.evaluate(() => (window as typeof window & { artifactExports: Array<{ connection_ids: string[]; kinds: string[] }> }).artifactExports);
+  expect(calls[0]?.connection_ids).toHaveLength(1);
+  expect(calls[0]).toMatchObject({ kinds: ['excel'] });
 });
 
 test('XML and HTML tabs provide Figma-aligned filtering and download interactions', async ({ page }) => {
@@ -290,6 +320,29 @@ test('date, company, search, status and pagination controls update the UI', asyn
   await expect(page.getByLabel('Chọn công ty')).toHaveValue('company-b');
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.locator('.artifact-pager button[data-active="true"]').first()).toHaveText('2');
+});
+
+test('settings persist scheduler limits and logs are filtered after main-process redaction', async ({ page }) => {
+  await page.addInitScript(() => {
+    let preferences = { concurrency: 2, retries: 5 };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [] },
+      preferences: { get: async () => preferences, set: async (value: { concurrency: number; retries: number }) => (preferences = value) },
+      logs: { list: async () => ['2026 INFO storage_initialized', '2026 WARN retry_scheduled'] },
+    } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Cài đặt', exact: true }).click();
+  await page.getByLabel('Giới hạn tài khoản chạy đồng thời').selectOption('4');
+  await page.getByLabel('Số lần thử lại').fill('1');
+  await page.getByRole('button', { name: 'Lưu cài đặt' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Job mới sẽ áp dụng');
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: 'Nhật ký' }).click();
+  await expect(page.locator('.utility-log-list')).toContainText('storage_initialized');
+  await page.getByLabel('Tìm kiếm Nhật ký').fill('retry');
+  await expect(page.locator('.utility-log-list li')).toHaveCount(1);
+  await expect(page.locator('.utility-log-list')).toContainText('retry_scheduled');
 });
 
 test('artifact default frames use direct Figma exports as visual baselines', async ({ page }) => {

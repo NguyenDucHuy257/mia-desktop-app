@@ -62,10 +62,12 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountIds, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
+export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
   onAddAccount(): void;
   connectionId: string;
   selectedAccountIds: string[];
+  exportFolder: string;
+  onExportFolder(value: string): void;
   accounts: AccountConnection[] | null;
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
@@ -78,19 +80,22 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
+  const [actionAccountId, setActionAccountId] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('2023-10-01');
   const [dateTo, setDateTo] = useState('2023-10-31');
   const [page, setPage] = useState(1);
   const { items: batchItems, startMany, cancelAll, message, dismissMessage } = useBatchJobLifecycle();
+  const figmaFixture = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('figma') === '1';
 
   useEffect(() => {
-    if (!menu) return;
+    if (!menu && !actionAccountId) return;
     const closeOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && !target.closest('.select-wrap')) setMenu(null);
+      if (target instanceof Element && !target.closest('.select-wrap') && !target.closest('.row-action-popover') && !target.closest('.row-action-trigger')) { setMenu(null); setActionAccountId(null); }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenu(null);
+      if (event.key === 'Escape') { setMenu(null); setActionAccountId(null); }
     };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);
@@ -98,7 +103,24 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
       document.removeEventListener('pointerdown', closeOutside);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [menu]);
+  }, [menu, actionAccountId]);
+
+  async function exportAccounts(connectionIds: string[]) {
+    if (!window.miaRuntime?.artifacts?.export) { setSelectionError('Tính năng xuất file chỉ có trong ứng dụng desktop.'); return; }
+    let destination = exportFolder;
+    if (!destination) {
+      destination = await window.miaRuntime.artifacts.selectDirectory() ?? '';
+      if (!destination) return;
+      onExportFolder(destination);
+    }
+    try {
+      const result = await window.miaRuntime.artifacts.export({ destination, connection_ids: connectionIds, kinds: ['excel'] });
+      setSelectionError(`Đã xuất ${result.count} file Excel.`);
+      setActionAccountId(null);
+    } catch {
+      setSelectionError('Không thể xuất Excel. Vui lòng kiểm tra thư mục lưu và thử lại.');
+    }
+  }
 
   function startJob() {
     if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
@@ -128,7 +150,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const terminal = ['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned'];
   const activeJob = Object.values(batchItems).some((item) => Boolean(item.record && (!item.status || !terminal.includes(item.status.status))));
   const primaryStatus = Object.values(batchItems).find((item) => item.status)?.status;
-  const allRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
+  const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => ({
     taxCode: account.username,
     company: account.company_name || '—',
     status: account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending',
@@ -199,7 +221,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
                 <strong className="company-name">{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
-                {account ? <span className="row-action-group"><button type="button" aria-label={`Xem kết quả ${row.taxCode}`} onClick={() => onViewResults(account.connection_id)}>⋮</button><button type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button></span> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
+                {account ? <span className="row-action-group"><button className="row-action-trigger" type="button" aria-label={`Mở tác vụ ${row.taxCode}`} aria-expanded={actionAccountId === account.connection_id} onClick={() => setActionAccountId((current) => current === account.connection_id ? null : account.connection_id)}>⋮</button><button type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>{actionAccountId === account.connection_id ? <span className="row-action-popover" role="menu"><button role="menuitem" type="button" onClick={() => onViewResults(account.connection_id)}>Xem kết quả</button><button role="menuitem" type="button" onClick={() => void exportAccounts([account.connection_id])}>Tải Excel tài khoản này</button><button role="menuitem" type="button" disabled={!selectedAccountIds.length} onClick={() => void exportAccounts(selectedAccountIds)}>Tải tất cả đã chọn</button></span> : null}</span> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
               </div>
             })}
           </div>
