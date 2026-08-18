@@ -1,0 +1,28 @@
+# Phase 4 — Overview và detail cục bộ
+
+Branch: `feat/offline-phase-04-results`
+
+## Phạm vi
+
+- Tích hợp crawler/parser đã qua Phase 0 audit.
+- Lưu overview/detail trong SQLite.
+- Cursor pagination cục bộ, tìm kiếm, lọc, loading, empty, error và retry.
+- Chống trùng bằng khóa nghiệp vụ; không mất dòng khi resume hoặc crawl lại.
+- Đồng bộ theo lựa chọn mua vào/bán ra và tổng quan/chi tiết độc lập.
+- Menu ba chấm xem kết quả riêng theo tài khoản.
+
+## Test bắt buộc
+
+- Dataset 421 items: đủ, không trùng, không thiếu.
+- Cursor rỗng, hỏng, lặp và trang cuối.
+- Mua vào, bán ra và đồng thời cả hai.
+- Tổng quan/chi tiết độc lập.
+- Portal thiếu field hoặc thay đổi HTML có kiểm soát.
+- Visual Figma `1:466`, `85:16452`, mục tiêu ≤1%.
+- Layout 1024, 1280, 1366, 1440 và 1600 px.
+
+## Gate
+
+- Regression 421 items đạt tuyệt đối.
+- Kết quả đúng sau restart.
+- Visual đạt gate hoặc có ngoại lệ được người dùng duyệt và ghi số diff thật.

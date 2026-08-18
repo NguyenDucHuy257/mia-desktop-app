@@ -1,40 +1,51 @@
 # MIA WT Desktop
 
-Desktop client tách riêng cho backend `mia-crawl-service`. Ứng dụng dùng Electron + React + TypeScript, không chứa crawler và không nhúng credential production. Phase 3 bổ sung job lifecycle qua Electron main-process broker: tạo idempotent, resume sau restart, poll tiến trình hai cấp và hủy job.
+Ứng dụng Electron + React + TypeScript đang được chuyển sang kiến trúc chạy crawler cục bộ. Kiến trúc mục tiêu không gọi HTTP API nghiệp vụ:
+
+```text
+React renderer -> IPC allowlist -> Electron main -> JSON-RPC -> Python runtime -> SQLite
+```
+
+Node.js bắt buộc từ phiên bản 24. Python system hiện chỉ dùng cho prototype Phase 0; runtime đóng gói thuộc Phase 1.
 
 ## Chạy local
 
-```bash
+```powershell
 npm ci
 npm run verify
 npm run dev:electron
 ```
 
-API staging chỉ được cấu hình bằng biến môi trường của Electron main process:
-
-```bash
-MIA_API_BASE_URL=https://crawl-staging.example.com \
-MIA_API_ACCESS_TOKEN=temporary-staging-token \
-npm run dev:electron
-```
-
-Không dùng biến `VITE_*` cho token. Browser preview không gọi API thật; thêm `?demo=1` vào URL local chỉ để test tương tác form bằng adapter in-memory.
-
 ## Kiểm thử
 
-```bash
+```powershell
 npm run typecheck
+npm run check:electron
+npm run check:runtime
+npm run check:offline-boundary
 npm test
 npm run build:web
+npm run check:renderer-bundle
 npm run test:visual
+npm audit --omit=dev
+npm audit
+npm run package:win
 ```
 
-Visual baseline lấy trực tiếp từ Figma ở 1500×1024. Frame chính `1:2` có gate tối đa 3%; form đơn lẻ `1:368` và hàng loạt `60:1182` có gate chặt hơn là 1%. Build còn quét renderer bundle và thất bại nếu phát hiện marker token/header API.
+`check:offline-boundary` chặn endpoint, credential assignment và các artifact/model chưa được duyệt lọt vào Python runtime. Renderer vẫn được quét riêng để ngăn secret/header API lọt vào bundle.
 
-Smoke test `create/get/reconnect/revoke` chỉ chạy với tài khoản staging chuyên dụng. Lệnh này revoke connection sau khi kiểm tra và yêu cầu xác nhận rõ:
+## Phase 0
 
-```bash
-MIA_SMOKE_ALLOW_REVOKE=dedicated-test-account npm run smoke:accounts
-```
+Phase 0 cung cấp JSON-RPC prototype bằng Python standard library với health, echo, timeout và graceful shutdown. Electron client không dùng shell, giới hạn message 1 MiB, chỉ truyền environment allowlist và dừng runtime khi gặp protocol violation.
 
-Xem [kiểm kê backend](docs/REPO-AUDIT.md), [kiến trúc desktop](docs/ARCHITECTURE.md), [kế hoạch migration](docs/MIGRATION-PLAN.md), [API contract](docs/API-CONTRACT.md), [quy trình Figma](docs/FIGMA-WORKFLOW.md) và [báo cáo kiểm thử](docs/TEST-REPORT.md).
+Crawler, CAPTCHA/model, template và dependency backend chưa được copy trong Phase 0. Chúng chỉ được nhập sau khi dependency, license, provenance và secret audit đạt gate.
+
+Xem:
+
+- [Roadmap](docs/MIGRATION-PLAN.md)
+- [Kiến trúc](docs/ARCHITECTURE.md)
+- [Phase 0](docs/offline-phases/PHASE-00-ARCHITECTURE.md)
+- [Runtime protocol](docs/offline-phases/OFFLINE-RUNTIME-PROTOCOL.md)
+- [SQLite schema](docs/offline-phases/OFFLINE-SQLITE-SCHEMA.md)
+- [Source audit](docs/offline-phases/OFFLINE-SOURCE-AUDIT.md)
+- [Báo cáo test](docs/TEST-REPORT.md)
