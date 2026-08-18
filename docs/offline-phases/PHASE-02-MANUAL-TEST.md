@@ -4,11 +4,12 @@
 
 1. Cài/mở bản Phase 2 trên Windows.
 2. Nếu database mới, xác nhận bảng tài khoản hiển thị `0 tài khoản`.
-3. Nhấn **Thêm tài khoản**, nhập MST test và password rồi thêm.
-4. Quay lại danh sách; xác nhận MST xuất hiện với trạng thái **Chưa kiểm tra đăng nhập**.
-5. Đóng/mở app; xác nhận tài khoản vẫn còn.
-6. Xóa tài khoản; đóng/mở lại và xác nhận tài khoản không quay lại.
-7. Thêm trùng MST; xác nhận không tạo dòng thứ hai.
+3. Xác nhận cột **Tên công ty** nằm ngay sau **MST**, không còn cột **Kỳ tải**.
+4. Nhấn **Thêm tài khoản**, nhập MST test và password rồi thêm.
+5. Quay lại danh sách; xác nhận MST xuất hiện, Tên công ty là `—` và trạng thái **Chưa kiểm tra đăng nhập**.
+6. Đóng/mở app; xác nhận tài khoản vẫn còn.
+7. Xóa tài khoản; đóng/mở lại và xác nhận tài khoản không quay lại.
+8. Thêm trùng MST; xác nhận không tạo dòng thứ hai.
 
 ## Kiểm tra bảo mật
 
