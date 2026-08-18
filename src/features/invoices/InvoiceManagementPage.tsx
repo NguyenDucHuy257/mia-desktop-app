@@ -70,11 +70,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
 }) {
-  const [menu, setMenu] = useState<'options' | 'scope' | 'direction' | null>(null);
-  const [includeInvoice, setIncludeInvoice] = useState(true);
-  const [includeXml, setIncludeXml] = useState(true);
-  const [includeHtml, setIncludeHtml] = useState(false);
-  const [includePdf, setIncludePdf] = useState(false);
+  const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
   const [selectionError, setSelectionError] = useState<string | null>(null);
@@ -99,15 +95,14 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
 
   function startJob() {
     if (!connectionId) { onAddAccount(); return; }
-    const dataTypes = [includeInvoice && 'invoice', includeXml && 'xml', includeHtml && 'html', includePdf && 'pdf'].filter(Boolean) as Array<'invoice' | 'xml' | 'html' | 'pdf'>;
-    if (directions.length === 0 || scopes.length === 0 || dataTypes.length === 0) {
-      setSelectionError('Vui lòng chọn ít nhất một hướng, phạm vi và loại dữ liệu trước khi đồng bộ.');
+    if (directions.length === 0 || scopes.length === 0) {
+      setSelectionError('Vui lòng chọn ít nhất một hướng và phạm vi dữ liệu trước khi đồng bộ.');
       return;
     }
     setSelectionError(null);
     void start({
       connection_id: connectionId, date_from: '2023-10-01', date_to: '2023-10-31',
-      directions, query_types: ['query'], scopes, data_types: dataTypes,
+      directions, query_types: ['query'], scopes, data_types: ['invoice'],
     });
   }
 
@@ -141,15 +136,6 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
             <span><small>KHOẢNG THỜI GIAN</small><strong>01/10/2023 - 31/10/2023</strong></span>
             <i className="chevron" />
           </button>
-          <div className="select-wrap">
-            <button className="compact-select" type="button" aria-expanded={menu === 'options'} onClick={() => setMenu(menu === 'options' ? null : 'options')}>Hóa đơn <i className="chevron" /></button>
-            {menu === 'options' ? <div className="figma-option-menu" data-node-id="4:628">
-              <OptionCheck checked={includeInvoice} label="Hóa đơn" onChange={() => setIncludeInvoice(!includeInvoice)} />
-              <OptionCheck checked={includeXml} label="XML" onChange={() => setIncludeXml(!includeXml)} />
-              <OptionCheck checked={includeHtml} label="HTML" title="Tùy chọn HTML sẽ được thực thi bởi luồng artifact Phase 5" onChange={() => setIncludeHtml(!includeHtml)} />
-              <OptionCheck checked={includePdf} label="PDF" title="Tùy chọn PDF sẽ được thực thi bởi luồng artifact Phase 5" onChange={() => setIncludePdf(!includePdf)} />
-            </div> : null}
-          </div>
           <div className="select-wrap">
             <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
             {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">

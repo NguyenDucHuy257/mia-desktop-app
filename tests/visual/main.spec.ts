@@ -70,18 +70,19 @@ test('local account list starts empty, persists in the gateway and supports dele
   await expect(page.getByText('Hiển thị 1 tài khoản')).toBeVisible();
   await expect(page.getByText('—')).toBeVisible();
   await expect(page.getByText('Chưa kiểm tra đăng nhập')).toBeVisible();
+  const accountSelection = page.getByRole('button', { name: 'Chọn 0101234567' }).locator('.selection-box');
+  await expect(accountSelection).toHaveAttribute('data-checked', 'true');
+  await page.getByRole('button', { name: 'Chọn 0101234567' }).click();
+  await expect(accountSelection).toHaveAttribute('data-checked', 'false');
+  await page.getByRole('button', { name: 'Chọn 0101234567' }).click();
+  await expect(accountSelection).toHaveAttribute('data-checked', 'true');
   await page.getByRole('button', { name: 'Xóa 0101234567' }).click();
   await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
 });
 
-test('job option menus follow Figma nodes 4:628 and 4:654', async ({ page }) => {
+test('invoice scope menu follows Figma node 4:654 and closes outside', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
-  await expect(page.locator('[data-node-id="4:628"]')).toHaveScreenshot('figma-option-4-628.png', {
-    maxDiffPixelRatio: 0.08, threshold: 0.25,
-  });
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await expect(page.locator('[data-node-id="4:654"]')).toHaveScreenshot('figma-declaration-type-4-654.png', {
     maxDiffPixelRatio: 0.12, threshold: 0.25,
@@ -137,12 +138,6 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
-  await page.locator('[data-node-id="4:628"]').getByText('Hóa đơn', { exact: true }).click();
-  await expect(page.locator('[data-node-id="4:628"]').getByLabel('Hóa đơn')).not.toBeChecked();
-  await page.locator('[data-node-id="4:628"]').getByText('HTML', { exact: true }).click();
-  await expect(page.getByLabel('HTML')).toBeChecked();
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
   await page.getByRole('button', { name: 'Mua vào' }).click();
   await expect(page.getByLabel('Loại giao dịch').getByText('Mua vào')).toBeVisible();
   await expect(page.getByLabel('Loại giao dịch').getByText('Bán ra')).toBeVisible();
@@ -168,7 +163,7 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ directions: ['sold'], scopes: ['detail'], data_types: ['xml', 'html'] });
+  expect(captured).toMatchObject({ directions: ['sold'], scopes: ['detail'], data_types: ['invoice'] });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {

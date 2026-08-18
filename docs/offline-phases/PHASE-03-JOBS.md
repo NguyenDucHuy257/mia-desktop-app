@@ -8,7 +8,8 @@ Branch: `feat/offline-phase-03-job-lifecycle`
 - Resume sau khi mở lại app; cancel/retry có giới hạn.
 - Hỗ trợ `queued`, `waiting_account`, `running`, `cancelling`, `completed`, `completed_with_warning`, `failed`, `cancelled`, `abandoned`.
 - Hiển thị tiến trình tổng và tháng hiện tại.
-- Cho phép chọn/bỏ tự do mua vào, bán ra, tổng quan, chi tiết, XML, HTML và PDF.
+- Cho phép chọn/bỏ tự do mua vào, bán ra, tổng quan và chi tiết.
+- Tab Hóa đơn chỉ tạo job dữ liệu hóa đơn; XML, HTML và PDF được tách sang tab/phase riêng.
 - Job không có lựa chọn phải cảnh báo rõ trước khi chạy.
 
 ## Test bắt buộc

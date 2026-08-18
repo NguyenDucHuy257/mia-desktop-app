@@ -103,8 +103,10 @@ Chưa chạy:
 - Cancel queued/running/cancelling/terminal: PASS — queued thành cancelled, running thành cancelling, cancelling/terminal idempotent.
 - Electron IPC allowlist + sanitization: PASS — renderer không truy cập `jobs.transition`, intent lạ/rỗng bị chặn tại main.
 - Retry/recovery interaction: PASS — bounded backoff, runtime crash restart/resume và Playwright create/poll/cancel/error/retry.
-- Lựa chọn tự do: PASS — mua vào, bán ra, tổng quan, chi tiết, hóa đơn, XML, HTML và PDF có thể chọn/bỏ; job rỗng bị cảnh báo.
+- Lựa chọn tự do: PASS — mua vào, bán ra, tổng quan và chi tiết có thể chọn/bỏ; job rỗng bị cảnh báo.
 - Notification/menu interaction: PASS — modal notice/error, biểu tượng theo loại, nút Đóng, click-outside và `Esc` đóng menu.
+- Invoice tab scope: PASS — bỏ menu Hóa đơn/XML/HTML/PDF; job của tab cố định `data_types: ['invoice']`, artifact chuyển sang tab riêng.
+- Account table interaction: PASS — checkbox MST tích/bỏ được; nút Thêm tài khoản không xuống dòng.
 - Unit hiện tại: PASS — Python storage 9/9; Vitest 57/57; Playwright 10/10.
 - Packaged runtime + NSIS x64 local: PASS — schema v2 migration, create/idempotency/resume/cancel smoke và installer `MIA WT Setup 0.1.0.exe`.
 - Offline boundary, renderer secret scan và npm audit: PASS — 0 vulnerability.
