@@ -9,6 +9,7 @@ Branch: `feat/offline-phase-02-accounts`
 - Python chỉ nhận credential trong bộ nhớ lúc chạy tác vụ.
 - Hiển thị trạng thái chưa kiểm tra, đang kiểm tra, hợp lệ, sai mật khẩu, CAPTCHA lỗi, portal lỗi và bị khóa.
 - Menu ba chấm cho từng tài khoản.
+- Bảng tài khoản hiển thị cột MST và cột Tên công ty riêng biệt; bỏ cột Kỳ tải. Tên công ty để trống (`—`) cho đến phase tra cứu tự động.
 
 ## Test bắt buộc
 

@@ -57,12 +57,15 @@ test('account forms validate input and submit through the browser demo adapter',
 test('local account list starts empty, persists in the gateway and supports deletion', async ({ page }) => {
   await page.goto('/?demo=1');
   await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
+  await expect(page.getByText('Tên công ty')).toBeVisible();
+  await expect(page.getByText('Kỳ tải')).toHaveCount(0);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('not-stored-in-renderer');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await expect(page.getByText('Hiển thị 1 tài khoản')).toBeVisible();
+  await expect(page.getByText('—')).toBeVisible();
   await expect(page.getByText('Chưa kiểm tra đăng nhập')).toBeVisible();
   await page.getByRole('button', { name: 'Xóa 0101234567' }).click();
   await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
