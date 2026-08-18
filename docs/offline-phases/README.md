@@ -38,4 +38,4 @@ Không cập nhật baseline visual bằng ảnh của app để che regression.
 
 ## Thứ tự phase
 
-Phase 0–6 → [Phase 6.5 hoàn thiện toàn bộ UI/UX](PHASE-06-5-FULL-UI.md) → Phase 7 release → Phase 8 acceptance/soak.
+Phase 0–3 → Phase 4 Results foundation → [Phase 4A crawler](PHASE-04A-CRAWLER.md) → [Phase 4B multi-account](PHASE-04B-MULTI-ACCOUNT.md) → Phase 5 artifacts → Phase 6 (skipped) → [Phase 6.5 hoàn thiện UI/UX](PHASE-06-5-FULL-UI.md) → Phase 7 release → Phase 8 acceptance/soak.
