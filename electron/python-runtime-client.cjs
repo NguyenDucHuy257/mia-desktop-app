@@ -6,7 +6,7 @@ const SAFE_ENV_NAMES = [
   'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP',
   'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME', 'LANG',
 ];
-const SAFE_RUNTIME_ENV_NAMES = ['MIA_RUNTIME_DATA_DIR', 'MIA_RUNTIME_LOG_LEVEL'];
+const SAFE_RUNTIME_ENV_NAMES = ['MIA_RUNTIME_DATA_DIR', 'MIA_RUNTIME_LOG_LEVEL', 'PLAYWRIGHT_BROWSERS_PATH'];
 
 class RuntimeProtocolError extends Error {
   constructor(code, message) {

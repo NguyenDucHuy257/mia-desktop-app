@@ -42,6 +42,20 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   artifacts: Object.freeze({
     selectDirectory: () => ipcRenderer.invoke('mia:artifacts:select-directory'),
     export: (request) => invokeResult('mia:artifacts:export', request),
+    list: (request) => invokeResult('mia:artifacts:list', request),
+    openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
+  }),
+  preferences: Object.freeze({
+    get: () => ipcRenderer.invoke('mia:preferences:get'),
+    set: (value) => ipcRenderer.invoke('mia:preferences:set', value),
+  }),
+  logs: Object.freeze({ list: () => ipcRenderer.invoke('mia:logs:list') }),
+  updates: Object.freeze({
+    status: () => ipcRenderer.invoke('mia:updates:status'),
+    check: () => ipcRenderer.invoke('mia:updates:check'),
+    download: () => ipcRenderer.invoke('mia:updates:download'),
+    install: () => ipcRenderer.invoke('mia:updates:install'),
+    setChannel: (channel) => ipcRenderer.invoke('mia:updates:channel', channel),
   }),
   results: Object.freeze({
     overview: (query) => invokeResult('mia:results:overview', query),

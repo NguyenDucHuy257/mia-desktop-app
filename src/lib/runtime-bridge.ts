@@ -37,12 +37,28 @@ export interface MiaRuntimeBridge {
   artifacts: {
     selectDirectory(): Promise<string | null>;
     export(request: { destination: string; connection_ids: string[]; kinds: Array<'xml' | 'html' | 'pdf' | 'excel'> }): Promise<{ count: number; files: string[] }>;
+    list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
+    openDirectory(directory: string): Promise<boolean>;
+  };
+  preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
+  logs: { list(): Promise<string[]> };
+  updates: {
+    status(): Promise<UpdateStatus>;
+    check(): Promise<UpdateStatus>;
+    download(): Promise<UpdateStatus>;
+    install(): Promise<void>;
+    setChannel(channel: 'stable' | 'beta'): Promise<UpdateStatus>;
   };
   results: {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
   };
 }
+
+export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
+export interface LocalPreferences { concurrency: number; retries: number }
+export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: 'purchase' | 'sold' | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
+export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: 'purchase' | 'sold' | null; size: number; updated_at: number }
 
 export interface ResultQuery { connection_id: string; cursor?: string | null; limit?: number; search?: string; direction?: 'purchase' | 'sold' | null }
 export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }

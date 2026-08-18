@@ -170,6 +170,8 @@ button { color: inherit; }
 .artifact-header p, .utility-page > p { margin: 0; color: #62625b; font-size: 16px; line-height: 22px; }
 .artifact-toolbar { height: 68px; padding: 13px; border: 1px solid #e5e5e0; border-radius: 12px; background: #f6f6f3; display: flex; align-items: center; gap: 12px; }
 .artifact-toolbar button { font: inherit; }
+.artifact-search { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: #344054; font-size: 13px; font-weight: 600; }
+.artifact-search input { width: min(360px, 100%); height: 36px; padding: 0 12px; border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; font: inherit; }
 .artifact-date { position: relative; width: 239px; height: 42px; margin: 0; padding: 14px 8px 4px 36px; border: 1px solid #e5e5e0; border-radius: 11px; background: #fff; display: flex; align-items: center; text-align: left; }
 .artifact-date > img { position: absolute; left: 13px; top: 12px; width: 16px; height: 17px; }
 .artifact-date legend { position: absolute; top: 4px; left: 36px; padding: 0; color: #62625b; font-size: 8px; line-height: 9px; letter-spacing: .4px; }

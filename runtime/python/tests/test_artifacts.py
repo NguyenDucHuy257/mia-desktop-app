@@ -50,6 +50,27 @@ class ArtifactExporterTests(unittest.TestCase):
         for prefix in ("=", "+", "-", "@"):
             self.assertTrue(safe_excel_value(prefix + "payload").startswith("'"))
 
+    def test_lists_only_selected_local_job_artifacts_with_cursor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = Storage(root / "mia.sqlite3")
+            storage.initialize()
+            storage.create_account({"account_id": "account-1", "tax_code": "0101234567", "encrypted_password": "cipher", "timestamp": "now"})
+            storage.create_job({"job_id": "job_1", "connection_id": "account-1", "idempotency_key": "key", "intent": {}, "timestamp": "now"})
+            export_root = root / "crawler-data" / "0101234567" / "exports" / "invoice_packages" / "purchase"
+            export_root.mkdir(parents=True)
+            (export_root / "hóa-đơn-1.xml").write_text("<xml/>", encoding="utf-8")
+            (export_root / "hóa-đơn-2.xml").write_text("<xml/>", encoding="utf-8")
+            exporter = ArtifactExporter(storage, root)
+            first = exporter.list({"connection_ids": ["account-1"], "kind": "xml", "direction": "purchase", "limit": 1})
+            second = exporter.list({"connection_ids": ["account-1"], "kind": "xml", "direction": "purchase", "limit": 1, "cursor": first["pagination"]["next_cursor"]})
+            self.assertEqual(len(first["items"]), 1)
+            self.assertEqual(len(second["items"]), 1)
+            self.assertNotEqual(first["items"][0]["artifact_id"], second["items"][0]["artifact_id"])
+            self.assertFalse(second["pagination"]["has_more"])
+            with self.assertRaisesRegex(ValueError, "invalid_artifact_cursor"):
+                exporter.list({"connection_ids": ["account-1"], "kind": "xml", "cursor": "bad", "limit": 1})
+
 
 if __name__ == "__main__":
     unittest.main()

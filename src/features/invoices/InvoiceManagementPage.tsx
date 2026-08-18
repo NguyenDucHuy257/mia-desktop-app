@@ -85,6 +85,8 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const [dateTo, setDateTo] = useState('2023-10-31');
   const [page, setPage] = useState(1);
   const { items: batchItems, startMany, cancelAll, message, dismissMessage } = useBatchJobLifecycle();
+  const figmaFixture = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('figma') === '1';
 
   useEffect(() => {
     if (!menu && !actionAccountId) return;
@@ -148,7 +150,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const terminal = ['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned'];
   const activeJob = Object.values(batchItems).some((item) => Boolean(item.record && (!item.status || !terminal.includes(item.status.status))));
   const primaryStatus = Object.values(batchItems).find((item) => item.status)?.status;
-  const allRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
+  const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => ({
     taxCode: account.username,
     company: account.company_name || '—',
     status: account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending',

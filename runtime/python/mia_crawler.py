@@ -17,7 +17,7 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class CrawlCancelled(RuntimeError):
+class CrawlCancelled(BaseException):
     pass
 
 
@@ -72,9 +72,15 @@ class CrawlerCoordinator:
             from app.crawlers.invoice_detail_crawler import InvoiceDetailCrawler
             from app.repositories.invoice_detail_repository import InvoiceDetailRepository
             from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+            from app.repositories.invoice_package_repository import InvoicePackageRepository
+            from app.crawlers.invoice_package_crawler import InvoicePackageCrawler
             from app.services.invoice_detail_download_service import InvoiceDetailDownloadService
             from app.services.invoice_detail_storage_service import InvoiceDetailStorageService
             from app.services.invoice_overview_storage_service import InvoiceOverviewStorageService
+            from app.services.invoice_package_download_service import InvoicePackageDownloadService
+            from app.services.invoice_package_storage_service import InvoicePackageStorageService
+            from app.services.invoice_pdf_export_service import InvoicePdfExportService
+            from app.exporters.invoice_pdf_renderer import InvoicePdfRenderer
             from app.services.overview_downloader import OverviewDownloader
             from app.services.portal_session import TaxPortalSession
 
@@ -133,9 +139,42 @@ class CrawlerCoordinator:
                         query_type=query_type, from_date=intent["date_from"], to_date=intent["date_to"],
                     )
                     self._import_details(value["connection_id"], value["username"], raw_root, direction, query_type)
+                data_types = set(intent.get("data_types") or ())
+                wants_pdf = "pdf" in data_types
+                if data_types.intersection({"xml", "html", "pdf"}):
+                    database = raw_root / value["username"] / "db" / "invoices.sqlite3"
+                    package_repository = InvoicePackageRepository(database)
+                    package_repository.init_db()
+                    package_service = InvoicePackageDownloadService(
+                        package_crawler=InvoicePackageCrawler(portal.client, request_get=cancellable_get),
+                        package_repository=package_repository,
+                        storage_service=InvoicePackageStorageService(raw_root, package_repository, VENDOR_ROOT / "resources" / "invoice_assets"),
+                    )
+                    package_service.download_invoice_packages(
+                        headers=portal.headers, company_tax_code=value["username"], direction=direction,
+                        query_type=query_type, from_date=intent["date_from"], to_date=intent["date_to"],
+                        export_xml="xml" in data_types, export_html="html" in data_types or wants_pdf,
+                    )
+                    if wants_pdf:
+                        html_assets = raw_root / value["username"] / "exports" / "invoice_packages" / direction / query_type / f'{intent["date_from"]}_{intent["date_to"]}' / "html"
+                        pdf_service = InvoicePdfExportService(
+                            raw_root, package_repository, renderer_factory=lambda: InvoicePdfRenderer(assets_dir=html_assets),
+                        )
+                        pdf_service.export_invoice_pdfs(
+                            company_tax_code=value["username"], direction=direction, query_type=query_type,
+                            from_date=intent["date_from"], to_date=intent["date_to"], overwrite=True,
+                        )
                 percent = 5 + int((index + 1) * 90 / len(jobs))
                 self.storage.update_job_progress(job_id, percent, f"overview:{direction}:{query_type}", utc_now())
             self._transition(job_id, "completed", 100, "completed")
+        except CrawlCancelled:
+            try:
+                current = self.storage.get_job(job_id)
+                if current["status"] != "cancelling":
+                    self._transition(job_id, "cancelling", current["overall_percent"], "cancelling")
+                self._transition(job_id, "cancelled", current["overall_percent"], "cancelled")
+            except Exception:
+                pass
         except Exception as error:
             safe_code = "portal_auth_failed" if "auth" in type(error).__name__.lower() else "crawler_failed"
             try:

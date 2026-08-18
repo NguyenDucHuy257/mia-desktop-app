@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { atomicWrite, resolveInside, validateArtifactName, validateExportRequest } = require('../../electron/artifact-file-broker.cjs');
+const { atomicWrite, resolveInside, validateArtifactName, validateExportRequest, validateListRequest } = require('../../electron/artifact-file-broker.cjs');
 
 describe('artifact filesystem boundary', () => {
   it.each(['../escape.xml', 'C:\\escape.xml', 'CON.pdf', 'name.exe', 'a/b.html'])('rejects unsafe name %s', (name) => {
@@ -17,9 +17,17 @@ describe('artifact filesystem boundary', () => {
   });
 
   it('sanitizes the export DTO and rejects traversal-like account ids', () => {
-    expect(validateExportRequest({ destination: 'D:\\MIA', connection_ids: ['conn_1'], kinds: ['xml', 'excel'] })).toEqual({ destination: 'D:\\MIA', connection_ids: ['conn_1'], kinds: ['xml', 'excel'] });
-    expect(() => validateExportRequest({ destination: 'D:\\MIA', connection_ids: ['../account'], kinds: ['xml'] })).toThrow();
-    expect(() => validateExportRequest({ destination: 'D:\\MIA', connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
+    const destination = path.resolve(tmpdir(), 'MIA');
+    expect(validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'excel'] })).toEqual({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'excel'] });
+    expect(() => validateExportRequest({ destination, connection_ids: ['../account'], kinds: ['xml'] })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
+  });
+
+  it('sanitizes artifact list filters and date bounds', () => {
+    const query = validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31', limit: 50 });
+    expect(query).toMatchObject({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31' });
+    expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', date_from: '2026-02-01', date_to: '2026-01-01' })).toThrow();
+    expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'exe' })).toThrow();
   });
 
   it('writes atomically and preserves duplicates with a suffix', async () => {
