@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+runtime/smoke-data/
 playwright-report/
 test-results/
 coverage/

@@ -20,6 +20,7 @@ export default function App() {
   const [active, setActive] = useState<NavigationKey>('invoices');
   const [view, setView] = useState<'navigation' | 'add-account' | 'results'>('navigation');
   const [connectionId, setConnectionId] = useState('');
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
 
@@ -28,6 +29,11 @@ export default function App() {
       const items = await gateway.list();
       setAccounts(items);
       setConnectionId((current) => current || items[0]?.connection_id || '');
+      setSelectedAccountIds((current) => {
+        const available = new Set(items.map((item) => item.connection_id));
+        const retained = current.filter((id) => available.has(id));
+        return retained.length ? retained : items[0] ? [items[0].connection_id] : [];
+      });
     } catch {
       setAccounts(null);
     }
@@ -51,7 +57,7 @@ export default function App() {
       ) : view === 'results' ? (
         <ResultsPage connectionId={connectionId} onBack={() => setView('navigation')} />
       ) : active === 'invoices' ? (
-        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setConnectionId((current) => current === id ? '' : id)} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
+        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
       ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" />
         : active === 'html' ? <ArtifactDownloaderPage kind="html" />
           : active === 'pdf' ? <PdfDownloaderPage />
