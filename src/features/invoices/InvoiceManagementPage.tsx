@@ -63,12 +63,13 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, onDeleteAccount, onSelectAccount }: {
+export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, onDeleteAccount, onSelectAccount, onViewResults }: {
   onAddAccount(): void;
   connectionId: string;
   accounts: AccountConnection[] | null;
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
+  onViewResults(id: string): void;
 }) {
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
@@ -184,7 +185,7 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
                 <strong className="company-name">{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
-                {accounts ? <button className="row-actions" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(accounts[index]!.connection_id)}>×</button> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
+                {accounts ? <span className="row-action-group"><button type="button" aria-label={`Xem kết quả ${row.taxCode}`} onClick={() => onViewResults(accounts[index]!.connection_id)}>⋮</button><button type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(accounts[index]!.connection_id)}>×</button></span> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
               </div>
             ))}
           </div>

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TERMINAL_JOB_STATUSES = {"completed", "completed_with_warning", "failed", "cancelled", "abandoned"}
 JOB_TRANSITIONS = {
     "queued": {"waiting_account", "running", "cancelling", "cancelled", "failed", "abandoned"},
@@ -249,6 +250,119 @@ class Storage:
         with closing(self._connect()) as connection:
             connection.execute("DELETE FROM jobs WHERE status IN ('completed','completed_with_warning','failed','cancelled','abandoned')")
             connection.commit()
+
+    def import_overviews(self, value: dict[str, Any]) -> dict[str, int]:
+        items = value["items"]
+        if not isinstance(items, list) or len(items) > 5000:
+            raise StorageError("invalid_result_batch")
+        inserted = 0
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for item in items:
+                cursor = connection.execute(
+                    "INSERT INTO invoice_overviews(account_id,direction,business_key,payload_json,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(account_id,direction,business_key) DO UPDATE SET payload_json=excluded.payload_json,updated_at=excluded.updated_at",
+                    (value["connection_id"], item["direction"], item["business_key"], json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":")), value["timestamp"]),
+                )
+                inserted += 1 if cursor.rowcount else 0
+            connection.commit()
+        return {"processed": len(items), "upserted": inserted}
+
+    def query_overviews(self, value: dict[str, Any]) -> dict[str, Any]:
+        limit = int(value.get("limit", 50))
+        if not 1 <= limit <= 200:
+            raise StorageError("invalid_result_limit")
+        after = self._decode_cursor(value.get("cursor"))
+        direction = value.get("direction")
+        search = str(value.get("search", "")).strip().casefold()
+        if direction not in (None, "purchase", "sold"):
+            raise StorageError("invalid_result_filter")
+        clauses, params = ["account_id=?", "overview_id>?"], [value["connection_id"], after]
+        if direction:
+            clauses.append("direction=?")
+            params.append(direction)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"SELECT overview_id,direction,business_key,payload_json FROM invoice_overviews WHERE {' AND '.join(clauses)} ORDER BY overview_id",
+                params,
+            ).fetchall()
+        items = []
+        for row in rows:
+            payload = json.loads(row[3])
+            if search and search not in json.dumps(payload, ensure_ascii=False).casefold() and search not in row[2].casefold():
+                continue
+            items.append({"overview_id": row[0], "direction": row[1], "business_key": row[2], "payload": payload})
+            if len(items) > limit:
+                break
+        page, has_more = items[:limit], len(items) > limit
+        return {"items": page, "pagination": {"limit": limit, "has_more": has_more, "next_cursor": self._encode_cursor(page[-1]["overview_id"]) if has_more and page else None}}
+
+    def import_details(self, value: dict[str, Any]) -> dict[str, int]:
+        items = value["items"]
+        if not isinstance(items, list) or len(items) > 10000:
+            raise StorageError("invalid_result_batch")
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for item in items:
+                overview = connection.execute(
+                    "SELECT overview_id FROM invoice_overviews WHERE account_id=? AND direction=? AND business_key=?",
+                    (value["connection_id"], item["direction"], item["business_key"]),
+                ).fetchone()
+                if not overview:
+                    raise StorageError("overview_not_found")
+                connection.execute(
+                    "INSERT INTO invoice_details(overview_id,line_key,payload_json) VALUES (?,?,?) ON CONFLICT(overview_id,line_key) DO UPDATE SET payload_json=excluded.payload_json",
+                    (overview[0], item["line_key"], json.dumps(item["payload"], ensure_ascii=False, separators=(",", ":"))),
+                )
+            connection.commit()
+        return {"processed": len(items)}
+
+    def query_details(self, value: dict[str, Any]) -> dict[str, Any]:
+        limit = int(value.get("limit", 50))
+        if not 1 <= limit <= 200:
+            raise StorageError("invalid_result_limit")
+        after = self._decode_cursor(value.get("cursor"))
+        direction = value.get("direction")
+        search = str(value.get("search", "")).strip().casefold()
+        if direction not in (None, "purchase", "sold"):
+            raise StorageError("invalid_result_filter")
+        clauses, params = ["o.account_id=?", "d.detail_id>?"], [value["connection_id"], after]
+        if direction:
+            clauses.append("o.direction=?")
+            params.append(direction)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"SELECT d.detail_id,o.direction,o.business_key,d.line_key,d.payload_json FROM invoice_details d JOIN invoice_overviews o ON o.overview_id=d.overview_id WHERE {' AND '.join(clauses)} ORDER BY d.detail_id",
+                params,
+            ).fetchall()
+        items = []
+        for row in rows:
+            payload = json.loads(row[4])
+            if search and search not in json.dumps(payload, ensure_ascii=False).casefold() and search not in row[2].casefold():
+                continue
+            items.append({"detail_id": row[0], "direction": row[1], "business_key": row[2], "line_key": row[3], "payload": payload})
+            if len(items) > limit:
+                break
+        page, has_more = items[:limit], len(items) > limit
+        return {"items": page, "pagination": {"limit": limit, "has_more": has_more, "next_cursor": self._encode_cursor(page[-1]["detail_id"]) if has_more and page else None}}
+
+    @staticmethod
+    def _encode_cursor(value: int) -> str:
+        return base64.urlsafe_b64encode(f"v1:{value}".encode()).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_cursor(value: Any) -> int:
+        if value in (None, ""):
+            return 0
+        if not isinstance(value, str) or len(value) > 64:
+            raise StorageError("invalid_result_cursor")
+        try:
+            decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode()
+            prefix, identifier = decoded.split(":", 1)
+            if prefix != "v1" or not identifier.isdigit():
+                raise ValueError
+            return int(identifier)
+        except (ValueError, UnicodeError):
+            raise StorageError("invalid_result_cursor") from None
 
     @staticmethod
     def _get_job(connection: sqlite3.Connection, job_id: str, reused: bool) -> dict[str, Any]:

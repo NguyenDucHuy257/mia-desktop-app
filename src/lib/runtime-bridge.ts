@@ -33,7 +33,16 @@ export interface MiaRuntimeBridge {
     cancel(jobId: string): Promise<JobStatusResponse>;
     clear(): Promise<void>;
   };
+  results: {
+    overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
+    details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
+  };
 }
+
+export interface ResultQuery { connection_id: string; cursor?: string | null; limit?: number; search?: string; direction?: 'purchase' | 'sold' | null }
+export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }
+export interface DetailResult { detail_id: number; direction: 'purchase' | 'sold'; business_key: string; line_key: string; payload: Record<string, unknown> }
+export interface LocalResultPage<T> { items: T[]; pagination: { limit: number; has_more: boolean; next_cursor: string | null } }
 
 export interface PersistedJob {
   job_id: string | null;

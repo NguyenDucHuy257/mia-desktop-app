@@ -28,8 +28,8 @@ describe('OfflineRuntimeManager', () => {
     const first = runtime.start();
     const second = runtime.start();
     expect(first).toBe(second);
-    await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.3.0' });
-    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 2, integrity: 'ok' });
+    await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.4.0' });
+    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 3, integrity: 'ok' });
   });
 
   it('restarts after a crash and preserves the database', async () => {
@@ -37,7 +37,7 @@ describe('OfflineRuntimeManager', () => {
     await runtime.start();
     runtime.terminateForRecoveryTest();
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 2, integrity: 'ok' });
+    await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 3, integrity: 'ok' });
   });
 
   it('resumes the same idempotent job after a runtime crash', async () => {

@@ -13,7 +13,7 @@ try {
   await client.start();
   const health = await client.call('system.health');
   const storage = await client.call('storage.initialize', { data_dir: dataDirectory });
-  if (health.runtime_version !== '0.3.0' || storage.schema_version !== 2 || storage.integrity !== 'ok') {
+  if (health.runtime_version !== '0.4.0' || storage.schema_version !== 3 || storage.integrity !== 'ok') {
     throw new Error('Packaged runtime returned an unexpected response.');
   }
   const account = await client.call('accounts.create', {

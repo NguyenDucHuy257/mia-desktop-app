@@ -4,6 +4,7 @@ import { AddAccountPage } from './features/accounts/AddAccountPage';
 import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage';
 import { createAccountConnectionGateway } from './features/accounts/account-gateway';
 import type { AccountConnection } from './lib/api/contracts';
+import { ResultsPage } from './features/results/ResultsPage';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
@@ -16,7 +17,7 @@ const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
 
 export default function App() {
   const [active, setActive] = useState<NavigationKey>('invoices');
-  const [view, setView] = useState<'navigation' | 'add-account'>('navigation');
+  const [view, setView] = useState<'navigation' | 'add-account' | 'results'>('navigation');
   const [connectionId, setConnectionId] = useState('');
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
@@ -46,8 +47,10 @@ export default function App() {
     >
       {view === 'add-account' ? (
         <AddAccountPage gateway={gateway} onBack={() => setView('navigation')} onConnectionCreated={(id) => { setConnectionId(id); void refreshAccounts(); }} />
+      ) : view === 'results' ? (
+        <ResultsPage connectionId={connectionId} onBack={() => setView('navigation')} />
       ) : active === 'invoices' ? (
-        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setConnectionId((current) => current === id ? '' : id)} />
+        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setConnectionId((current) => current === id ? '' : id)} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
       ) : (
         <section className="placeholder-page" aria-label={labels[active]}>
           <h1>{labels[active]}</h1>
