@@ -16,7 +16,7 @@ describe('PythonRuntimeClient', () => {
     const client = new PythonRuntimeClient();
     await client.start();
     const health = await client.call('system.health');
-    expect(health).toMatchObject({ protocol_version: '1.0', runtime_version: '0.3.0' });
+    expect(health).toMatchObject({ protocol_version: '1.0', runtime_version: '0.4.0' });
     expect(await client.call('system.echo', { value: 'xin chào' })).toEqual({ value: 'xin chào' });
     await client.stop();
     await expect(client.call('system.health')).rejects.toMatchObject({ code: 'runtime_not_running' });

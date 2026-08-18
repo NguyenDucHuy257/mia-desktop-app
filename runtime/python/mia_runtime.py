@@ -18,7 +18,7 @@ from mia_storage import Storage, StorageError
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
-RUNTIME_VERSION = "0.3.0"
+RUNTIME_VERSION = "0.4.0"
 storage: Storage | None = None
 logger = None
 
@@ -144,6 +144,22 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32030, error.code) from None
+    if method.startswith("results."):
+        if storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            if method == "results.import_overviews":
+                return storage.import_overviews(params), False
+            if method == "results.overview":
+                return storage.query_overviews(params), False
+            if method == "results.import_details":
+                return storage.import_details(params), False
+            if method == "results.details":
+                return storage.query_details(params), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+        except StorageError as error:
+            raise RpcError(-32040, error.code) from None
     raise RpcError(-32601, "method_not_found")
 
 

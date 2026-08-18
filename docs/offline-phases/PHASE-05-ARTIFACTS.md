@@ -4,7 +4,7 @@ Branch: `feat/offline-phase-05-artifacts`
 
 ## Phạm vi
 
-- Tái sử dụng artifact module đã qua audit, chạy trong Python process.
+- Vendor nguyên trạng artifact module đủ điều kiện theo manifest/hash của Phase 4A, chạy trong Python process qua adapter offline bên ngoài vendor.
 - Chọn thư mục và ghi file qua Electron main; renderer không truy cập filesystem.
 - Dùng một ô đường dẫn chung dựa trên UI tab PDF.
 - Menu ba chấm tải riêng từng tài khoản.
