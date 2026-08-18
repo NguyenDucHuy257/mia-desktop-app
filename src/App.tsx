@@ -47,7 +47,7 @@ export default function App() {
       {view === 'add-account' ? (
         <AddAccountPage gateway={gateway} onBack={() => setView('navigation')} onConnectionCreated={(id) => { setConnectionId(id); void refreshAccounts(); }} />
       ) : active === 'invoices' ? (
-        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={setConnectionId} />
+        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setConnectionId((current) => current === id ? '' : id)} />
       ) : (
         <section className="placeholder-page" aria-label={labels[active]}>
           <h1>{labels[active]}</h1>

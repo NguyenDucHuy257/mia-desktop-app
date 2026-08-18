@@ -94,3 +94,21 @@ Chưa chạy:
 - Portal login success/failure/CAPTCHA timeout/locked: BLOCKED — chưa nhập crawler/CAPTCHA vì model/template chưa có provenance/license hợp lệ.
 - Cross-machine DPAPI clone test: NOT RUN — cần hai Windows identity/máy theo hướng dẫn test tay.
 - Phase 2 tổng thể: BLOCKED — không coi account `unchecked` là portal login thành công.
+
+## Offline Phase 3 — job lifecycle
+
+- SQLite schema v2 + event transaction: PASS — create/idempotency/resume/status/summary/cancel/clear và optimistic transition sequence.
+- Idempotency qua runtime restart: PASS — cùng key trả cùng `job_id`, không tạo dòng/event trùng.
+- State machine: PASS — đủ 9 trạng thái terminal/non-terminal; progress hai cấp clamp 0–100; response sequence cũ không ghi đè state mới.
+- Cancel queued/running/cancelling/terminal: PASS — queued thành cancelled, running thành cancelling, cancelling/terminal idempotent.
+- Electron IPC allowlist + sanitization: PASS — renderer không truy cập `jobs.transition`, intent lạ/rỗng bị chặn tại main.
+- Retry/recovery interaction: PASS — bounded backoff, runtime crash restart/resume và Playwright create/poll/cancel/error/retry.
+- Lựa chọn tự do: PASS — mua vào, bán ra, tổng quan và chi tiết có thể chọn/bỏ; job rỗng bị cảnh báo.
+- Notification/menu interaction: PASS — modal notice/error, biểu tượng theo loại, nút Đóng, click-outside và `Esc` đóng menu.
+- Invoice tab scope: PASS — bỏ menu Hóa đơn/XML/HTML/PDF; job của tab cố định `data_types: ['invoice']`, artifact chuyển sang tab riêng.
+- Account table interaction: PASS — checkbox MST tích/bỏ được; nút Thêm tài khoản không xuống dòng.
+- Unit hiện tại: PASS — Python storage 9/9; Vitest 57/57; Playwright 10/10.
+- Packaged runtime + NSIS x64 local: PASS — schema v2 migration, create/idempotency/resume/cancel smoke và installer `MIA WT Setup 0.1.0.exe`.
+- Offline boundary, renderer secret scan và npm audit: PASS — 0 vulnerability.
+- Small-job portal thật: BLOCKED — crawler/CAPTCHA artifacts chưa vượt gate provenance/license, không giả lập thành PASS.
+- Kiểm chứng tay Windows Phase 3: PASS — người dùng nghiệm thu ngày 2026-08-18 theo `PHASE-03-MANUAL-TEST.md`.

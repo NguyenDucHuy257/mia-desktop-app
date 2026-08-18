@@ -43,7 +43,9 @@ test('account forms validate input and submit through the browser demo adapter',
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
-  await expect(page.getByRole('status')).toHaveText('Đã thêm tài khoản thành công.');
+  await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Đã thêm tài khoản thành công.');
+  await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
+  await page.getByRole('button', { name: 'Đóng' }).click();
   await expect(page.getByLabel('Mật khẩu')).toHaveValue('');
 
   await page.getByRole('tab', { name: 'Thêm hàng loạt' }).click();
@@ -63,26 +65,30 @@ test('local account list starts empty, persists in the gateway and supports dele
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('not-stored-in-renderer');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await expect(page.getByText('Hiển thị 1 tài khoản')).toBeVisible();
   await expect(page.getByText('—')).toBeVisible();
   await expect(page.getByText('Chưa kiểm tra đăng nhập')).toBeVisible();
+  const accountSelection = page.getByRole('button', { name: 'Chọn 0101234567' }).locator('.selection-box');
+  await expect(accountSelection).toHaveAttribute('data-checked', 'true');
+  await page.getByRole('button', { name: 'Chọn 0101234567' }).click();
+  await expect(accountSelection).toHaveAttribute('data-checked', 'false');
+  await page.getByRole('button', { name: 'Chọn 0101234567' }).click();
+  await expect(accountSelection).toHaveAttribute('data-checked', 'true');
   await page.getByRole('button', { name: 'Xóa 0101234567' }).click();
   await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
 });
 
-test('job option menus follow Figma nodes 4:628 and 4:654', async ({ page }) => {
+test('invoice scope menu follows Figma node 4:654 and closes outside', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
-  await expect(page.locator('[data-node-id="4:628"]')).toHaveScreenshot('figma-option-4-628.png', {
-    maxDiffPixelRatio: 0.08, threshold: 0.25,
-  });
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await expect(page.locator('[data-node-id="4:654"]')).toHaveScreenshot('figma-declaration-type-4-654.png', {
     maxDiffPixelRatio: 0.12, threshold: 0.25,
   });
+  await page.locator('.invoice-content').click({ position: { x: 800, y: 300 } });
+  await expect(page.locator('[data-node-id="4:654"]')).toHaveCount(0);
 });
 
 test('creates, polls and cancels a job through the IPC allowlist', async ({ page }) => {
@@ -103,6 +109,7 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   await expect(page.getByRole('status')).toContainText('35% tổng thể');
@@ -129,13 +136,8 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
-  await page.locator('[data-node-id="4:628"]').getByText('Hóa đơn', { exact: true }).click();
-  await expect(page.locator('[data-node-id="4:628"]').getByLabel('Hóa đơn')).not.toBeChecked();
-  await page.locator('[data-node-id="4:628"]').getByText('HTML', { exact: true }).click();
-  await expect(page.getByLabel('HTML')).toBeChecked();
-  await page.getByRole('button', { name: 'Hóa đơn' }).click();
   await page.getByRole('button', { name: 'Mua vào' }).click();
   await expect(page.getByLabel('Loại giao dịch').getByText('Mua vào')).toBeVisible();
   await expect(page.getByLabel('Loại giao dịch').getByText('Bán ra')).toBeVisible();
@@ -151,11 +153,17 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Tổng quan')).not.toBeChecked();
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Chi tiết')).not.toBeChecked();
+  await page.getByRole('button', { name: 'Chi tiết' }).click();
+  await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Vui lòng chọn ít nhất');
+  await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; result_scope?: string } }).capturedIntent);
-  expect(captured).toMatchObject({ directions: ['sold'], result_scope: 'detail' });
+  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
+  expect(captured).toMatchObject({ directions: ['sold'], scopes: ['detail'], data_types: ['invoice'] });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
@@ -169,4 +177,25 @@ test('shows bounded polling failure and lets the user retry', async ({ page }) =
   });
   await page.goto('/');
   await expect(page.getByText('Mất kết nối tạm thời, đang thử lại…')).toBeVisible();
+});
+
+test('shows job errors in a centered red error dialog', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
+      resume: async () => null,
+      start: async () => { throw new Error('sanitized failure'); },
+      status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined,
+    } } });
+  });
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
+  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByRole('button', { name: 'Thêm ngay' }).click();
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: /Quay lại/ }).click();
+  await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await expect(page.getByRole('alertdialog', { name: 'Thông báo lỗi' })).toContainText('Không thể tạo job');
+  await expect(page.locator('.notice-icon[data-kind="error"]')).toHaveText('×');
+  await expect(page.getByRole('button', { name: 'Đóng' })).toBeVisible();
 });

@@ -26,6 +26,7 @@ export type JobAction =
   | { type: 'summary'; value: JobSummaryResponse }
   | { type: 'retry'; count: number }
   | { type: 'error'; message: string }
+  | { type: 'dismiss-message' }
   | { type: 'cleared' };
 
 export function clampPercent(value: number) {
@@ -38,6 +39,13 @@ export function jobReducer(state: JobViewState, action: JobAction): JobViewState
     case 'resumed':
     case 'accepted': return { ...state, phase: 'polling', record: action.record, retryCount: 0, message: null };
     case 'status': {
+      if (state.status?.job_id === action.value.job_id) {
+        const currentSequence = state.status.event_sequence ?? 0;
+        const incomingSequence = action.value.event_sequence ?? 0;
+        if (incomingSequence < currentSequence || (
+          incomingSequence === currentSequence && action.value.updated_at < state.status.updated_at
+        )) return state;
+      }
       const value = {
         ...action.value,
         overall_percent: clampPercent(action.value.overall_percent),
@@ -51,6 +59,7 @@ export function jobReducer(state: JobViewState, action: JobAction): JobViewState
     case 'summary': return { ...state, summary: action.value };
     case 'retry': return { ...state, phase: 'retrying', retryCount: action.count, message: 'Mất kết nối tạm thời, đang thử lại…' };
     case 'error': return { ...state, phase: 'error', message: action.message };
+    case 'dismiss-message': return { ...state, message: null };
     case 'cleared': return initialJobState;
   }
 }

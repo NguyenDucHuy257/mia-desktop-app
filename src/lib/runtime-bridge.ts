@@ -42,6 +42,12 @@ export interface PersistedJob {
   idempotency_key: string;
   created_at: string;
   updated_at: string;
+  status?: string;
+  stage?: string | null;
+  overall_percent?: number;
+  current_month?: JobStatusResponse['current_month'];
+  error?: JobStatusResponse['error'];
+  event_sequence?: number;
 }
 
 declare global {

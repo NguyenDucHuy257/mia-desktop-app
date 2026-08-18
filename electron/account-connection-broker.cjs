@@ -37,7 +37,10 @@ function validateConnectionId(value) {
 }
 
 function serializeError(error) {
-  const localCodes = new Set(['account_not_found', 'account_duplicate', 'account_in_use', 'database_locked', 'database_unavailable']);
+  const localCodes = new Set([
+    'account_not_found', 'account_duplicate', 'account_in_use', 'database_locked', 'database_unavailable',
+    'job_not_found', 'job_conflict', 'stale_job_update', 'invalid_job_transition',
+  ]);
   if (localCodes.has(error?.message)) {
     return { code: error.message, message: 'Local account operation failed.' };
   }
@@ -55,6 +58,9 @@ function serializeError(error) {
       status: Number.isInteger(error.status) ? error.status : undefined,
       message: error.message,
     };
+  }
+  if (error?.name === 'JobInputError') {
+    return { code: error.code, status: error.status, message: error.message };
   }
   return { code: 'internal_error', message: 'MIA API request could not be processed.' };
 }

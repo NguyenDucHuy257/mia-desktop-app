@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { NoticeDialog } from '../../components/NoticeDialog';
 import addIcon from '../../assets/figma/add.png';
 import calendarIcon from '../../assets/figma/calendar.png';
 import searchIcon from '../../assets/figma/search.png';
@@ -69,25 +70,39 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
 }) {
-  const [menu, setMenu] = useState<'options' | 'scope' | 'direction' | null>(null);
-  const [includeInvoice, setIncludeInvoice] = useState(true);
-  const [includeXml, setIncludeXml] = useState(true);
-  const [includeHtml, setIncludeHtml] = useState(false);
+  const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
   const [selectionError, setSelectionError] = useState<string | null>(null);
-  const { state: job, start, cancel, retry } = useJobLifecycle();
+  const { state: job, start, cancel, retry, dismissMessage } = useJobLifecycle();
+
+  useEffect(() => {
+    if (!menu) return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && !target.closest('.select-wrap')) setMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(null);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [menu]);
 
   function startJob() {
     if (!connectionId) { onAddAccount(); return; }
     if (directions.length === 0 || scopes.length === 0) {
-      setSelectionError('Vui lòng chọn ít nhất một hướng và một loại dữ liệu trước khi đồng bộ.');
+      setSelectionError('Vui lòng chọn ít nhất một hướng và phạm vi dữ liệu trước khi đồng bộ.');
       return;
     }
     setSelectionError(null);
     void start({
       connection_id: connectionId, date_from: '2023-10-01', date_to: '2023-10-31',
-      directions, query_types: ['query'], result_scope: scopes.includes('detail') ? 'detail' : 'overview', include_xml: scopes.includes('detail') && includeXml,
+      directions, query_types: ['query'], scopes, data_types: ['invoice'],
     });
   }
 
@@ -122,14 +137,6 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
             <i className="chevron" />
           </button>
           <div className="select-wrap">
-            <button className="compact-select" type="button" aria-expanded={menu === 'options'} onClick={() => setMenu(menu === 'options' ? null : 'options')}>Hóa đơn <i className="chevron" /></button>
-            {menu === 'options' ? <div className="figma-option-menu" data-node-id="4:628">
-              <OptionCheck checked={includeInvoice} label="Hóa đơn" onChange={() => setIncludeInvoice(!includeInvoice)} />
-              <OptionCheck checked={includeXml} label="XML" onChange={() => setIncludeXml(!includeXml)} />
-              <OptionCheck checked={includeHtml} label="HTML" title="Tùy chọn HTML sẽ được thực thi bởi luồng artifact Phase 5" onChange={() => setIncludeHtml(!includeHtml)} />
-            </div> : null}
-          </div>
-          <div className="select-wrap">
             <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
             {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">
               <OptionCheck checked={directions.includes('purchase')} label="Mua vào" onChange={() => toggleDirection('purchase')} />
@@ -150,8 +157,6 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
             {job.status.current_month ? <><small>Tháng {job.status.current_month.key}: {job.status.current_month.processed}/{job.status.current_month.planned}</small><div className="progress-track"><span style={{ width: `${job.status.current_month.percent}%` }} /></div></> : null}
             {job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}
           </div> : null}
-          {!job.status && job.message ? <div className="job-progress-panel" role="status"><span>{job.message}</span>{job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}</div> : null}
-          {selectionError ? <div className="job-progress-panel" role="alert"><span>{selectionError}</span></div> : null}
         </div>
       </section>
       <section className="invoice-content">
@@ -189,6 +194,8 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
           <div><span>Chọn trang:</span><button>‹</button><button data-active="true">1</button><button>2</button><button>3</button><span>...</span><button>3</button><button>›</button></div>
         </footer>
       </section>
+      {!job.status && job.message ? <NoticeDialog kind={job.phase === 'error' ? 'error' : 'notice'} message={job.message} onClose={dismissMessage} actionLabel={job.phase === 'error' ? 'Thử lại' : undefined} onAction={job.phase === 'error' ? () => { dismissMessage(); retry(); } : undefined} /> : null}
+      {selectionError ? <NoticeDialog kind="notice" message={selectionError} onClose={() => setSelectionError(null)} /> : null}
     </div>
   );
 }
