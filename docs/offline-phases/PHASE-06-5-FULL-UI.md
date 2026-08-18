@@ -1,8 +1,8 @@
-# Phase 6.5 — Hoàn thiện toàn bộ UI/UX
+# Phase 6.5 — Hardening UI/UX end-to-end
 
 Branch: `feat/offline-phase-06-5-full-ui`
 
-Phase này thực hiện sau Phase 5 và các phần crawler/results cần thiết, trước Phase 7 release. Không dùng mock để tuyên bố hoàn thành luồng nghiệp vụ.
+Phase này thực hiện sau Phase 5 và crawler/results, trước Phase 7 release. Giao diện pixel-accurate đã được clone tại [Phase 4-UI](PHASE-04-UI-FIGMA.md); Phase 6.5 chỉ harden với runtime/dữ liệu thật, sửa sai khác phát sinh khi tích hợp và xóa toàn bộ demo adapter khỏi production path.
 
 ## Phạm vi màn hình
 
