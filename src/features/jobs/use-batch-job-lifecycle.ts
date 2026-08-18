@@ -15,6 +15,7 @@ export function useBatchJobLifecycle() {
   const generation = useRef(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const pending = useRef<CreateJobRequest[]>([]);
+  const retryLimit = useRef(MAX_RETRIES);
 
   const stopTimers = useCallback(() => {
     generation.current += 1;
@@ -50,10 +51,10 @@ export function useBatchJobLifecycle() {
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, 0, token); }, POLL_MS);
       timers.current.add(timer);
     } catch {
-      setMessage(attempt >= MAX_RETRIES
+      setMessage(attempt >= retryLimit.current
         ? { kind: 'error', text: 'Không thể cập nhật tiến trình. Vui lòng thử lại.' }
         : { kind: 'notice', text: 'Mất kết nối tạm thời, đang thử lại…' });
-      if (attempt >= MAX_RETRIES) {
+      if (attempt >= retryLimit.current) {
         setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, error: 'Mất kết nối khi cập nhật tiến trình.' } }));
         void launchNext(token);
         return;
@@ -88,7 +89,13 @@ export function useBatchJobLifecycle() {
     setMessage(null);
     pending.current = [...normalized];
     setItems(Object.fromEntries(normalized.map((intent) => [intent.connection_id, { connectionId: intent.connection_id }])));
-    for (let index = 0; index < Math.min(DEFAULT_BATCH_CONCURRENCY, normalized.length); index += 1) void launchNext(token);
+    void (async () => {
+      const preferences = await window.miaRuntime?.preferences?.get().catch(() => null);
+      if (token !== generation.current) return;
+      const concurrency = preferences?.concurrency ?? DEFAULT_BATCH_CONCURRENCY;
+      retryLimit.current = preferences?.retries ?? MAX_RETRIES;
+      for (let index = 0; index < Math.min(concurrency, normalized.length); index += 1) void launchNext(token);
+    })();
   }, [launchNext, stopTimers]);
 
   const cancelAll = useCallback(async () => {

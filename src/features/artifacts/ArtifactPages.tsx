@@ -224,6 +224,22 @@ export function PdfDownloaderPage({ folder, onFolder, connectionIds, accounts }:
 export function UtilityPage({ title, description }: { title: string; description: string }) {
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [concurrency, setConcurrency] = useState(2);
+  const [retries, setRetries] = useState(5);
   const isSettings = title === 'Cài đặt';
-  return <section className="utility-page"><h1>{title}</h1><p>{description}</p>{isSettings ? <div className="utility-panel"><label>Giới hạn tài khoản chạy đồng thời<select defaultValue="2"><option value="1">1</option><option value="2">2 (khuyến nghị)</option></select></label><label>Số lần thử lại<input type="number" min="0" max="5" defaultValue="5" /></label><button type="button" onClick={() => setMessage('Đã lưu cài đặt trên máy.')}>Lưu cài đặt</button></div> : <div className="utility-panel"><label>Tìm kiếm<input aria-label={`Tìm kiếm ${title}`} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" onClick={() => setMessage(query ? `Đã áp dụng bộ lọc “${query}”.` : 'Đã làm mới dữ liệu cục bộ.')}>{query ? 'Áp dụng' : 'Làm mới'}</button><div className="utility-empty"><strong>Không có mục phù hợp</strong><span>Thay đổi bộ lọc hoặc đồng bộ dữ liệu để cập nhật danh sách.</span></div></div>}{message ? <NoticeDialog kind="notice" message={message} onClose={() => setMessage(null)} /> : null}</section>;
+  const isLogs = title === 'Nhật ký';
+  useEffect(() => {
+    if (isSettings) void window.miaRuntime?.preferences?.get().then((value) => { setConcurrency(value.concurrency); setRetries(value.retries); }).catch(() => undefined);
+    if (isLogs) void window.miaRuntime?.logs?.list().then(setLogs).catch(() => setMessage('Không thể đọc nhật ký cục bộ.'));
+  }, [isLogs, isSettings]);
+  const visibleLogs = logs.filter((line) => line.toLocaleLowerCase('vi').includes(query.toLocaleLowerCase('vi')));
+  async function saveSettings() {
+    try {
+      const saved = await window.miaRuntime?.preferences?.set({ concurrency, retries });
+      if (!saved) throw new Error('preferences_unavailable');
+      setMessage('Đã lưu cài đặt trên máy. Job mới sẽ áp dụng cấu hình này.');
+    } catch { setMessage('Không thể lưu cài đặt.'); }
+  }
+  return <section className="utility-page"><h1>{title}</h1><p>{description}</p>{isSettings ? <div className="utility-panel"><label>Giới hạn tài khoản chạy đồng thời<select value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}{value === 2 ? ' (khuyến nghị)' : ''}</option>)}</select></label><label>Số lần thử lại<input type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /></label><button type="button" onClick={() => void saveSettings()}>Lưu cài đặt</button></div> : isLogs ? <div className="utility-panel"><label>Tìm kiếm<input aria-label="Tìm kiếm Nhật ký" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" onClick={() => void window.miaRuntime?.logs?.list().then(setLogs).catch(() => setMessage('Không thể làm mới nhật ký.'))}>Làm mới</button>{visibleLogs.length ? <ol className="utility-log-list">{visibleLogs.map((line, index) => <li key={`${index}:${line}`}>{line}</li>)}</ol> : <div className="utility-empty"><strong>Chưa có nhật ký phù hợp</strong></div>}</div> : <div className="utility-panel"><div className="utility-empty"><strong>Chưa có nguồn dữ liệu mã vật tư</strong><span>Runtime crawler hiện không cung cấp danh mục mã vật tư. Không có dữ liệu giả được hiển thị.</span></div></div>}{message ? <NoticeDialog kind="notice" message={message} onClose={() => setMessage(null)} /> : null}</section>;
 }

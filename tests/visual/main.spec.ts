@@ -322,6 +322,29 @@ test('date, company, search, status and pagination controls update the UI', asyn
   await expect(page.locator('.artifact-pager button[data-active="true"]').first()).toHaveText('2');
 });
 
+test('settings persist scheduler limits and logs are filtered after main-process redaction', async ({ page }) => {
+  await page.addInitScript(() => {
+    let preferences = { concurrency: 2, retries: 5 };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [] },
+      preferences: { get: async () => preferences, set: async (value: { concurrency: number; retries: number }) => (preferences = value) },
+      logs: { list: async () => ['2026 INFO storage_initialized', '2026 WARN retry_scheduled'] },
+    } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Cài đặt', exact: true }).click();
+  await page.getByLabel('Giới hạn tài khoản chạy đồng thời').selectOption('4');
+  await page.getByLabel('Số lần thử lại').fill('1');
+  await page.getByRole('button', { name: 'Lưu cài đặt' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Job mới sẽ áp dụng');
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: 'Nhật ký' }).click();
+  await expect(page.locator('.utility-log-list')).toContainText('storage_initialized');
+  await page.getByLabel('Tìm kiếm Nhật ký').fill('retry');
+  await expect(page.locator('.utility-log-list li')).toHaveCount(1);
+  await expect(page.locator('.utility-log-list')).toContainText('retry_scheduled');
+});
+
 test('artifact default frames use direct Figma exports as visual baselines', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.evaluate(() => document.fonts.ready);

@@ -13,7 +13,7 @@
     "dev": "vite --host 127.0.0.1",
     "dev:electron": "cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "typecheck": "tsc -b",
-    "check:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/device-identity.cjs && node --check electron/security-policy.cjs && node --check electron/mia-api-client.cjs && node --check electron/account-connection-broker.cjs && node --check electron/local-account-broker.cjs && node --check electron/job-lifecycle-broker.cjs && node --check electron/result-broker.cjs && node --check electron/artifact-file-broker.cjs && node --check electron/release-updater.cjs && node --check electron/python-runtime-client.cjs && node --check electron/offline-runtime-manager.cjs",
+    "check:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/device-identity.cjs && node --check electron/security-policy.cjs && node --check electron/mia-api-client.cjs && node --check electron/account-connection-broker.cjs && node --check electron/local-account-broker.cjs && node --check electron/job-lifecycle-broker.cjs && node --check electron/result-broker.cjs && node --check electron/artifact-file-broker.cjs && node --check electron/local-preferences.cjs && node --check electron/release-updater.cjs && node --check electron/python-runtime-client.cjs && node --check electron/offline-runtime-manager.cjs",
     "check:runtime": "python -m unittest discover -s runtime/python/tests -p test_*.py",
     "check:offline-boundary": "node scripts/check-offline-boundary.mjs && node scripts/verify-vendored-crawler.mjs",
     "test": "vitest run",

@@ -45,6 +45,11 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     list: (request) => invokeResult('mia:artifacts:list', request),
     openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
   }),
+  preferences: Object.freeze({
+    get: () => ipcRenderer.invoke('mia:preferences:get'),
+    set: (value) => ipcRenderer.invoke('mia:preferences:set', value),
+  }),
+  logs: Object.freeze({ list: () => ipcRenderer.invoke('mia:logs:list') }),
   updates: Object.freeze({
     status: () => ipcRenderer.invoke('mia:updates:status'),
     check: () => ipcRenderer.invoke('mia:updates:check'),
