@@ -1,6 +1,7 @@
 node_modules/
 dist/
 release/
+release-phase*/
 runtime/smoke-data/
 playwright-report/
 test-results/
@@ -8,6 +9,7 @@ coverage/
 build/
 runtime/build/
 runtime/dist/
+runtime/browsers/
 __pycache__/
 *.py[cod]
 .env

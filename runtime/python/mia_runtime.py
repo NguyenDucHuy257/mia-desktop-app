@@ -22,6 +22,7 @@ PROTOCOL_VERSION = "1.0"
 RUNTIME_VERSION = "0.4.1"
 storage: Storage | None = None
 crawler: CrawlerCoordinator | None = None
+data_directory: Path | None = None
 logger = None
 
 
@@ -60,7 +61,7 @@ def validate_request(value: Any) -> tuple[str | int, str, Any]:
 
 
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
-    global storage, crawler, logger
+    global storage, crawler, data_directory, logger
     if method == "system.health":
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -88,6 +89,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         storage = Storage(data_dir / "mia.sqlite3")
         try:
             result = storage.initialize()
+            data_directory = data_dir
             crawler = CrawlerCoordinator(storage, data_dir)
             logger = configure_logging(data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO"))
             logger.info("storage_initialized schema_version=%s", result["schema_version"])
@@ -175,16 +177,36 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if logger is not None:
                 logger.exception("crawler_health_failed")
             raise RpcError(-32050, "crawler_runtime_unavailable") from None
+    if method == "artifacts.pdf_health":
+        try:
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                version = browser.version
+                browser.close()
+            return {"ready": True, "browser": "chromium", "version": version}, False
+        except Exception:
+            if logger is not None:
+                logger.exception("pdf_runtime_unavailable")
+            raise RpcError(-32061, "pdf_runtime_unavailable") from None
     if method == "artifacts.export":
-        if storage is None:
+        if storage is None or data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             from mia_artifacts import ArtifactExporter
-            return ArtifactExporter(storage, data_dir).export(dict(params)), False
+            return ArtifactExporter(storage, data_directory).export(dict(params)), False
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
         except OSError:
             raise RpcError(-32060, "artifact_write_failed") from None
+    if method == "artifacts.list":
+        if storage is None or data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_artifacts import ArtifactExporter
+            return ArtifactExporter(storage, data_directory).list(dict(params)), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
     if method.startswith("results."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")

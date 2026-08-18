@@ -54,8 +54,25 @@ function validateExportRequest(value) {
   return { destination: path.resolve(value.destination), connection_ids: [...value.connection_ids], kinds: [...value.kinds] };
 }
 
-function createArtifactBroker(getRuntime) {
-  return Object.freeze({ export: (value) => getRuntime().invoke('artifacts.export', validateExportRequest(value), { timeoutMs: 30 * 60 * 1000 }) });
+function validateListRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_query');
+  if (Object.keys(value).some((key) => !['connection_ids', 'kind', 'direction', 'search', 'cursor', 'limit', 'date_from', 'date_to'].includes(key))) throw new TypeError('invalid_artifact_query');
+  const base = validateExportRequest({ destination: path.resolve('.'), connection_ids: value.connection_ids, kinds: [value.kind] });
+  if (!['xml', 'html', 'pdf'].includes(value.kind) || ![undefined, null, 'purchase', 'sold'].includes(value.direction)) throw new TypeError('invalid_artifact_query');
+  if (value.search !== undefined && (typeof value.search !== 'string' || value.search.length > 200)) throw new TypeError('invalid_artifact_query');
+  if (value.cursor !== undefined && value.cursor !== null && (typeof value.cursor !== 'string' || value.cursor.length > 64)) throw new TypeError('invalid_artifact_query');
+  const limit = value.limit ?? 50;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new TypeError('invalid_artifact_query');
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if ((value.date_from !== undefined && !datePattern.test(value.date_from)) || (value.date_to !== undefined && !datePattern.test(value.date_to)) || value.date_from && value.date_to && value.date_from > value.date_to) throw new TypeError('invalid_artifact_query');
+  return { connection_ids: base.connection_ids, kind: value.kind, direction: value.direction ?? null, search: value.search ?? '', cursor: value.cursor ?? null, limit, date_from: value.date_from ?? null, date_to: value.date_to ?? null };
 }
 
-module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest };
+function createArtifactBroker(getRuntime) {
+  return Object.freeze({
+    export: (value) => getRuntime().invoke('artifacts.export', validateExportRequest(value), { timeoutMs: 30 * 60 * 1000 }),
+    list: (value) => getRuntime().invoke('artifacts.list', validateListRequest(value)),
+  });
+}
+
+module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest };
