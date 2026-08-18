@@ -70,6 +70,80 @@ class Storage:
         except sqlite3.DatabaseError:
             raise StorageError("database_corrupt") from None
 
+    def create_account(self, value: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with closing(self._connect()) as connection:
+                existing = connection.execute(
+                    "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts WHERE normalized_tax_code = ?",
+                    (value["tax_code"],),
+                ).fetchone()
+                if existing:
+                    return self._account_row(existing, reused=True)
+                connection.execute(
+                    "INSERT INTO accounts(account_id, normalized_tax_code, encrypted_password, status, created_at, updated_at) VALUES (?, ?, ?, 'unchecked', ?, ?)",
+                    (value["account_id"], value["tax_code"], value["encrypted_password"], value["timestamp"], value["timestamp"]),
+                )
+                connection.commit()
+                row = connection.execute(
+                    "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts WHERE account_id = ?",
+                    (value["account_id"],),
+                ).fetchone()
+                return self._account_row(row, reused=False)
+        except sqlite3.IntegrityError:
+            raise StorageError("account_duplicate") from None
+        except sqlite3.DatabaseError:
+            raise StorageError("database_unavailable") from None
+
+    def list_accounts(self) -> list[dict[str, Any]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts ORDER BY created_at, account_id"
+            ).fetchall()
+            return [self._account_row(row, reused=False) for row in rows]
+
+    def get_account(self, account_id: str) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT account_id, normalized_tax_code, status, created_at, updated_at FROM accounts WHERE account_id = ?",
+                (account_id,),
+            ).fetchone()
+            if not row:
+                raise StorageError("account_not_found")
+            return self._account_row(row, reused=False)
+
+    def update_account(self, value: dict[str, Any]) -> dict[str, Any]:
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                "UPDATE accounts SET normalized_tax_code = ?, encrypted_password = ?, status = 'unchecked', updated_at = ? WHERE account_id = ?",
+                (value["tax_code"], value["encrypted_password"], value["timestamp"], value["account_id"]),
+            )
+            if cursor.rowcount != 1:
+                raise StorageError("account_not_found")
+            connection.commit()
+        return self.get_account(value["account_id"])
+
+    def delete_account(self, account_id: str) -> None:
+        try:
+            with closing(self._connect()) as connection:
+                cursor = connection.execute("DELETE FROM accounts WHERE account_id = ?", (account_id,))
+                if cursor.rowcount != 1:
+                    raise StorageError("account_not_found")
+                connection.commit()
+        except sqlite3.IntegrityError:
+            raise StorageError("account_in_use") from None
+
+    @staticmethod
+    def _account_row(row: tuple[Any, ...], reused: bool) -> dict[str, Any]:
+        return {
+            "connection_id": row[0],
+            "username": row[1],
+            "status": row[2],
+            "token_generation": 0,
+            "created_at": row[3],
+            "updated_at": row[4],
+            "reused": reused,
+        }
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=0.2)
         connection.execute("PRAGMA foreign_keys=ON")

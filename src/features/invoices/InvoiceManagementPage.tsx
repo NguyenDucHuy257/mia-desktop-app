@@ -7,14 +7,13 @@ import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { useJobLifecycle } from '../jobs/use-job-lifecycle';
 import { TERMINAL_JOB_STATUSES } from '../jobs/job-state-machine';
-import type { InvoiceDirection } from '../../lib/api/contracts';
+import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending';
 
 interface InvoiceRow {
   taxCode: string;
   company: string;
-  period: string;
   status: RowStatus;
   selected: boolean;
   progress: number;
@@ -22,13 +21,12 @@ interface InvoiceRow {
 }
 
 const rows: InvoiceRow[] = [
-  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', period: 'Tháng 10/2023', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải 150/150 HĐ' },
-  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', period: 'Tháng 10/2023', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT' },
-  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', period: 'Tháng 10/2023', status: 'processing', selected: true, progress: 37, progressLabel: 'Đang tải 45/120 HĐ...' },
+  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải 150/150 HĐ' },
+  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT' },
+  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Đang tải 45/120 HĐ...' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
     company: `Công ty CP Đầu tư ${letter}`,
-    period: 'Tháng 10/2023',
     status: 'pending' as const,
     selected: false,
     progress: 0,
@@ -64,7 +62,13 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAccount(): void; connectionId: string }) {
+export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, onDeleteAccount, onSelectAccount }: {
+  onAddAccount(): void;
+  connectionId: string;
+  accounts: AccountConnection[] | null;
+  onDeleteAccount(id: string): Promise<void>;
+  onSelectAccount(id: string): void;
+}) {
   const [menu, setMenu] = useState<'options' | 'scope' | 'direction' | null>(null);
   const [includeInvoice, setIncludeInvoice] = useState(true);
   const [includeXml, setIncludeXml] = useState(true);
@@ -100,6 +104,14 @@ export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAcc
   }
 
   const activeJob = Boolean(job.status && !TERMINAL_JOB_STATUSES.has(job.status.status));
+  const visibleRows: InvoiceRow[] = accounts === null ? rows : accounts.map((account) => ({
+    taxCode: account.username,
+    company: '—',
+    status: account.status === 'active' ? 'completed' : 'pending',
+    selected: account.connection_id === connectionId,
+    progress: 0,
+    progressLabel: account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status,
+  }));
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
@@ -157,23 +169,23 @@ export function InvoiceManagementPage({ onAddAccount, connectionId }: { onAddAcc
         <div className="data-card">
           <div className="table-header table-grid">
             <SelectionBox checked={false} />
-            <span>MST</span><span>Kỳ tải</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
+            <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
-            {rows.map((row, index) => (
+            {visibleRows.map((row, index) => (
               <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
-                <SelectionBox checked={row.selected} />
-                <div className="company-cell"><span>{row.taxCode}</span><strong>{row.company}</strong></div>
-                <span>{row.period}</span>
+                {accounts ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(accounts[index]!.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
+                <span>{row.taxCode}</span>
+                <strong className="company-name">{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
-                <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>
+                {accounts ? <button className="row-actions" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(accounts[index]!.connection_id)}>×</button> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
               </div>
             ))}
           </div>
         </div>
         <footer className="pagination">
-          <span>Hiển thị 1 - 50 trong tổng số 128 hóa đơn</span>
+          <span>{accounts ? `Hiển thị ${accounts.length} tài khoản` : 'Hiển thị 1 - 50 trong tổng số 128 hóa đơn'}</span>
           <div><span>Chọn trang:</span><button>‹</button><button data-active="true">1</button><button>2</button><button>3</button><span>...</span><button>3</button><button>›</button></div>
         </footer>
       </section>

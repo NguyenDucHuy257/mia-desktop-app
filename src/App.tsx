@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppShell, type NavigationKey } from './components/AppShell';
 import { AddAccountPage } from './features/accounts/AddAccountPage';
 import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage';
+import { createAccountConnectionGateway } from './features/accounts/account-gateway';
+import type { AccountConnection } from './lib/api/contracts';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
@@ -16,6 +18,20 @@ export default function App() {
   const [active, setActive] = useState<NavigationKey>('invoices');
   const [view, setView] = useState<'navigation' | 'add-account'>('navigation');
   const [connectionId, setConnectionId] = useState('');
+  const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
+  const gateway = useMemo(() => createAccountConnectionGateway(), []);
+
+  async function refreshAccounts() {
+    try {
+      const items = await gateway.list();
+      setAccounts(items);
+      setConnectionId((current) => current || items[0]?.connection_id || '');
+    } catch {
+      setAccounts(null);
+    }
+  }
+
+  useEffect(() => { void refreshAccounts(); }, []);
 
   function navigate(value: NavigationKey) {
     setActive(value);
@@ -29,9 +45,9 @@ export default function App() {
       showTopbar={view !== 'add-account'}
     >
       {view === 'add-account' ? (
-        <AddAccountPage onBack={() => setView('navigation')} onConnectionCreated={setConnectionId} />
+        <AddAccountPage gateway={gateway} onBack={() => setView('navigation')} onConnectionCreated={(id) => { setConnectionId(id); void refreshAccounts(); }} />
       ) : active === 'invoices' ? (
-        <InvoiceManagementPage connectionId={connectionId} onAddAccount={() => setView('add-account')} />
+        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={setConnectionId} />
       ) : (
         <section className="placeholder-page" aria-label={labels[active]}>
           <h1>{labels[active]}</h1>

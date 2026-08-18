@@ -81,3 +81,16 @@ Chưa chạy:
 - `npm audit --omit=dev` và `npm audit`: PASS — 0 vulnerability.
 - Clean Windows manual verification: PASS — người dùng xác nhận ngày 2026-08-18 sau khi kiểm tra theo `PHASE-01-MANUAL-TEST.md`.
 - Crawler/CAPTCHA/model: NOT INCLUDED — đúng phạm vi Phase 1 và blocker license/provenance Phase 0.
+
+## Offline Phase 2 — tài khoản cục bộ
+
+- Local account SQLite CRUD: PASS — create/list/get/update/delete, duplicate reuse và DTO không trả ciphertext.
+- Electron broker: PASS — validate tại main, DPAPI encrypt trước JSON-RPC, password không có trong response.
+- UI interaction: PASS — danh sách trắng, thêm, persist trong gateway, trạng thái `unchecked` và xóa; Playwright 9/9.
+- Kiểm chứng tay local account trên Windows: PASS — người dùng nghiệm thu ngày 2026-08-18.
+- Bảng tài khoản: PASS — bỏ cột Kỳ tải, thêm cột Tên công ty ngay sau MST; tạm hiển thị `—` cho đến phase tra cứu tự động.
+- Unit tổng: PASS — 13 file, 53 test; Python storage 6/6.
+- Renderer/offline boundary scan, build và npm audit: PASS.
+- Portal login success/failure/CAPTCHA timeout/locked: BLOCKED — chưa nhập crawler/CAPTCHA vì model/template chưa có provenance/license hợp lệ.
+- Cross-machine DPAPI clone test: NOT RUN — cần hai Windows identity/máy theo hướng dẫn test tay.
+- Phase 2 tổng thể: BLOCKED — không coi account `unchecked` là portal login thành công.

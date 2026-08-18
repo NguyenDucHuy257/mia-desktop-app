@@ -96,6 +96,25 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             return storage.status(), False
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
+    if method.startswith("accounts."):
+        if storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            if method == "accounts.create":
+                return storage.create_account(params), False
+            if method == "accounts.list":
+                return storage.list_accounts(), False
+            if method == "accounts.get":
+                return storage.get_account(params["account_id"]), False
+            if method == "accounts.update":
+                return storage.update_account(params), False
+            if method == "accounts.delete":
+                storage.delete_account(params["account_id"])
+                return None, False
+        except (KeyError, TypeError):
+            raise RpcError(-32602, "invalid_params") from None
+        except StorageError as error:
+            raise RpcError(-32020, error.code) from None
     raise RpcError(-32601, "method_not_found")
 
 

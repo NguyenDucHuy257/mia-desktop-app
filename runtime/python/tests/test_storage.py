@@ -66,6 +66,30 @@ class StorageTests(unittest.TestCase):
             self.assertGreaterEqual(content.count("[REDACTED]"), 2)
             logging.shutdown()
 
+    def test_account_crud_never_returns_encrypted_password(self):
+        with tempfile.TemporaryDirectory() as directory:
+            storage = Storage(Path(directory) / "mia.sqlite3")
+            storage.initialize()
+            created = storage.create_account({
+                "account_id": "account-1", "tax_code": "0101234567",
+                "encrypted_password": "ciphertext", "timestamp": "2026-08-18T00:00:00Z",
+            })
+            self.assertEqual(created["status"], "unchecked")
+            self.assertNotIn("encrypted_password", created)
+            reused = storage.create_account({
+                "account_id": "account-2", "tax_code": "0101234567",
+                "encrypted_password": "different", "timestamp": "later",
+            })
+            self.assertTrue(reused["reused"])
+            updated = storage.update_account({
+                "account_id": "account-1", "tax_code": "0101234567",
+                "encrypted_password": "new-ciphertext", "timestamp": "later",
+            })
+            self.assertEqual(updated["status"], "unchecked")
+            self.assertEqual(len(storage.list_accounts()), 1)
+            storage.delete_account("account-1")
+            self.assertEqual(storage.list_accounts(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

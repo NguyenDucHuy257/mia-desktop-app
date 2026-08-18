@@ -46,6 +46,7 @@ describe('account connection gateway', () => {
           reused: false,
         };
       },
+      list: async () => [],
       get: async () => { throw new Error('not used'); },
       reconnect: async () => { throw new Error('not used'); },
       revoke: async () => undefined,
