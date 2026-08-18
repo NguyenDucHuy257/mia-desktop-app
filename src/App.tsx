@@ -22,6 +22,7 @@ export default function App() {
   const [connectionId, setConnectionId] = useState('');
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
+  const [exportFolder, setExportFolder] = useState('C:\\MIACrawl\\Export\\PDF\\T10_2023');
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
 
   async function refreshAccounts() {
@@ -58,9 +59,9 @@ export default function App() {
         <ResultsPage connectionId={connectionId} onBack={() => setView('navigation')} />
       ) : active === 'invoices' ? (
         <InvoiceManagementPage accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
-      ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" />
-        : active === 'html' ? <ArtifactDownloaderPage kind="html" />
-          : active === 'pdf' ? <PdfDownloaderPage />
+      ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} />
+        : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} />
+          : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} />
             : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
     </AppShell>
   );

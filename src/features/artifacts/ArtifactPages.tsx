@@ -22,7 +22,7 @@ const demoRows = [
   { id: 'HD-2023-004', date: '12/10/2023', direction: 'sold', state: 'error' },
 ] as const;
 
-export function ArtifactDownloaderPage({ kind }: { kind: ArtifactKind }) {
+export function ArtifactDownloaderPage({ kind, folder, connectionIds }: { kind: ArtifactKind; folder: string; onFolder(value: string): void; connectionIds: string[] }) {
   const [direction, setDirection] = useState<Direction>('all');
   const [company, setCompany] = useState('company-a');
   const [dateFrom, setDateFrom] = useState('2023-10-01');
@@ -33,6 +33,15 @@ export function ArtifactDownloaderPage({ kind }: { kind: ArtifactKind }) {
   const name = kind.toUpperCase();
   const stateLabel = { ready: `Đã có ${name}`, loading: 'Đang tải...', missing: 'Không có dữ liệu gốc', error: 'Lỗi kết nối' };
 
+  async function exportSelected() {
+    if (!window.miaRuntime?.artifacts?.export) { setMessage(`Đã thêm ${rows.length} file ${name} vào hàng đợi tải.`); return; }
+    if (!folder.trim()) { setMessage('Vui lòng chọn thư mục lưu ở tab PDF.'); return; }
+    if (!connectionIds.length) { setMessage('Vui lòng chọn ít nhất một tài khoản ở tab Hóa đơn.'); return; }
+    const result = await window.miaRuntime.artifacts.export({ destination: folder, connection_ids: connectionIds, kinds: [kind] });
+    setMessage(`Đã xuất ${result.count} file ${name}.`);
+  }
+
+
   return <section className="artifact-page" data-node-id={kind === 'xml' ? '1:654' : '104:22'} aria-labelledby={`${kind}-title`}>
     <header className="artifact-header">
       <h1 id={`${kind}-title`}>Công cụ tải {name}</h1>
@@ -41,7 +50,7 @@ export function ArtifactDownloaderPage({ kind }: { kind: ArtifactKind }) {
     <ArtifactToolbar direction={direction} onDirection={(value) => { setDirection(value); setPage(1); }} company={company} onCompany={setCompany} dateFrom={dateFrom} dateTo={dateTo} onDateFrom={setDateFrom} onDateTo={setDateTo} />
     <div className="artifact-summary">
       <span><strong>Tiến trình:</strong> <i><img src={artifactStatusCheckIcon} alt="" />Đã tải: 450/500</i></span>
-      <button type="button" onClick={() => setMessage(`Đã thêm ${rows.length} file ${name} vào hàng đợi tải.`)}><img src={artifactDownloadIcon} alt="" />Tải {name} hàng loạt</button>
+      <button type="button" onClick={() => void exportSelected()}><img src={artifactDownloadIcon} alt="" />Tải {name} hàng loạt</button>
     </div>
     <div className="artifact-table" role="table" aria-label={`Danh sách ${name}`}>
       <div className="artifact-table-head" role="row"><span aria-hidden="true" /><span>Mã hóa đơn</span><span>Ngày lập</span><span>Trạng thái {name}</span><span>Thao tác</span></div>
@@ -75,8 +84,7 @@ function ArtifactPager({ count, page, onPage }: { count: number; page: number; o
   return <footer className="artifact-pager"><span>Hiển thị {count ? (page - 1) * 50 + 1 : 0} - {Math.min(page * 50, 128)} trong tổng số 128 hóa đơn</span><div><span>Chọn trang:</span><button aria-label="Trang trước" disabled={page === 1} onClick={() => onPage(page - 1)}><img src={artifactPreviousIcon} alt="" /></button>{[1, 2, 3].map((value) => <button key={value} data-active={page === value} onClick={() => onPage(value)}>{value}</button>)}<span>...</span><button data-active={page === 3} onClick={() => onPage(3)}>3</button><button aria-label="Trang sau" disabled={page === 3} onClick={() => onPage(page + 1)}><img src={artifactNextIcon} alt="" /></button></div></footer>;
 }
 
-export function PdfDownloaderPage() {
-  const [folder, setFolder] = useState('C:\\MIACrawl\\Export\\PDF\\T10_2023');
+export function PdfDownloaderPage({ folder, onFolder, connectionIds }: { folder: string; onFolder(value: string): void; connectionIds: string[] }) {
   const [direction, setDirection] = useState<Direction>('all');
   const [company, setCompany] = useState('company-a');
   const [dateFrom, setDateFrom] = useState('2023-10-01');
@@ -85,14 +93,33 @@ export function PdfDownloaderPage() {
   const [progress, setProgress] = useState(31);
   const [message, setMessage] = useState<string | null>(null);
 
+  async function chooseFolder() {
+    const selected = await window.miaRuntime?.artifacts?.selectDirectory();
+    if (selected) onFolder(selected);
+  }
+
+  async function startPdfExport() {
+    setProgress(31);
+    setRunning(true);
+    if (!window.miaRuntime?.artifacts?.export || !connectionIds.length) return;
+    try {
+      const result = await window.miaRuntime.artifacts.export({ destination: folder, connection_ids: connectionIds, kinds: ['pdf'] });
+      setProgress(100);
+      setMessage(`Đã xuất ${result.count} file PDF.`);
+    } catch {
+      setRunning(false);
+      setMessage('Không thể xuất PDF. Vui lòng kiểm tra thư mục và thử lại.');
+    }
+  }
+
   return <section className="pdf-page" data-node-id={running ? '106:19444' : '106:18856'} aria-labelledby="pdf-title">
     <div className="pdf-container">
       <header><h1 id="pdf-title">Chuyển đổi PDF Hàng Loạt</h1><p>Chuyển đổi từ HTML → PDF</p></header>
       <div className="pdf-config">
-        <label>THƯ MỤC LƯU TRỮ<div><input aria-label="Thư mục lưu trữ" value={folder} onChange={(event) => setFolder(event.target.value)} /><button type="button" aria-label="Chọn thư mục" onClick={() => setMessage('Chọn thư mục thật sẽ được kết nối qua Electron main trong Phase 5.')}>▱</button></div></label>
+        <label>THƯ MỤC LƯU TRỮ<div><input aria-label="Thư mục lưu trữ" value={folder} onChange={(event) => onFolder(event.target.value)} /><button type="button" aria-label="Chọn thư mục" onClick={() => void chooseFolder()}>▱</button></div></label>
         <ArtifactToolbar direction={direction} onDirection={setDirection} company={company} onCompany={setCompany} dateFrom={dateFrom} dateTo={dateTo} onDateFrom={setDateFrom} onDateTo={setDateTo} />
       </div>
-      <button className="pdf-start" type="button" disabled={!folder.trim()} onClick={() => { if (!running) { setProgress(31); setRunning(true); } }}>⇩ Tải HTML hàng loạt</button>
+      <button className="pdf-start" type="button" disabled={!folder.trim()} onClick={() => { if (!running) void startPdfExport(); }}>⇩ Tải HTML hàng loạt</button>
       {running ? <div className="pdf-progress" role="status">
         <div className="pdf-progress-heading"><img className="pdf-file-icon" src={pdfProgressIcon} alt="" /><h2>Đang xuất PDF...</h2><p>Vui lòng không đóng ứng dụng trong quá trình này.</p></div>
         <div className="pdf-progress-body"><div className="pdf-progress-copy"><span>Tiến độ: 380 / 1.220</span><strong>{progress}%</strong></div><div className="pdf-progress-track"><span style={{ width: `${progress}%` }} /></div><small>Đang xử lý: Hóa đơn GTGT #0004829 - Công ty TNHH Thương Mại Dịch Vụ ABC...</small></div>
