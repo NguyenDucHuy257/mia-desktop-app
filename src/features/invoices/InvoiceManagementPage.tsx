@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { NoticeDialog } from '../../components/NoticeDialog';
 import addIcon from '../../assets/figma/add.png';
 import calendarIcon from '../../assets/figma/calendar.png';
 import searchIcon from '../../assets/figma/search.png';
@@ -77,7 +78,24 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
   const [selectionError, setSelectionError] = useState<string | null>(null);
-  const { state: job, start, cancel, retry } = useJobLifecycle();
+  const { state: job, start, cancel, retry, dismissMessage } = useJobLifecycle();
+
+  useEffect(() => {
+    if (!menu) return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && !target.closest('.select-wrap')) setMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(null);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [menu]);
 
   function startJob() {
     if (!connectionId) { onAddAccount(); return; }
@@ -153,8 +171,6 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
             {job.status.current_month ? <><small>Tháng {job.status.current_month.key}: {job.status.current_month.processed}/{job.status.current_month.planned}</small><div className="progress-track"><span style={{ width: `${job.status.current_month.percent}%` }} /></div></> : null}
             {job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}
           </div> : null}
-          {!job.status && job.message ? <div className="job-progress-panel" role="status"><span>{job.message}</span>{job.phase === 'error' ? <button type="button" onClick={retry}>Thử lại</button> : null}</div> : null}
-          {selectionError ? <div className="job-progress-panel" role="alert"><span>{selectionError}</span></div> : null}
         </div>
       </section>
       <section className="invoice-content">
@@ -192,6 +208,8 @@ export function InvoiceManagementPage({ onAddAccount, connectionId, accounts, on
           <div><span>Chọn trang:</span><button>‹</button><button data-active="true">1</button><button>2</button><button>3</button><span>...</span><button>3</button><button>›</button></div>
         </footer>
       </section>
+      {!job.status && job.message ? <NoticeDialog kind={job.phase === 'error' ? 'error' : 'notice'} message={job.message} onClose={dismissMessage} actionLabel={job.phase === 'error' ? 'Thử lại' : undefined} onAction={job.phase === 'error' ? () => { dismissMessage(); retry(); } : undefined} /> : null}
+      {selectionError ? <NoticeDialog kind="notice" message={selectionError} onClose={() => setSelectionError(null)} /> : null}
     </div>
   );
 }

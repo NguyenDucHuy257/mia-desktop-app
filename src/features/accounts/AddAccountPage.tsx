@@ -1,5 +1,6 @@
 import { FormEvent, useMemo, useState } from 'react';
 import backIcon from '../../assets/figma/back.png';
+import { NoticeDialog } from '../../components/NoticeDialog';
 import {
   accountErrorMessage,
   createAccountConnectionsInBatches,
@@ -190,7 +191,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
               />
               {errors.password ? <small id="account-password-error" className="field-error">{errors.password}</small> : null}
             </label>
-            <SubmitRow submitting={submitting} feedback={feedback} />
+            <SubmitRow submitting={submitting} />
           </form>
         ) : (
           <form
@@ -216,25 +217,21 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
               />
               {bulkError ? <small id="account-bulk-error" className="field-error">{bulkError}</small> : null}
             </label>
-            <SubmitRow submitting={submitting} feedback={feedback} />
+            <SubmitRow submitting={submitting} />
           </form>
         )}
       </div>
+      {feedback ? <NoticeDialog kind={feedback.kind === 'error' ? 'error' : 'notice'} message={feedback.message} onClose={() => setFeedback(null)} /> : null}
     </section>
   );
 }
 
-function SubmitRow({ submitting, feedback }: { submitting: boolean; feedback: Feedback | null }) {
+function SubmitRow({ submitting }: { submitting: boolean }) {
   return (
     <div className="account-submit-row">
       <button className="account-submit" type="submit" disabled={submitting}>
         {submitting ? 'Đang thêm...' : 'Thêm ngay'}
       </button>
-      {feedback ? (
-        <span className="account-feedback" data-kind={feedback.kind} role="status" aria-live="polite">
-          {feedback.message}
-        </span>
-      ) : null}
     </div>
   );
 }
