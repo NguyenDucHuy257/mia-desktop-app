@@ -39,6 +39,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     cancel: (jobId) => invokeResult('mia:jobs:cancel', jobId),
     clear: () => invokeResult('mia:jobs:clear'),
   }),
+  artifacts: Object.freeze({
+    selectDirectory: () => ipcRenderer.invoke('mia:artifacts:select-directory'),
+    export: (request) => invokeResult('mia:artifacts:export', request),
+    list: (request) => invokeResult('mia:artifacts:list', request),
+    openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
+  }),
   results: Object.freeze({
     overview: (query) => invokeResult('mia:results:overview', query),
     details: (query) => invokeResult('mia:results:details', query),

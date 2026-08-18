@@ -44,9 +44,12 @@ class OfflineRuntimeManager {
   }
 
   async #startClient() {
+    const browserPath = this.options.isPackaged
+      ? require('node:path').join(this.options.resourcesPath, 'runtime-browsers')
+      : require('node:path').join(__dirname, '..', 'runtime', 'browsers');
     const clientOptions = this.options.isPackaged
-      ? { runtimeExecutable: packagedRuntimeExecutable(this.options.resourcesPath) }
-      : { pythonExecutable: this.options.pythonExecutable, runtimeScript: this.options.runtimeScript };
+      ? { runtimeExecutable: packagedRuntimeExecutable(this.options.resourcesPath), env: { PLAYWRIGHT_BROWSERS_PATH: browserPath } }
+      : { pythonExecutable: this.options.pythonExecutable, runtimeScript: this.options.runtimeScript, env: { PLAYWRIGHT_BROWSERS_PATH: browserPath } };
     const client = new PythonRuntimeClient(clientOptions);
     await client.start();
     const health = await client.call('system.health');

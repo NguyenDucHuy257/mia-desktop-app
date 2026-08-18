@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -8,12 +8,14 @@ const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 const { createResultBroker } = require('./result-broker.cjs');
+const { createArtifactBroker } = require('./artifact-file-broker.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let jobLifecycleBroker;
 let offlineRuntime;
 let localAccountBroker;
 let resultBroker;
+let artifactBroker;
 let runtimeShutdownStarted = false;
 
 function jobs() {
@@ -112,6 +114,29 @@ ipcMain.handle('mia:license-store', (event, token) => {
     secureProtector().encrypt(token),
     { mode: 0o600 },
   );
+  return true;
+});
+ipcMain.handle('mia:artifacts:select-directory', async (event) => {
+  assertTrustedSender(event);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(owner, { properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('mia:artifacts:export', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.export(request);
+});
+ipcMain.handle('mia:artifacts:list', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.list(request);
+});
+ipcMain.handle('mia:artifacts:open-directory', async (event, directory) => {
+  assertTrustedSender(event);
+  if (typeof directory !== 'string' || !path.isAbsolute(directory) || directory.length > 1024) throw new TypeError('invalid_artifact_directory');
+  const error = await shell.openPath(path.resolve(directory));
+  if (error) throw new Error('artifact_directory_open_failed');
   return true;
 });
 function localAccounts() {

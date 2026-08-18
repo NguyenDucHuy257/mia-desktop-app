@@ -6,7 +6,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mia_crawler import CrawlerCoordinator
+from mia_crawler import CrawlCancelled, CrawlerCoordinator
 from mia_storage import Storage
 
 
@@ -43,6 +43,10 @@ class CrawlerAdapterTests(unittest.TestCase):
             storage = Storage(root / "mia.sqlite3")
             storage.initialize()
             self.assertFalse(CrawlerCoordinator(storage, root).cancel("job_unknown"))
+
+    def test_cancellation_escapes_vendor_item_level_exception_handlers(self):
+        self.assertTrue(issubclass(CrawlCancelled, BaseException))
+        self.assertFalse(issubclass(CrawlCancelled, Exception))
 
 
 if __name__ == "__main__":
