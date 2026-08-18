@@ -79,5 +79,5 @@ Chưa chạy:
 - Electron/Python syntax, offline boundary và renderer secret scan: PASS.
 - Playwright: PASS — 8/8; không thay đổi UI/baseline.
 - `npm audit --omit=dev` và `npm audit`: PASS — 0 vulnerability.
-- Clean Windows VM không cài Python: NOT RUN — cần kiểm chứng tay theo `PHASE-01-MANUAL-TEST.md`.
+- Clean Windows manual verification: PASS — người dùng xác nhận ngày 2026-08-18 sau khi kiểm tra theo `PHASE-01-MANUAL-TEST.md`.
 - Crawler/CAPTCHA/model: NOT INCLUDED — đúng phạm vi Phase 1 và blocker license/provenance Phase 0.

@@ -1,5 +1,7 @@
 # Phase 1 — hướng dẫn kiểm chứng tay trên Windows
 
+Trạng thái nghiệm thu: `PASS` — người dùng xác nhận ngày 2026-08-18.
+
 ## 1. Chuẩn bị và build
 
 Mở PowerShell tại repo, không cần cài dependency crawler:
