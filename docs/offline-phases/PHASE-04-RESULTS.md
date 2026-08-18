@@ -4,7 +4,7 @@ Branch: `feat/offline-phase-04-results`
 
 ## Phạm vi
 
-- Tích hợp crawler/parser đã qua Phase 0 audit.
+- Xây nền lưu trữ/truy vấn/UI results; crawler/parser thật được tích hợp riêng tại [Phase 4A](PHASE-04A-CRAWLER.md).
 - Lưu overview/detail trong SQLite.
 - Cursor pagination cục bộ, tìm kiếm, lọc, loading, empty, error và retry.
 - Chống trùng bằng khóa nghiệp vụ; không mất dòng khi resume hoặc crawl lại.
@@ -34,3 +34,4 @@ Branch: `feat/offline-phase-04-results`
 - UI mở từ nút ba chấm tài khoản, có Tổng quan/Chi tiết, search, direction filter, loading, empty, error/retry và Tải thêm.
 - Regression synthetic 421 items PASS tuyệt đối; crawler portal thật vẫn BLOCKED bởi gate provenance/license.
 - Visual Figma hai frame mới NOT RUN cho đến khi có baseline export trực tiếp từ Figma.
+- Không coi Phase 4 hoàn chỉnh end-to-end cho tới khi Phase 4A crawler và Phase 4B multi-account đạt gate.
