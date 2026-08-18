@@ -27,7 +27,11 @@ button { color: inherit; }
 .date-picker, .compact-select { height: 42px; border: 1px solid var(--mia-border-warm); background: #fff; border-radius: 12px; display: flex; align-items: center; }
 .date-picker { width: 238px; padding: 7px 13px; gap: 8px; }
 .date-picker img { width: 23px; height: 17px; }
-.date-picker > span { display: flex; flex-direction: column; text-align: left; }
+.date-picker legend { position: absolute; margin: -3px 0 0 31px; padding: 0; color: var(--mia-text-muted); font-size: 8px; line-height: 9px; letter-spacing: .4px; font-weight: 700; }
+.date-picker input { width: 75px; margin-top: 10px; padding: 0; border: 0; outline: 0; background: transparent; font-size: 9px; font-weight: 700; }
+.date-picker input::-webkit-calendar-picker-indicator { display: none; }
+.date-picker > span { margin-top: 9px; font-size: 10px; }
+.date-picker > span { display: block; text-align: left; }
 .date-picker small { color: var(--mia-text-muted); font-size: 10px; line-height: 14px; letter-spacing: .5px; font-weight: 700; }
 .date-picker strong { color: var(--mia-text-strong); font-size: 14px; line-height: 14px; white-space: nowrap; }
 .chevron { width: 8px; height: 8px; border-right: 1.5px solid #64748b; border-bottom: 1.5px solid #64748b; transform: rotate(45deg) translateY(-2px); margin-left: auto; }
@@ -156,3 +160,107 @@ button { color: inherit; }
   .filters-left { gap: 8px; }
   .search-box { width: 260px; }
 }
+
+.artifact-page { width: calc(100% + 10px); min-height: 100%; margin-left: -10px; padding: 23px 24px 48px; background: #fff; color: #1a1c1b; }
+.artifact-header { height: 105px; margin-bottom: 16px; }
+.artifact-header h1, .utility-page h1 { margin: 0 0 6px; font-size: 22px; line-height: 28px; }
+.artifact-header p, .utility-page > p { margin: 0; color: #62625b; font-size: 16px; line-height: 22px; }
+.artifact-toolbar { height: 68px; padding: 13px; border: 1px solid #e5e5e0; border-radius: 12px; background: #f6f6f3; display: flex; align-items: center; gap: 12px; }
+.artifact-toolbar button { font: inherit; }
+.artifact-date { position: relative; width: 239px; height: 42px; margin: 0; padding: 14px 8px 4px 36px; border: 1px solid #e5e5e0; border-radius: 11px; background: #fff; display: flex; align-items: center; text-align: left; }
+.artifact-date > img { position: absolute; left: 13px; top: 12px; width: 16px; height: 17px; }
+.artifact-date legend { position: absolute; top: 4px; left: 36px; padding: 0; color: #62625b; font-size: 8px; line-height: 9px; letter-spacing: .4px; }
+.artifact-date strong { font-size: 11px; line-height: 14px; white-space: nowrap; }
+.artifact-date input { position: absolute; inset-block: 0; width: 50%; opacity: 0; cursor: pointer; }
+.artifact-date input:first-of-type { left: 0; }
+.artifact-date input:last-of-type { right: 0; }
+.artifact-date input::-webkit-calendar-picker-indicator { width: 10px; height: 10px; margin: 0; padding: 0; }
+.artifact-company { width: min(434px, 42%); height: 39px; padding: 0 12px; border: 1px solid #e5e5e0; border-radius: 11px; background: #fff; display: flex; align-items: center; gap: 12px; color: #45464d; }
+.artifact-company > img { width: 20px; height: 20px; }
+.artifact-company select { min-width: 0; flex: 1; height: 100%; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; }
+.artifact-segment { width: 243px; height: 32px; padding: 1px; border: 1px solid #e5e5e0; border-radius: 10px; display: flex; }
+.artifact-segment button { flex: 1; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: #62625b; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.artifact-segment button[data-active="true"] { color: #1a1c1b; background: #e8e8e3; }
+.artifact-summary { height: 48px; margin: 16px 0; display: flex; align-items: center; justify-content: space-between; }
+.artifact-summary span { display: flex; align-items: center; gap: 12px; font-size: 16px; line-height: 22px; }
+.artifact-summary i { padding: 5px 12px; border-radius: 999px; color: #166534; background: #dcfce7; display: flex; align-items: center; gap: 6px; font-style: normal; font-size: 14px; line-height: 20px; font-weight: 600; }
+.artifact-summary i img { width: 14px; height: 14px; }
+.artifact-summary button, .pdf-start { min-height: 40px; padding: 0 22px; border: 0; border-radius: 12px; color: #fff; background: #166534; font-weight: 700; cursor: pointer; }
+.artifact-summary button { transform: translate(15px, 4px); display: flex; align-items: center; gap: 10px; }
+.artifact-summary button img { width: 16px; height: 16px; }
+.artifact-table { border: 1px solid #e5e5e0; border-radius: 12px; overflow: hidden; }
+.artifact-table-head { position: relative; height: 48px; border-bottom: 1px solid #e5e5e0; background: #f6f6f3; font-size: 16px; line-height: 22.4px; font-weight: 600; }
+.artifact-table-head span { position: absolute; top: 13px; }
+.artifact-table-head span:nth-child(2) { left: 60px; }
+.artifact-table-head span:nth-child(3) { left: 328px; }
+.artifact-table-head span:nth-child(4) { left: 546px; }
+.artifact-table-head span:nth-child(5) { left: 945px; }
+.artifact-table-row { position: relative; height: 49px; border-bottom: 1px solid #e5e5e0; font-size: 16px; line-height: 22.4px; }
+.artifact-table-row > * { position: absolute; top: 13px; }
+.artifact-table-row > strong { left: 52px; }
+.artifact-table-row > .artifact-row-date { left: 196px; }
+.artifact-table-row > .artifact-state { left: 553px; }
+.artifact-table-row[data-state="loading"] > .artifact-state { left: 557px; }
+.artifact-table-row[data-state="ready"] > .artifact-state { left: 333px; top: 11px; }
+.artifact-table-row > strong { font-weight: 400; }
+.artifact-row-date { color: #62625b; }
+.artifact-table-row > button { left: 1154px; top: 9px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; display: grid; place-items: center; cursor: pointer; }
+.artifact-table-row > button img { width: 16px; height: 16px; }
+.artifact-state { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; }
+.artifact-state > img { width: 16px; height: 16px; }
+.artifact-state[data-state="ready"] { width: max-content; padding: 5px 10px; border-radius: 999px; color: #166534; background: #dcfce7; }
+.artifact-state[data-state="missing"] { width: max-content; padding: 5px 10px; border-radius: 999px; color: #62625b; background: #ededeb; }
+.artifact-state[data-state="error"] { width: max-content; padding: 5px 10px; border-radius: 999px; color: #b91c1c; background: #fee2e2; }
+.artifact-state[data-state="loading"] { display: block; width: 400px; }
+.artifact-state[data-state="loading"] > small { width: 400px; display: grid; grid-template-columns: 1fr auto; row-gap: 4px; color: #62625b; font-size: 12px; line-height: 16px; }
+.artifact-state[data-state="loading"] > small > b { color: #166534; font-weight: 400; }
+.artifact-state[data-state="loading"] > small > i { grid-column: 1 / -1; width: 400px; height: 6px; border-radius: 6px; background: #e5e5e0; overflow: hidden; }
+.artifact-state[data-state="loading"] > small em { display: block; height: 6px; border-radius: 6px; background: #166534; }
+.app-frame:has(.artifact-page) .nav-button[data-active="true"], .app-frame:has(.pdf-page) .nav-button[data-active="true"] { border-color: transparent; }
+.artifact-pager { height: 57px; padding: 0 24px; background: #f7f9fb; display: flex; align-items: center; justify-content: space-between; color: #62625b; font-size: 12px; line-height: 16px; }
+.artifact-pager div { display: flex; align-items: center; gap: 8px; transform: translate(-11px, 2px); }
+.artifact-pager button { width: 32px; height: 32px; padding: 0; border: 1px solid #cbd5e1; border-radius: 2px; background: #fff; display: grid; place-items: center; }
+.artifact-pager button img { width: 12px; height: 12px; }
+.artifact-pager button[data-active="true"] { color: #fff; border-color: #166534; background: #166534; }
+.pdf-page { width: calc(100% + 10px); min-height: 100%; margin-left: -10px; padding: 79px 24px 56px; background: #fff; color: #0b1c30; }
+.pdf-container { width: min(1024px, calc(100% - 121.5px)); margin: 0 0 0 121.5px; display: flex; flex-direction: column; gap: 20px; align-items: center; }
+.pdf-container > header { width: 100%; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+.pdf-container > header h1 { margin: 0 0 8px; font-size: 32px; line-height: 40px; letter-spacing: -.64px; }
+.pdf-container > header p { margin: 0; color: #45464d; font-size: 14px; }
+.pdf-config { width: 100%; margin-top: 4px; padding: 32px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 1px 1px rgb(0 0 0 / 5%); }
+.pdf-config > label { display: flex; flex-direction: column; gap: 8px; color: #45464d; font-size: 11px; letter-spacing: .55px; }
+.pdf-config > label > div { width: 364px; height: 40px; margin-bottom: 10px; display: flex; }
+.pdf-config input { min-width: 0; flex: 1; padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 5px 0 0 5px; }
+.pdf-config label button { width: 46px; border: 1px solid #cbd5e1; border-left: 0; border-radius: 0 5px 5px 0; background: #eef2ff; }
+.pdf-config .artifact-toolbar { padding: 12px; }
+.pdf-start { min-width: 203px; }
+.pdf-start:disabled { opacity: .55; cursor: default; }
+.pdf-progress { width: 100%; height: 400px; padding: 41px; border: 1px solid #e2e8f0; border-radius: 8px; box-shadow: 0 1px 1px rgb(0 0 0 / 5%); display: flex; flex-direction: column; align-items: center; gap: 32px; text-align: center; }
+.pdf-progress-heading { width: 100%; height: 116px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pdf-file-icon { width: 40px; height: 40px; }
+.pdf-progress h2 { width: 100%; height: 40px; margin: 0; padding-top: 8px; color: #0b1c30; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.24px; }
+.pdf-progress-heading p { width: 100%; height: 20px; margin: 0; color: #45464d; font-size: 14px; line-height: 20px; }
+.pdf-progress-body { width: 768px; height: 88px; display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+.pdf-progress-copy { height: 20px; display: flex; justify-content: space-between; color: #0b1c30; font-size: 14px; line-height: 20px; text-align: left; }
+.pdf-progress-copy strong { color: #0051d5; font-weight: 400; }
+.pdf-progress-track { width: 768px; height: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background: #eff4ff; overflow: hidden; }
+.pdf-progress-track span { display: block; height: 20px; border-radius: 12px; background: #0051d5; transition: width 180ms ease; }
+.pdf-progress-body small { height: 24px; padding-top: 4px; display: block; color: #45464d; font-size: 14px; line-height: 20px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pdf-actions { width: 100%; height: 50px; padding-top: 8px; display: flex; justify-content: center; align-items: flex-start; gap: 16px; }
+.pdf-actions button { height: 42px; padding: 0 25px; border: 1px solid #ef4444; border-radius: 4px; color: #ef4444; background: #fff; display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; }
+.pdf-actions button img { width: 12px; height: 12px; }
+.pdf-actions button:nth-child(2) { padding-inline: 24px; color: #fff; border-color: #0051d5; background: #0051d5; opacity: .5; }
+.pdf-actions button:nth-child(2) img { width: 13px; height: 10px; }
+.utility-page { min-height: 100%; padding: 48px; background: #fff; }
+.utility-empty { min-height: 280px; margin-top: 36px; border: 1px dashed #cbd5e1; border-radius: 16px; display: grid; place-content: center; gap: 8px; text-align: center; color: #62625b; }
+.utility-empty strong { color: #1a1c1b; font-size: 18px; }
+@media (max-width: 1100px) {
+  .artifact-toolbar { align-items: stretch; flex-wrap: wrap; }
+  .artifact-company { width: calc(100% - 252px); }
+  .artifact-segment { width: 100%; }
+  .artifact-table-row { grid-template-columns: 150px 120px minmax(200px, 1fr) 60px; }
+  .pdf-config { padding: 22px; }
+  .pdf-container { width: 100%; margin-left: 0; }
+  .pdf-progress { padding-inline: 48px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
