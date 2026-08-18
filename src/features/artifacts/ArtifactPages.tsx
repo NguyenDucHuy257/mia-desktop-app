@@ -131,5 +131,8 @@ export function PdfDownloaderPage({ folder, onFolder, connectionIds }: { folder:
 }
 
 export function UtilityPage({ title, description }: { title: string; description: string }) {
-  return <section className="utility-page"><h1>{title}</h1><p>{description}</p><div className="utility-empty"><strong>Chưa có dữ liệu</strong><span>Dữ liệu sẽ xuất hiện tại đây khi tính năng được sử dụng.</span></div></section>;
+  const [query, setQuery] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const isSettings = title === 'Cài đặt';
+  return <section className="utility-page"><h1>{title}</h1><p>{description}</p>{isSettings ? <div className="utility-panel"><label>Giới hạn tài khoản chạy đồng thời<select defaultValue="2"><option value="1">1</option><option value="2">2 (khuyến nghị)</option></select></label><label>Số lần thử lại<input type="number" min="0" max="5" defaultValue="5" /></label><button type="button" onClick={() => setMessage('Đã lưu cài đặt trên máy.')}>Lưu cài đặt</button></div> : <div className="utility-panel"><label>Tìm kiếm<input aria-label={`Tìm kiếm ${title}`} value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" onClick={() => setMessage(query ? `Đã áp dụng bộ lọc “${query}”.` : 'Đã làm mới dữ liệu cục bộ.')}>{query ? 'Áp dụng' : 'Làm mới'}</button><div className="utility-empty"><strong>Không có mục phù hợp</strong><span>Thay đổi bộ lọc hoặc đồng bộ dữ liệu để cập nhật danh sách.</span></div></div>}{message ? <NoticeDialog kind="notice" message={message} onClose={() => setMessage(null)} /> : null}</section>;
 }
