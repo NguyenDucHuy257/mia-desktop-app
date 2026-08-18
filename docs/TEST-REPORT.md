@@ -65,3 +65,19 @@ Chưa chạy:
 - Windows NSIS x64 local: PASS — installer test tạo thành công; Phase 0 chưa đóng gói Python runtime/model/browser.
 - Windows clean-VM runtime test: NOT RUN — thuộc Phase 1 sau khi có Python runtime đóng gói.
 - Code signing: NOT RUN — thuộc Phase 7.
+
+## Offline Phase 1 — Python runtime và SQLite
+
+- Python storage unit: PASS — 5/5; database mới/cũ, locked/corrupt, rollback transaction và log redaction.
+- Electron runtime lifecycle: PASS — chống start trùng, health/init, crash recovery giữ database và bounded restart.
+- JSON-RPC regression: PASS — protocol/error/timeout/malformed/oversized/shutdown.
+- Unit tổng: PASS — 12 file, 51 test.
+- PyInstaller one-folder runtime: PASS — tránh extraction process của one-file; packaged smoke health + migration đạt schema v1/integrity `ok`.
+- Runtime process cleanup: PASS — packaged smoke kết thúc không còn process `mia-runtime`.
+- Win-unpacked app smoke: PASS — app tạo đúng một runtime process, tạo `offline-runtime/mia.sqlite3`, và runtime về 0 khi Electron process kết thúc.
+- NSIS x64 local: PASS — runtime được nhúng tại `resources/runtime/mia-runtime.exe`.
+- Electron/Python syntax, offline boundary và renderer secret scan: PASS.
+- Playwright: PASS — 8/8; không thay đổi UI/baseline.
+- `npm audit --omit=dev` và `npm audit`: PASS — 0 vulnerability.
+- Clean Windows VM không cài Python: NOT RUN — cần kiểm chứng tay theo `PHASE-01-MANUAL-TEST.md`.
+- Crawler/CAPTCHA/model: NOT INCLUDED — đúng phạm vi Phase 1 và blocker license/provenance Phase 0.

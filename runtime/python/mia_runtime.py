@@ -6,11 +6,19 @@ import json
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from mia_logging import configure_logging
+from mia_storage import Storage, StorageError
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
-RUNTIME_VERSION = "0.1.0"
+RUNTIME_VERSION = "0.2.0"
+storage: Storage | None = None
+logger = None
 
 
 class RpcError(Exception):
@@ -48,6 +56,7 @@ def validate_request(value: Any) -> tuple[str | int, str, Any]:
 
 
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
+    global storage, logger
     if method == "system.health":
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -66,6 +75,27 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         return {"slept_ms": milliseconds}, False
     if method == "system.shutdown":
         return {"accepted": True}, True
+    if method == "storage.initialize":
+        if not isinstance(params, dict) or not isinstance(params.get("data_dir"), str):
+            raise RpcError(-32602, "invalid_params")
+        data_dir = Path(params["data_dir"])
+        if not data_dir.is_absolute():
+            raise RpcError(-32602, "data_dir_not_absolute")
+        storage = Storage(data_dir / "mia.sqlite3")
+        try:
+            result = storage.initialize()
+            logger = configure_logging(data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO"))
+            logger.info("storage_initialized schema_version=%s", result["schema_version"])
+            return result, False
+        except StorageError as error:
+            raise RpcError(-32010, error.code) from None
+    if method == "storage.status":
+        if storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            return storage.status(), False
+        except StorageError as error:
+            raise RpcError(-32010, error.code) from None
     raise RpcError(-32601, "method_not_found")
 
 

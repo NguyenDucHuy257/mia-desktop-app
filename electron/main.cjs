@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, safeStorage } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -7,10 +7,13 @@ const { isTrustedAppUrl } = require('./security-policy.cjs');
 const { createAccountConnectionBroker } = require('./account-connection-broker.cjs');
 const { createMiaApiClientFromEnvironment } = require('./mia-api-client.cjs');
 const { createJobLifecycleBroker, createJobStore } = require('./job-lifecycle-broker.cjs');
+const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 let accountApiClient;
 let jobLifecycleBroker;
+let offlineRuntime;
+let runtimeShutdownStarted = false;
 
 const accountConnectionBroker = createAccountConnectionBroker(() => {
   if (!accountApiClient) accountApiClient = createMiaApiClientFromEnvironment();
@@ -145,11 +148,27 @@ for (const [channel, method] of [
   });
 }
 
-app.whenReady().then(() => {
+void app.whenReady().then(async () => {
+  offlineRuntime = new OfflineRuntimeManager({
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
+  });
+  await offlineRuntime.start();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+}).catch(() => {
+  dialog.showErrorBox('MIA WT', 'Không thể khởi động bộ xử lý dữ liệu cục bộ. Vui lòng mở lại ứng dụng hoặc cài đặt lại.');
+  app.quit();
+});
+
+app.on('before-quit', (event) => {
+  if (!offlineRuntime || runtimeShutdownStarted) return;
+  event.preventDefault();
+  runtimeShutdownStarted = true;
+  void offlineRuntime.stop().finally(() => app.quit());
 });
 
 app.on('window-all-closed', () => {

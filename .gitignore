@@ -4,6 +4,11 @@ release/
 playwright-report/
 test-results/
 coverage/
+build/
+runtime/build/
+runtime/dist/
+__pycache__/
+*.py[cod]
 .env
 .env.*
 !.env.example

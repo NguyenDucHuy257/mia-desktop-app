@@ -19,6 +19,8 @@ Transport là JSON-RPC 2.0 qua `stdin/stdout`, UTF-8, mỗi message kết thúc 
 | `system.echo` | JSON object/array | chính payload đầu vào, chỉ dùng kiểm tra boundary |
 | `system.sleep` | `{milliseconds: 0..5000}` | thời gian đã sleep, dùng kiểm tra timeout |
 | `system.shutdown` | `{}` | `{accepted: true}`, sau đó process thoát |
+| `storage.initialize` | `{data_dir: absolute path}` | schema version và integrity |
+| `storage.status` | `{}` | schema version và integrity |
 
 Business method sẽ được version hóa và thêm theo từng phase. Credential không được xuất hiện trong response/error.
 
