@@ -18,8 +18,7 @@ Branch: `feat/offline-phase-04-ui-figma`
 - Build web và renderer secret scan: `PASS`.
 - Playwright interaction/visual/responsive: `PASS` — 21/21.
 - Visual 1500×1024: `PASS` — cả bốn frame mới không vượt quá 1%.
-- Linux/Chromium ghi nhận HTML 15.517 pixel khác tại color threshold 0,25 (cao hơn 1% đúng 157 pixel) do anti-aliasing. Baseline Figma được giữ nguyên; riêng frame HTML dùng threshold 0,30 và vẫn giữ `maxDiffPixelRatio: 0.01`.
-- Linux/Chromium ghi nhận PDF progress 20.485 pixel khác tại color threshold 0,25 do anti-aliasing font/SVG, trong khi Windows PASS. Baseline Figma được giữ nguyên; frame này dùng threshold 0,30 và vẫn giữ `maxDiffPixelRatio: 0.01`.
+- Linux/Chromium ghi nhận HTML 15.517 pixel khác và PDF progress 20.485 pixel khác tại color threshold 0,25 do anti-aliasing font/SVG; PDF progress còn 19.380 pixel ở threshold 0,30. Baseline và gate không được nới. Vì sản phẩm đích là Windows và cả hai frame PASS trên Chromium/Windows ở threshold 0,25, CI visual chạy trên `windows-latest` với `maxDiffPixelRatio: 0.01`.
 - Responsive 1024/1280/1366/1440/1500/1600: `PASS`.
 - `npm audit --omit=dev` và `npm audit`: `PASS` — 0 vulnerability.
 - Packaged Python runtime smoke: `PASS`.
