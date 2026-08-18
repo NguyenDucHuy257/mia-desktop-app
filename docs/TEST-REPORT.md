@@ -111,4 +111,4 @@ Chưa chạy:
 - Packaged runtime + NSIS x64 local: PASS — schema v2 migration, create/idempotency/resume/cancel smoke và installer `MIA WT Setup 0.1.0.exe`.
 - Offline boundary, renderer secret scan và npm audit: PASS — 0 vulnerability.
 - Small-job portal thật: BLOCKED — crawler/CAPTCHA artifacts chưa vượt gate provenance/license, không giả lập thành PASS.
-- Kiểm chứng tay Windows Phase 3: NOT RUN — theo `PHASE-03-MANUAL-TEST.md`.
+- Kiểm chứng tay Windows Phase 3: PASS — người dùng nghiệm thu ngày 2026-08-18 theo `PHASE-03-MANUAL-TEST.md`.
