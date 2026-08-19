@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { DateRangePicker } from '../../components/DateRangePicker';
 import addIcon from '../../assets/figma/add.png';
-import calendarIcon from '../../assets/figma/calendar.png';
 import searchIcon from '../../assets/figma/search.png';
 import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
@@ -169,10 +169,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
         <div className="toolbar-card">
-          <fieldset className="date-picker">
-            <img src={calendarIcon} alt="" />
-            <legend>KHOẢNG THỜI GIAN</legend><input aria-label="Từ ngày đồng bộ" type="date" value={dateFrom} max={dateTo} onChange={(event) => setDateFrom(event.target.value)} /><span>–</span><input aria-label="Đến ngày đồng bộ" type="date" value={dateTo} min={dateFrom} onChange={(event) => setDateTo(event.target.value)} />
-          </fieldset>
+          <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày đồng bộ" toLabel="Đến ngày đồng bộ" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
           <div className="select-wrap">
             <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
             {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">
@@ -231,7 +228,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
           <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>‹</button>{[1, 2, 3].map((value) => <button type="button" key={value} data-active={page === value} onClick={() => setPage(value)}>{value}</button>)}<span>...</span><button type="button" onClick={() => setPage(3)}>3</button><button type="button" aria-label="Trang sau" disabled={page === 3} onClick={() => setPage((value) => Math.min(3, value + 1))}>›</button></div>
         </footer>
       </section>
-      {selectionError ? <NoticeDialog kind="notice" message={selectionError} onClose={() => setSelectionError(null)} /> : null}
+      {selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
       {message ? <NoticeDialog kind={message.kind} message={message.text} onClose={dismissMessage} /> : null}
     </div>
   );

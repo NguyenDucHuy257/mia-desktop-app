@@ -11,7 +11,7 @@ export interface BatchItem { connectionId: string; record?: PersistedJob; status
 
 export function useBatchJobLifecycle() {
   const [items, setItems] = useState<Record<string, BatchItem>>({});
-  const [message, setMessage] = useState<{ kind: 'notice' | 'error'; text: string } | null>(null);
+  const [message, setMessage] = useState<{ kind: 'notice' | 'error' | 'success'; text: string } | null>(null);
   const generation = useRef(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const pending = useRef<CreateJobRequest[]>([]);
@@ -47,7 +47,20 @@ export function useBatchJobLifecycle() {
       if (token !== generation.current) return;
       setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, status } }));
       setMessage(null);
-      if (TERMINAL_JOB_STATUSES.has(status.status)) { void launchNext(token); return; }
+      if (TERMINAL_JOB_STATUSES.has(status.status)) {
+        if (status.status === 'completed' || status.status === 'completed_with_warning') {
+          setMessage({ kind: 'success', text: status.status === 'completed' ? 'Đồng bộ dữ liệu thành công.' : 'Đồng bộ hoàn tất và có cảnh báo.' });
+        } else if (status.status === 'failed') {
+          const code = status.error?.code;
+          const detail = code === 'portal_auth_failed' ? 'Không thể xác thực lại tài khoản.'
+            : code === 'overview_failed' ? 'Không thể tải dữ liệu tổng quan.'
+              : code === 'detail_failed' ? 'Không thể tải dữ liệu chi tiết.'
+                : 'Crawler không thể hoàn thành yêu cầu.';
+          setMessage({ kind: 'error', text: `${detail} Hãy thử lại hoặc xem Nhật ký.` });
+        } else if (status.status === 'cancelled') setMessage({ kind: 'notice', text: 'Đã dừng đồng bộ.' });
+        void launchNext(token);
+        return;
+      }
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, 0, token); }, POLL_MS);
       timers.current.add(timer);
     } catch {

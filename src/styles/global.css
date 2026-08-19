@@ -153,6 +153,23 @@ button { color: inherit; }
 .notice-dialog { width: min(420px, 100%); padding: 28px 28px 24px; border: 1px solid var(--mia-border-warm); border-radius: 16px; background: #fff; box-shadow: 0 20px 45px rgb(15 23 42 / 20%); display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
 .notice-icon { width: 56px; height: 56px; border: 3px solid #d97706; border-radius: 999px; display: grid; place-items: center; color: #d97706; background: #fffbeb; font-size: 36px; line-height: 1; font-weight: 700; }
 .notice-icon[data-kind="error"] { border-color: #dc2626; color: #dc2626; background: #fef2f2; }
+.notice-icon[data-kind="success"] { border-color: #16a34a; color: #16a34a; background: #f0fdf4; }
+.date-range-control { position: relative; width: 239px; flex: 0 0 239px; }
+.date-range-trigger { width: 100%; height: 42px; padding: 7px 12px; border: 1px solid #e5e5e0; border-radius: 11px; background: #fff; display: flex; align-items: center; gap: 9px; text-align: left; cursor: pointer; }
+.date-range-trigger img { width: 16px; height: 17px; }
+.date-range-trigger span { min-width: 0; display: grid; gap: 2px; }
+.date-range-trigger small { color: #62625b; font-size: 8px; line-height: 9px; letter-spacing: .4px; }
+.date-range-trigger strong { color: var(--mia-text-strong); font-size: 11px; line-height: 14px; white-space: nowrap; }
+.date-range-popover { position: absolute; z-index: 80; top: calc(100% + 8px); left: 0; width: 330px; padding: 16px; border: 1px solid var(--mia-border-warm); border-radius: 14px; background: #fff; box-shadow: 0 16px 38px rgb(15 23 42 / 18%); display: grid; gap: 12px; }
+.date-range-popover label { color: var(--mia-text-strong); font-size: 12px; font-weight: 700; display: grid; gap: 6px; }
+.date-range-popover label span { display: grid; grid-template-columns: 1fr 42px; gap: 7px; }
+.date-range-popover input { min-width: 0; height: 38px; padding: 0 10px; border: 1px solid #d6d6cf; border-radius: 9px; font: inherit; }
+.date-range-popover input[type="date"] { width: 42px; padding: 7px; color: transparent; }
+.date-range-popover input[type="date"]::-webkit-calendar-picker-indicator { width: 20px; height: 20px; margin: 0; cursor: pointer; }
+.date-range-popover p { margin: 0; color: var(--mia-danger); font-size: 11px; }
+.date-range-popover > div { display: flex; justify-content: flex-end; gap: 8px; }
+.date-range-popover > div button { height: 34px; padding: 0 14px; border: 1px solid var(--mia-green-700); border-radius: 9px; color: var(--mia-green-700); background: #fff; font-weight: 700; cursor: pointer; }
+.date-range-popover > div button:last-child { color: #fff; background: var(--mia-green-700); }
 .notice-dialog p { margin: 0; color: var(--mia-text-strong); font-size: 15px; line-height: 22px; }
 .notice-actions { display: flex; justify-content: center; gap: 10px; }
 .notice-actions button { min-width: 92px; height: 38px; padding: 0 18px; border-radius: 12px; font-weight: 700; cursor: pointer; }
