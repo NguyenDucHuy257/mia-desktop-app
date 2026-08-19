@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mia_logging import configure_logging
 from mia_storage import Storage, StorageError
-from mia_crawler import CrawlerCoordinator
+from mia_crawler import CrawlerCoordinator, verify_account
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
@@ -191,14 +191,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
-            from app.services.portal_session import TaxPortalSession
-            portal = TaxPortalSession(username=params["username"], password=params["password"])
-            portal.login()
-            company = portal.get_company_info()
-            company_name = str(company.get("name") or "").strip()
-            if not company_name:
-                raise ValueError("missing_company_name")
-            return {"company_name": company_name[:300]}, False
+            return verify_account(params["username"], params["password"]), False
         except Exception:
             if logger is not None:
                 logger.warning("portal_account_verification_failed")
