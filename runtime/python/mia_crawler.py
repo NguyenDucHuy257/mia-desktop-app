@@ -82,8 +82,8 @@ class CrawlerCoordinator:
         password = value.pop("password")
         failure_stage = "startup"
         try:
-            from app.config.crawl_config import adaptive_paging_options_from_config, load_crawl_config
-            from app.crawlers.invoice_crawler import InvoiceCrawler
+            from app.config.crawl_config import CrawlConfig
+            from app.crawlers.invoice_crawler import InvoiceCrawler, adaptive_paging_options_from_config
             from app.crawlers.invoice_detail_crawler import InvoiceDetailCrawler
             from app.repositories.invoice_detail_repository import InvoiceDetailRepository
             from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
@@ -111,7 +111,7 @@ class CrawlerCoordinator:
                 return
 
             intent = value["intent"]
-            config = load_crawl_config()
+            config = CrawlConfig.from_env()
             def cancellable_get(*args, **kwargs):
                 if cancel.is_set():
                     raise CrawlCancelled("cancelled")
@@ -198,7 +198,7 @@ class CrawlerCoordinator:
             safe_code = {
                 "authentication": "portal_auth_failed", "overview": "overview_failed",
                 "detail": "detail_failed", "artifact": "artifact_failed",
-            }.get(failure_stage, "crawler_failed")
+            }.get(failure_stage, "crawler_runtime_unavailable")
             if self.logger is not None:
                 self.logger.error("crawler_job_failed stage=%s error_type=%s", failure_stage, type(error).__name__)
             try:

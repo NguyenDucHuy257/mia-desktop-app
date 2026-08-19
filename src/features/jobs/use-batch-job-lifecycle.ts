@@ -55,6 +55,7 @@ export function useBatchJobLifecycle() {
           const detail = code === 'portal_auth_failed' ? 'Không thể xác thực lại tài khoản.'
             : code === 'overview_failed' ? 'Không thể tải dữ liệu tổng quan.'
               : code === 'detail_failed' ? 'Không thể tải dữ liệu chi tiết.'
+                : code === 'crawler_runtime_unavailable' ? 'Bộ xử lý crawler không thể khởi tạo.'
                 : 'Crawler không thể hoàn thành yêu cầu.';
           setMessage({ kind: 'error', text: `${detail} Hãy thử lại hoặc xem Nhật ký.` });
         } else if (status.status === 'cancelled') setMessage({ kind: 'notice', text: 'Đã dừng đồng bộ.' });
