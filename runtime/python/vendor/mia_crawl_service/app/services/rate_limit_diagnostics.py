@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -112,11 +113,13 @@ def describe_rate_limit_response(
     }
     if account_label is not None:
         record['account_label'] = account_label
-    body = getattr(response, 'text', None)
-    if isinstance(body, str) and body:
-        # A throttle middleware often names itself in the body. 300 chars is
-        # enough for that without storing invoice data.
-        record['body_preview'] = body[:300].replace('\r', ' ').replace('\n', ' ')
+    body = getattr(response, 'content', None)
+    if not isinstance(body, bytes):
+        text = getattr(response, 'text', None)
+        body = text.encode('utf-8', errors='replace') if isinstance(text, str) else b''
+    if body:
+        record['body_byte_count'] = len(body)
+        record['body_sha256'] = hashlib.sha256(body).hexdigest()
     return record
 
 

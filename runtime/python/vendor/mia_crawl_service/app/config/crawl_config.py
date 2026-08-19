@@ -21,7 +21,7 @@ QUERY_TYPE_TO_CATEGORY = {
 DEFAULT_CRAWL_PROFILE = 'fast_balanced'
 VALID_CRAWL_PROFILES = ('fast_balanced', 'safe', 'aggressive')
 RATE_LIMIT_ATTEMPTS = 10
-RATE_LIMIT_BACKOFF_MS = (2000, 10000, 20000, 40000)
+RATE_LIMIT_BACKOFF_MS = (2000, 5000, 10000, 20000, 40000, 60000, 80000, 100000, 120000, 140000)
 
 
 def validate_direction(direction: str) -> None:
@@ -166,7 +166,7 @@ class OverviewCrawlConfig:
     min_start_gap_ms: int = 520  # Khoảng cách tối thiểu giữa lúc bắt đầu hai request list.
     min_idle_gap_ms: int = 350  # Khoảng nghỉ tối thiểu sau khi request list kết thúc.
     jitter_ms: tuple[int, int] = (80, 180)  # Khoảng jitter ngẫu nhiên để tránh request dồn nhịp.
-    pause_every_success: int = 25  # Sau số request thành công này thì nghỉ dài một lần.
+    pause_every_success: int = 25  # 0 tắt periodic pause; >0 nghỉ sau từng số request này.
     pause_ms: tuple[int, int] = (1500, 2500)  # Khoảng nghỉ dài sau mỗi chu kỳ thành công.
     adaptive_throttle_enabled: bool = True  # Phân loại range theo total/page count thực tế.
     page_sleep_enabled: bool = True  # Cho phép nghỉ dài theo số trang của range lớn.
@@ -229,7 +229,7 @@ class OverviewCrawlConfig:
         _ensure_non_negative_int(self.min_start_gap_ms, 'overview.min_start_gap_ms')
         _ensure_non_negative_int(self.min_idle_gap_ms, 'overview.min_idle_gap_ms')
         _validate_int_range(self.jitter_ms, 'overview.jitter_ms')
-        _ensure_positive_int(
+        _ensure_non_negative_int(
             self.pause_every_success, 'overview.pause_every_success'
         )
         _validate_int_range(self.pause_ms, 'overview.pause_ms')

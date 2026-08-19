@@ -25,6 +25,7 @@ from app.config.crawl_config import (
     validate_direction,
     validate_query_type,
 )
+from app.config.runtime import DataRetentionMode, RuntimeCapabilities, RuntimeMode
 
 __all__ = [
     'CATEGORY_TO_QUERY_TYPE',
@@ -50,4 +51,7 @@ __all__ = [
     'validate_category',
     'validate_direction',
     'validate_query_type',
+    'DataRetentionMode',
+    'RuntimeCapabilities',
+    'RuntimeMode',
 ]

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
+from urllib.request import url2pathname
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +111,7 @@ class InvoicePdfRenderer:
         self.assets_dir = Path(assets_dir)
         self.page_asset_css = self._build_page_asset_css()
         self.blocked_request_count = 0
+        self._allowed_resource_roots: tuple[Path, ...] = ()
         self._playwright = None
         self._browser = None
         self._context = None
@@ -128,10 +133,9 @@ class InvoicePdfRenderer:
                 'height': round(A4_HEIGHT_INCHES * CSS_PIXELS_PER_INCH),
             }
         )
-        if self.block_remote_requests:
-            # Invoice packages ship their assets locally; refusing network
-            # requests keeps batches fast, offline-safe, and deterministic.
-            self._context.route('**/*', self._block_remote_route)
+        # Package HTML is untrusted portal input. Route every resource through
+        # a local allowlist even when no remote request is expected.
+        self._context.route('**/*', self._sandbox_resource_route)
         self._page = self._context.new_page()
         # page.pdf() lays out with print CSS; measuring under the same media
         # keeps the one-page scale decision aligned with the printed result.
@@ -205,13 +209,32 @@ class InvoicePdfRenderer:
         self._page = self._context = self._browser = self._playwright = None
         return False
 
-    def _block_remote_route(self, route) -> None:
-        if route.request.url.startswith(('http://', 'https://')):
-            self.blocked_request_count += 1
-            logger.debug('Blocked remote invoice asset url=%s', route.request.url)
-            route.abort()
-        else:
+    def _sandbox_resource_route(self, route) -> None:
+        if self._resource_url_is_allowed(route.request.url):
             route.continue_()
+            return
+        self.blocked_request_count += 1
+        scheme = urlsplit(route.request.url).scheme.casefold() or 'none'
+        logger.debug('Blocked invoice resource scheme=%s', scheme)
+        route.abort()
+
+    def _resource_url_is_allowed(self, resource_url: str) -> bool:
+        parsed = urlsplit(resource_url)
+        scheme = parsed.scheme.casefold()
+        if scheme == 'data':
+            return True
+        if scheme != 'file' or parsed.netloc not in ('', 'localhost'):
+            return False
+        try:
+            resource_path = Path(
+                url2pathname(unquote(parsed.path))
+            ).resolve(strict=False)
+        except (OSError, ValueError):
+            return False
+        return any(
+            resource_path == root or resource_path.is_relative_to(root)
+            for root in self._allowed_resource_roots
+        )
 
     def render_pdf(self, html_path: Path, pdf_path: Path) -> dict[str, Any]:
         if self._page is None:
@@ -219,6 +242,10 @@ class InvoicePdfRenderer:
         html_path = Path(html_path)
         if not html_path.is_file():
             raise FileNotFoundError(f'Invoice HTML is missing: {html_path}')
+
+        package_root = html_path.resolve().parent
+        asset_root = self.assets_dir.resolve()
+        self._allowed_resource_roots = (package_root, asset_root)
 
         self._page.goto(
             html_path.resolve().as_uri(),
@@ -234,8 +261,8 @@ class InvoicePdfRenderer:
         margin = f'{self.layout_options.margin_inches}in'
         pdf_path = Path(pdf_path)
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        self._page.pdf(
-            path=str(pdf_path),
+        self._render_pdf_atomically(
+            pdf_path,
             format='A4',
             print_background=True,
             scale=plan.scale,
@@ -255,3 +282,31 @@ class InvoicePdfRenderer:
             plan.content_height_px,
         )
         return result
+
+    def _render_pdf_atomically(self, pdf_path: Path, **options: Any) -> None:
+        pdf_path = Path(pdf_path)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f'.{pdf_path.name}.', suffix='.tmp', dir=pdf_path.parent
+        )
+        os.close(descriptor)
+        temporary_path = Path(temporary_name)
+        try:
+            self._page.pdf(path=str(temporary_path), **options)
+            with temporary_path.open('rb') as stream:
+                header = stream.read(5)
+                stream.seek(0, os.SEEK_END)
+                size = stream.tell()
+                stream.seek(max(0, size - 1024))
+                trailer = stream.read()
+                if header != b'%PDF-' or b'%%EOF' not in trailer:
+                    raise RuntimeError('Rendered PDF failed structural validation')
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, pdf_path)
+            directory_fd = os.open(pdf_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            temporary_path.unlink(missing_ok=True)

@@ -39,6 +39,7 @@ class InvoiceDetailExcelService:
         output_name: str,
         fetch_new_details: bool = False,
         overwrite: bool = False,
+        allow_partial: bool = False,
     ) -> dict[str, Any]:
         self._validate_request(
             company_tax_code, direction, query_type, from_date, to_date,
@@ -48,7 +49,7 @@ class InvoiceDetailExcelService:
         if output_path.exists() and not overwrite:
             raise FileExistsError(f'Output already exists: {output_path}')
 
-        missing_count = self.detail_query_repository.count_missing_detail_records(
+        completeness = self.detail_query_repository.inspect_detail_completeness(
             company_tax_code, direction, query_type, from_date, to_date
         )
         download_summary: dict[str, Any] | None = None
@@ -61,10 +62,10 @@ class InvoiceDetailExcelService:
                 to_date=to_date,
                 only_pending=False,
             )
-        elif missing_count > 0:
+        elif completeness['invalid_count'] > 0:
             logger.warning(
-                'Found %d overview items without local detail; downloading pending details',
-                missing_count,
+                'Found %d overview items without verified detail; refreshing details',
+                completeness['invalid_count'],
             )
             download_summary = self._download_details(
                 company_tax_code=company_tax_code,
@@ -72,8 +73,15 @@ class InvoiceDetailExcelService:
                 query_type=query_type,
                 from_date=from_date,
                 to_date=to_date,
-                only_pending=True,
+                # A corrupt/missing artifact may still have detail_fetched=1.
+                # Re-evaluate this exact requested range instead of trusting it.
+                only_pending=False,
             )
+
+        completeness = self.detail_query_repository.inspect_detail_completeness(
+            company_tax_code, direction, query_type, from_date, to_date
+        )
+        self._require_complete(completeness, allow_partial=allow_partial)
 
         detail_records = self.detail_query_repository.get_detail_records_for_export(
             company_tax_code, direction, query_type, from_date, to_date
@@ -98,13 +106,14 @@ class InvoiceDetailExcelService:
                     'No local invoice detail data is available for the requested range'
                 )
 
-        remaining_missing = self.detail_query_repository.count_missing_detail_records(
+        completeness = self.detail_query_repository.inspect_detail_completeness(
             company_tax_code, direction, query_type, from_date, to_date
         )
-        if remaining_missing:
+        self._require_complete(completeness, allow_partial=allow_partial)
+        if completeness['invalid_count']:
             logger.warning(
-                'Exporting available details while %d overview items remain pending',
-                remaining_missing,
+                'Partial export explicitly allowed with %d invalid detail artifacts',
+                completeness['invalid_count'],
             )
         summary = self.excel_exporter.export(
             detail_records=detail_records,
@@ -120,11 +129,26 @@ class InvoiceDetailExcelService:
             'to_date': to_date,
             'fetch_new_details': fetch_new_details,
             'detail_record_count': len(detail_records),
-            'missing_detail_count': remaining_missing,
+            'missing_detail_count': completeness['invalid_count'],
+            'detail_completeness': completeness,
+            'partial_export': bool(completeness['invalid_count']),
         })
         if download_summary is not None:
             summary['download_summary'] = download_summary
         return summary
+
+    @staticmethod
+    def _require_complete(
+        completeness: dict[str, int], *, allow_partial: bool
+    ) -> None:
+        if completeness['invalid_count'] and not allow_partial:
+            raise RuntimeError(
+                'Invoice detail export blocked: local detail artifacts are incomplete '
+                f"(missing={completeness['missing_count']}, "
+                f"corrupt={completeness['corrupt_count']}, "
+                f"unreadable={completeness['unreadable_count']}, "
+                f"error={completeness['error_count']})"
+            )
 
     def _download_details(
         self,

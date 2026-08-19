@@ -13,6 +13,7 @@ from app.crawlers.invoice_detail_crawler import (
 )
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+from app.services.http_error import find_http_status
 from app.services.invoice_detail_storage_service import InvoiceDetailStorageService
 
 logger = logging.getLogger(__name__)
@@ -142,7 +143,7 @@ class InvoiceDetailDownloadService:
                 )
             except Exception as error:
                 failed_count += 1
-                status = self._find_http_status(error)
+                status = find_http_status(error)
                 attempted_at = datetime.now(timezone.utc).isoformat()
                 try:
                     self.detail_repository.upsert_detail_error(
@@ -250,16 +251,3 @@ class InvoiceDetailDownloadService:
         if max_details is not None and max_details <= 0:
             raise ValueError('max_details must be greater than zero')
         return invoice_category
-
-    @staticmethod
-    def _find_http_status(error: BaseException) -> int | None:
-        current: BaseException | None = error
-        seen: set[int] = set()
-        while current is not None and id(current) not in seen:
-            seen.add(id(current))
-            response = getattr(current, 'response', None)
-            status_code = getattr(response, 'status_code', None)
-            if isinstance(status_code, int) and not isinstance(status_code, bool):
-                return status_code
-            current = current.__cause__ or current.__context__
-        return None

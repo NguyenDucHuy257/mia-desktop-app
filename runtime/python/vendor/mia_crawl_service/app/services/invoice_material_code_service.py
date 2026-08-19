@@ -7,6 +7,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from app.job_engine.interruptions import PipelineInterruption
+
 from app.config.crawl_config import VALID_DIRECTIONS, VALID_QUERY_TYPES
 from app.matchers.material_code_matcher import (
     DetailInvoiceLine,
@@ -14,7 +16,13 @@ from app.matchers.material_code_matcher import (
     match_material_codes,
     unmatched_material_codes,
 )
-from app.parsers.invoice_xml_parser import parse_invoice_xml
+from app.parsers.invoice_xml_parser import (
+    InvoiceXmlMalformedError,
+    InvoiceXmlTooLargeError,
+    XmlInvoiceLine,
+    parse_invoice_xml,
+    parse_decimal,
+)
 from app.repositories.invoice_material_code_repository import (
     InvoiceMaterialCodeRepository,
 )
@@ -35,6 +43,7 @@ class MvtPreflightReport:
     package_unavailable: int
     missing_xml_files: int
     unreadable_xml_files: int
+    malformed_xml_files: int
 
     @property
     def can_proceed(self) -> bool:
@@ -42,6 +51,7 @@ class MvtPreflightReport:
             self.missing_xml_packages == 0
             and self.missing_xml_files == 0
             and self.unreadable_xml_files == 0
+            and self.malformed_xml_files == 0
         )
 
 
@@ -77,6 +87,8 @@ class InvoiceMaterialCodeService:
         only_pending: bool = True,
         overwrite: bool = False,
         limit: int | None = None,
+        progress_callback=None,
+        interruption_check=None,
     ) -> dict[str, Any]:
         self._validate_request(
             company_tax_code=company_tax_code,
@@ -95,8 +107,8 @@ class InvoiceMaterialCodeService:
             to_date=to_date,
         )
 
-        detail_payloads = self._load_all_detail_payloads(records)
-        report, package_states = self._preflight(
+        detail_lines_by_invoice = self._load_all_detail_lines(records)
+        report, package_states, xml_payloads = self._preflight(
             records,
             company_tax_code=company_tax_code,
             direction=direction,
@@ -135,72 +147,100 @@ class InvoiceMaterialCodeService:
         ambiguous_count = 0
         without_material_code_count = 0
 
-        with self.repository.transaction() as connection:
-            for record in selected:
-                key = self._record_key(record)
-                detail_lines: list[DetailInvoiceLine] = []
-                xml_line_count = 0
-                connection.execute('SAVEPOINT mvt_invoice')
-                try:
-                    detail_lines = extract_detail_lines(detail_payloads[record['id']])
-                    if package_states[record['id']] == 'unavailable':
-                        material_codes = unmatched_material_codes(detail_lines)
-                        status = 'package_unavailable'
-                    else:
-                        xml_lines = parse_invoice_xml(Path(record['xml_path']))
-                        xml_line_count = len(xml_lines)
-                        material_codes = match_material_codes(detail_lines, xml_lines)
-                        status = 'processed'
-                    serialized = json.dumps(
-                        material_codes,
-                        ensure_ascii=False,
-                        separators=(',', ':'),
-                    )
-                    counts = self._result_counts(material_codes)
+        prepared: list[dict[str, Any]] = []
+        for record in selected:
+            try:
+                if interruption_check:
+                    interruption_check()
+                self._progress(progress_callback, 'detail_record_loaded', record)
+                self._progress(progress_callback, 'raw_detail_loaded', record)
+                self._progress(progress_callback, 'xml_record_loaded', record)
+                if package_states[record['id']] != 'unavailable':
+                    self._progress(progress_callback, 'xml_loaded', record)
+                detail_lines = detail_lines_by_invoice[record['id']]
+                self._progress(progress_callback, 'detail_lines_parsed', record)
+                if package_states[record['id']] == 'unavailable':
+                    material_codes = unmatched_material_codes(detail_lines)
+                    status = 'package_unavailable'
+                    xml_line_count = 0
+                else:
+                    xml_lines = xml_payloads[record['id']]
+                    self._progress(progress_callback, 'xml_lines_parsed', record)
+                    xml_line_count = len(xml_lines)
+                    material_codes = match_material_codes(detail_lines, xml_lines)
+                    status = 'processed'
+                self._progress(progress_callback, 'matching_completed', record)
+                self._progress(
+                    progress_callback, 'matching_result_validated', record,
+                    self._result_counts(material_codes),
+                )
+                serialized = json.dumps(
+                    material_codes, ensure_ascii=False, separators=(',', ':')
+                )
+                self._progress(progress_callback, 'material_codes_serialized', record)
+                prepared.append({
+                    'record': record,
+                    'serialized': serialized,
+                    'counts': self._result_counts(material_codes),
+                    'detail_line_count': len(detail_lines),
+                    'xml_line_count': xml_line_count,
+                    'status': status,
+                })
+            except PipelineInterruption:
+                raise
+            except Exception as error:
+                failed_count += 1
+                self._progress(progress_callback, 'failed', record)
+                logger.error(
+                    'MVT preparation failed direction=%s query_type=%s '
+                    'error_type=%s', record['direction'], record['query_type'],
+                    type(error).__name__,
+                )
+
+        for item in prepared:
+            record = item['record']
+            counts = item['counts']
+            try:
+                if interruption_check:
+                    interruption_check()
+                # Keep the SQLite write lock to one atomic invoice update.
+                with self.repository.transaction() as connection:
                     self.repository.update_material_codes(
-                        connection, record, serialized
+                        connection, record, item['serialized']
                     )
-                    connection.execute('RELEASE SAVEPOINT mvt_invoice')
-                    processed_count += 1
-                    matched_count += counts['matched']
-                    unmatched_count += counts['unmatched']
-                    ambiguous_count += counts['ambiguous']
-                    without_material_code_count += counts['without_material_code']
-                    log_error = (
-                        self._single_line(record.get('unavailable_reason'))
-                        if status == 'package_unavailable'
-                        else 'none'
-                    )
-                    logger.info(
-                        'MVT invoice direction=%s query_type=%s nbmst=%s '
-                        'khhdon=%s shdon=%s khmshdon=%s detail_path=%s '
-                        'xml_path=%s detail_line_count=%d xml_line_count=%d '
-                        'matched_count=%d unmatched_count=%d ambiguous_count=%d '
-                        'status=%s error=%s',
-                        record['direction'], record['query_type'], record['nbmst'],
-                        record['khhdon'], record['shdon'], record['khmshdon'],
-                        record['raw_detail_path'], record.get('xml_path') or '',
-                        len(detail_lines), xml_line_count, counts['matched'],
-                        counts['unmatched'], counts['ambiguous'], status,
-                        log_error,
-                    )
-                except Exception as error:
-                    connection.execute('ROLLBACK TO SAVEPOINT mvt_invoice')
-                    connection.execute('RELEASE SAVEPOINT mvt_invoice')
-                    failed_count += 1
-                    logger.exception(
-                        'MVT invoice direction=%s query_type=%s nbmst=%s '
-                        'khhdon=%s shdon=%s khmshdon=%s detail_path=%s '
-                        'xml_path=%s detail_line_count=%d xml_line_count=%d '
-                        'matched_count=0 unmatched_count=0 ambiguous_count=0 '
-                        'status=failed error=%s: %s',
-                        record['direction'], record['query_type'], record['nbmst'],
-                        record['khhdon'], record['shdon'], record['khmshdon'],
-                        record['raw_detail_path'], record.get('xml_path') or '',
-                        len(detail_lines), xml_line_count,
-                        type(error).__name__, error,
-                    )
-                    logger.debug('MVT failed invoice key=%s', key)
+                self._progress(
+                    progress_callback, 'material_codes_database_committed', record,
+                    counts,
+                )
+                if self.repository.get_material_codes_json(record) != item['serialized']:
+                    raise RuntimeError('Persisted material codes verification failed')
+                self._progress(
+                    progress_callback, 'persisted_result_verified', record, counts
+                )
+                self._progress(progress_callback, 'completed', record, counts)
+            except PipelineInterruption:
+                raise
+            except Exception as error:
+                failed_count += 1
+                self._progress(progress_callback, 'failed', record)
+                logger.error(
+                    'MVT update failed direction=%s query_type=%s error_type=%s',
+                    record['direction'], record['query_type'], type(error).__name__,
+                )
+                continue
+            processed_count += 1
+            matched_count += counts['matched']
+            unmatched_count += counts['unmatched']
+            ambiguous_count += counts['ambiguous']
+            without_material_code_count += counts['without_material_code']
+            logger.info(
+                'MVT invoice direction=%s query_type=%s detail_line_count=%d '
+                'xml_line_count=%d matched_count=%d unmatched_count=%d '
+                'ambiguous_count=%d status=%s',
+                record['direction'], record['query_type'], item['detail_line_count'],
+                item['xml_line_count'], counts['matched'], counts['unmatched'],
+                counts['ambiguous'], item['status'],
+            )
 
         return {
             'company_tax_code': company_tax_code,
@@ -222,20 +262,36 @@ class InvoiceMaterialCodeService:
         }
 
     @staticmethod
-    def _load_all_detail_payloads(
-        records: list[dict[str, Any]],
-    ) -> dict[int, dict[str, Any]]:
-        payloads: dict[int, dict[str, Any]] = {}
+    def _progress(callback, event, record, counters=None):
+        if callback is not None:
+            callback(event, record, counters or {})
+
+    def _load_all_detail_lines(
+        self, records: list[dict[str, Any]],
+    ) -> dict[int, list[DetailInvoiceLine]]:
+        parsed_lines: dict[int, list[DetailInvoiceLine]] = {}
         errors: list[str] = []
         for record in records:
-            path = Path(str(record['raw_detail_path']))
             try:
+                if record.get('normalized_ready'):
+                    rows = self.repository.get_normalized_detail_lines(record['id'])
+                    parsed_lines[record['id']] = [
+                        DetailInvoiceLine(
+                            index=index,
+                            product_name=str(row.get('ten') or '').strip(),
+                            unit=(str(row['dvtinh']) if row.get('dvtinh') not in (None, '') else None),
+                            quantity=parse_decimal(row.get('sluong')),
+                            unit_price=parse_decimal(row.get('dgia')),
+                            amount=parse_decimal(row.get('thtien')),
+                        )
+                        for index, row in enumerate(rows)
+                    ]
+                    continue
+                path = Path(str(record['raw_detail_path']))
                 payload = json.loads(path.read_text(encoding='utf-8'))
                 if not isinstance(payload, dict):
                     raise ValueError('JSON root is not an object')
-                # Validate hdhhdvu before package preflight or database writes.
-                extract_detail_lines(payload)
-                payloads[record['id']] = payload
+                parsed_lines[record['id']] = extract_detail_lines(payload)
             except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
                 errors.append(
                     f"{record['nbmst']}/{record['khhdon']}/{record['shdon']}/"
@@ -245,7 +301,7 @@ class InvoiceMaterialCodeService:
             raise MvtDetailDataError(
                 'Invalid raw detail JSON in selected scope:\n' + '\n'.join(errors)
             )
-        return payloads
+        return parsed_lines
 
     @staticmethod
     def _preflight(
@@ -256,9 +312,12 @@ class InvoiceMaterialCodeService:
         query_type: str,
         from_date: str,
         to_date: str,
-    ) -> tuple[MvtPreflightReport, dict[int, str]]:
-        ready = missing = unavailable = missing_file = unreadable = 0
+    ) -> tuple[
+        MvtPreflightReport, dict[int, str], dict[int, list[XmlInvoiceLine]]
+    ]:
+        ready = missing = unavailable = missing_file = unreadable = malformed = 0
         states: dict[int, str] = {}
+        xml_payloads: dict[int, list[XmlInvoiceLine]] = {}
         for record in records:
             if int(record.get('package_unavailable') or 0) == 1:
                 unavailable += 1
@@ -279,8 +338,11 @@ class InvoiceMaterialCodeService:
                 states[record['id']] = 'missing_file'
                 continue
             try:
-                with xml_path.open('rb') as stream:
-                    stream.read(1)
+                xml_payloads[record['id']] = parse_invoice_xml(xml_path)
+            except (InvoiceXmlMalformedError, InvoiceXmlTooLargeError):
+                malformed += 1
+                states[record['id']] = 'malformed'
+                continue
             except OSError:
                 unreadable += 1
                 states[record['id']] = 'unreadable'
@@ -300,8 +362,10 @@ class InvoiceMaterialCodeService:
                 package_unavailable=unavailable,
                 missing_xml_files=missing_file,
                 unreadable_xml_files=unreadable,
+                malformed_xml_files=malformed,
             ),
             states,
+            xml_payloads,
         )
 
     @staticmethod

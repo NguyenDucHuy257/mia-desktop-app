@@ -12,6 +12,9 @@ from typing import Any, Protocol
 
 from app.config.crawl_config import QUERY_TYPE_TO_CATEGORY, VALID_DIRECTIONS
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
+from app.utils.date_utils import normalize_business_date
+from app.config.runtime import RuntimeCapabilities
+from app.parsers.invoice_detail_excel_row_builder import InvoiceDetailExcelRowBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +32,13 @@ class InvoiceDetailStorageService:
         self,
         data_root: Path | str,
         repository: InvoiceDetailRepository,
+        progress_callback=None,
+        capabilities: RuntimeCapabilities | None = None,
     ) -> None:
         self.data_root = Path(data_root)
         self.repository = repository
+        self.progress_callback = progress_callback
+        self.capabilities = capabilities or RuntimeCapabilities.from_environment()
 
     def save_invoice_detail(
         self,
@@ -65,47 +72,78 @@ class InvoiceDetailStorageService:
             for name in ('nbmst', 'khhdon', 'shdon', 'khmshdon')
         }
         fetched_at = datetime.now(timezone.utc).isoformat()
-        details_dir = (
-            self.data_root
-            / company_tax_code
-            / 'raw'
-            / 'invoice_details'
-            / direction
-            / query_type
-            / f'{from_date}_{to_date}'
+        raw_detail_path = self.raw_detail_path(
+            company_tax_code=company_tax_code,
+            direction=direction,
+            query_type=query_type,
+            from_date=from_date,
+            to_date=to_date,
+            **keys,
         )
-        filename = '_'.join(
-            self._sanitize_filename_component(keys[name])
-            for name in ('khmshdon', 'khhdon', 'shdon', 'nbmst')
-        ) + '.json'
-        raw_detail_path = details_dir / filename
+        source_date = self._overview_value(overview_item, 'nlap', None)
+        if source_date in (None, ''):
+            source_date = self._overview_value(overview_item, 'tdlap', None)
+        if source_date in (None, ''):
+            source_date = self._overview_value(overview_item, 'ntao', None)
+        nlap_date = normalize_business_date(source_date) or normalize_business_date(
+            self._overview_value(overview_item, 'nlap_date', None)
+        )
         document = {
             'company_tax_code': company_tax_code,
             'direction': direction,
             'query_type': query_type,
             'invoice_category': invoice_category,
             'invoice_key': keys,
-            'nlap': self._overview_value(overview_item, 'nlap', None),
-            'nlap_date': self._overview_value(overview_item, 'nlap_date', None),
+            'nlap': source_date,
+            'nlap_date': nlap_date,
             'fetched_at': fetched_at,
             'detail': detail,
         }
-        self._write_json_atomically(raw_detail_path, document)
-        resolved_path = raw_detail_path.resolve()
+        self._progress('detail_payload_normalized')
+        resolved_path: Path | str = ''
+        if self.capabilities.retain_raw_artifacts:
+            self._write_json_atomically(raw_detail_path, document)
+            self._progress('raw_detail_written')
+            resolved_path = raw_detail_path.resolve()
+        if not self.capabilities.retain_raw_artifacts:
+            normalized_lines = InvoiceDetailExcelRowBuilder().build_rows(
+                document, {
+                    **keys, 'nlap': source_date,
+                    'material_codes_json': None,
+                },
+            )
+            self.repository.replace_normalized_detail_success(
+                company_tax_code=company_tax_code, direction=direction,
+                query_type=query_type, invoice_category=invoice_category,
+                **keys, nlap=self._optional_text(source_date), nlap_date=nlap_date,
+                raw_detail_path='', http_status=http_status,
+                fetched_at=fetched_at, lines=normalized_lines,
+            )
+            self._progress('detail_database_upserted')
+            self._progress('overview_detail_link_updated')
+            verified = self.repository.get_detail_by_invoice_key(
+                company_tax_code, direction, query_type,
+                keys['nbmst'], keys['khhdon'], keys['shdon'], keys['khmshdon'],
+            )
+            if not verified or not verified.get('normalized_ready'):
+                raise RuntimeError('Persisted normalized invoice detail verification failed')
+            self._progress('persisted_result_verified')
+            logger.info('Saved normalized invoice detail invoice=%s', keys['shdon'])
+            return ''
+
         self.repository.upsert_detail_success(
             company_tax_code=company_tax_code,
             direction=direction,
             query_type=query_type,
             invoice_category=invoice_category,
             **keys,
-            nlap=self._optional_text(self._overview_value(overview_item, 'nlap', None)),
-            nlap_date=self._optional_text(
-                self._overview_value(overview_item, 'nlap_date', None)
-            ),
+            nlap=self._optional_text(source_date),
+            nlap_date=nlap_date,
             raw_detail_path=resolved_path,
             http_status=http_status,
             fetched_at=fetched_at,
         )
+        self._progress('detail_database_upserted')
         updated_rows = self.repository.mark_overview_detail_fetched(
             company_tax_code=company_tax_code,
             direction=direction,
@@ -118,8 +156,46 @@ class InvoiceDetailStorageService:
             raise RuntimeError(
                 f'Expected one overview row while saving detail, updated={updated_rows}'
             )
+        self._progress('overview_detail_link_updated')
+        verified = self.repository.get_detail_by_invoice_key(
+            company_tax_code, direction, query_type,
+            keys['nbmst'], keys['khhdon'], keys['shdon'], keys['khmshdon'],
+        )
+        if not Path(resolved_path).is_file() or not verified:
+            raise RuntimeError('Persisted invoice detail verification failed')
+        self._progress('persisted_result_verified')
         logger.info('Saved raw invoice detail path=%s', raw_detail_path)
         return str(resolved_path)
+
+    def _progress(self, event: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(event)
+
+    def raw_detail_path(
+        self,
+        *,
+        company_tax_code: str,
+        direction: str,
+        query_type: str,
+        from_date: str,
+        to_date: str,
+        nbmst: str,
+        khhdon: str,
+        shdon: str | int,
+        khmshdon: str | int,
+    ) -> Path:
+        keys = {
+            'nbmst': str(nbmst), 'khhdon': str(khhdon),
+            'shdon': str(shdon), 'khmshdon': str(khmshdon),
+        }
+        filename = '_'.join(
+            self._sanitize_filename_component(keys[name])
+            for name in ('khmshdon', 'khhdon', 'shdon', 'nbmst')
+        ) + '.json'
+        return (
+            self.data_root / company_tax_code / 'raw' / 'invoice_details'
+            / direction / query_type / f'{from_date}_{to_date}' / filename
+        )
 
     @staticmethod
     def _validate_inputs(

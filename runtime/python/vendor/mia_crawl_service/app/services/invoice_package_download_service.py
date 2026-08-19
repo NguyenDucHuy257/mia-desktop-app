@@ -12,6 +12,7 @@ from app.crawlers.invoice_package_crawler import (
     build_invoice_package_headers,
 )
 from app.repositories.invoice_package_repository import InvoicePackageRepository
+from app.services.http_error import find_http_status
 from app.services.invoice_package_storage_service import InvoicePackageStorageService
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ class InvoicePackageDownloadService:
                 )
             except Exception as error:
                 is_unavailable = isinstance(error, InvoicePackageUnavailableError)
+                status = find_http_status(error)
                 if not is_unavailable:
                     failed_count += 1
                 try:
@@ -173,6 +175,11 @@ class InvoicePackageDownloadService:
                         current, len(items), item['nbmst'], item['khhdon'],
                         item['shdon'], item['khmshdon'], type(error).__name__, error,
                     )
+                # Authentication and rate limiting apply to the shared portal
+                # session, not to the individual invoice. Leave the remaining
+                # packages pending instead of recording the same error on each.
+                if status in {401, 429}:
+                    raise
 
             if current < len(items) and self.delay_between_items_seconds > 0:
                 logger.debug(

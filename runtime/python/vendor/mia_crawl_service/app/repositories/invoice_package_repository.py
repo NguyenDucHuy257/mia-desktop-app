@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import zipfile
 from contextlib import closing
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -231,6 +232,48 @@ class InvoicePackageRepository:
             ).fetchone()
         return dict(row) if row is not None else None
 
+    def mark_missing_package_files(
+        self,
+        company_tax_code: str,
+        direction: str,
+        query_type: str,
+        nbmst: str,
+        khhdon: str,
+        shdon: str | int,
+        khmshdon: str | int,
+        *,
+        export_xml: bool,
+        export_html: bool,
+        updated_at: str,
+    ) -> int:
+        """Reset one successful package row after artifact verification fails."""
+        self.init_db()
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    """
+                    UPDATE invoice_package_items
+                    SET raw_zip_path = NULL,
+                        xml_fetched = CASE WHEN ? THEN 0 ELSE xml_fetched END,
+                        xml_path = CASE WHEN ? THEN NULL ELSE xml_path END,
+                        html_fetched = CASE WHEN ? THEN 0 ELSE html_fetched END,
+                        html_path = CASE WHEN ? THEN NULL ELSE html_path END,
+                        error_message = ?, updated_at = ?
+                    WHERE company_tax_code = ? AND direction = ? AND query_type = ?
+                      AND nbmst = ? AND khhdon = ? AND shdon = ? AND khmshdon = ?
+                      AND unavailable = 0
+                    """,
+                    (
+                        int(export_xml), int(export_xml),
+                        int(export_html), int(export_html),
+                        'Local package files are missing or invalid; queued for re-download',
+                        updated_at,
+                        company_tax_code, direction, query_type, str(nbmst),
+                        str(khhdon), str(shdon), str(khmshdon),
+                    ),
+                )
+                return int(cursor.rowcount)
+
     def get_invoice_keys_for_package_download(
         self,
         company_tax_code: str,
@@ -383,9 +426,8 @@ class InvoicePackageRepository:
                     ),
                 ).fetchall()
                 for row in rows:
-                    raw_missing = not row['raw_zip_path'] or not Path(
-                        row['raw_zip_path']
-                    ).is_file()
+                    raw_state = self._package_archive_state(row['raw_zip_path'])
+                    raw_missing = raw_state != 'valid'
                     xml_missing = export_xml and (
                         row['xml_fetched'] != 1
                         or not row['xml_path']
@@ -415,7 +457,11 @@ class InvoicePackageRepository:
                         (
                             int(raw_missing), int(reset_xml), int(reset_xml),
                             int(reset_html), int(reset_html),
-                            'Local package files are missing; queued for re-download',
+                            (
+                                'Local package ZIP is corrupt; queued for re-download'
+                                if raw_state == 'corrupt'
+                                else 'Local package files are missing; queued for re-download'
+                            ),
                             datetime.now(timezone.utc).isoformat(), row['id'],
                         ),
                     )
@@ -454,7 +500,7 @@ class InvoicePackageRepository:
             ).fetchall()
         verified_count = 0
         for row in rows:
-            if not row['raw_zip_path'] or not Path(row['raw_zip_path']).is_file():
+            if self._package_archive_state(row['raw_zip_path']) != 'valid':
                 continue
             if export_xml and (
                 row['xml_fetched'] != 1
@@ -470,6 +516,20 @@ class InvoicePackageRepository:
                 continue
             verified_count += 1
         return verified_count
+
+    @staticmethod
+    def _package_archive_state(raw_zip_path: str | None) -> str:
+        if not raw_zip_path:
+            return 'missing'
+        path = Path(raw_zip_path)
+        if not path.is_file():
+            return 'missing'
+        try:
+            with zipfile.ZipFile(path) as archive:
+                archive.infolist()
+        except (OSError, zipfile.BadZipFile, zipfile.LargeZipFile):
+            return 'corrupt'
+        return 'valid'
 
     def get_html_items_for_pdf_export(
         self,

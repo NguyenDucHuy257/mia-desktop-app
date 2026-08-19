@@ -30,7 +30,7 @@ for (const file of (await filesBelow(root)).sort()) {
   actual[relative] = createHash('sha256').update(canonicalBytes(await readFile(file))).digest('hex');
 }
 
-if (manifest.source_commit !== '64ebb6ec0a35c784e194e8ce116c4bb4cf1b19d3') {
+if (manifest.source_commit !== '63acf111c64b47ac964608141b2c83bbb6e2f688') {
   throw new Error('Vendored crawler source commit is not pinned.');
 }
 if (JSON.stringify(actual) !== JSON.stringify(manifest.files)) {

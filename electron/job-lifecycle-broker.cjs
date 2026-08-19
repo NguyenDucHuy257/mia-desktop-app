@@ -3,7 +3,7 @@
 const crypto = require('node:crypto');
 const { runBrokerCommand, validateConnectionId } = require('./account-connection-broker.cjs');
 
-const JOB_ID_PATTERN = /^job_[A-Za-z0-9-]{1,128}$/;
+const JOB_ID_PATTERN = /^(?:job_[A-Za-z0-9-]{1,128}|[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/i;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DIRECTIONS = new Set(['purchase', 'sold']);
 const QUERY_TYPES = new Set(['query', 'sco-query']);
@@ -59,53 +59,43 @@ function idempotencyKey(intent) {
 function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector, createAttemptId = crypto.randomUUID) {
   if (typeof getRuntime !== 'function') throw new TypeError('Invalid offline runtime dependency.');
   const attemptKeys = new Map();
-  const launchCrawler = async (record) => {
-    if (!record || !protector?.decrypt || !['queued', 'waiting_account', 'running'].includes(record.status)) return;
+  const startProductionJob = async (intent, key) => {
+    if (!protector?.decrypt) throw new TypeError('Secure credential protector is required.');
     const runtime = getRuntime();
-    const secret = await runtime.invoke('accounts.secret', { account_id: record.connection_id });
+    const secret = await runtime.invoke('accounts.secret', { account_id: intent.connection_id });
     const password = protector.decrypt(Buffer.from(secret.encrypted_password, 'base64'));
     try {
-      await runtime.invoke('crawler.start', {
-        job_id: record.job_id, connection_id: record.connection_id, intent: record.intent,
-        username: secret.username, password,
+      return await runtime.invoke('source.jobs.start', {
+        intent, username: secret.username, password, idempotency_key: key,
       }, { timeoutMs: 15000 });
     } finally {
-      // Drop the only plaintext reference immediately after it crosses the local stdio boundary.
+      // The plaintext reference is released immediately after the local call.
     }
   };
   return Object.freeze({
     resume: () => runBrokerCommand(async () => {
-      const record = await getRuntime().invoke('jobs.resume');
-      await launchCrawler(record);
-      return record;
+      const records = await getRuntime().invoke('source.jobs.resume_all');
+      return records[0] ?? null;
     }),
     resumeAll: () => runBrokerCommand(async () => {
-      const records = await getRuntime().invoke('jobs.resume_all');
-      for (const record of records.slice(0, 2)) await launchCrawler(record);
-      return records;
+      return getRuntime().invoke('source.jobs.resume_all');
     }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
       const baseKey = idempotencyKey(intent);
       const currentKey = attemptKeys.get(baseKey) || baseKey;
-      let record = await getRuntime().invoke('jobs.start', {
-        connection_id: intent.connection_id, intent, idempotency_key: currentKey, timestamp: now(),
-      });
+      let record = await startProductionJob(intent, currentKey);
       if (TERMINAL_STATUSES.has(record.status)) {
         const nextKey = `${baseKey}-${createAttemptId()}`;
         attemptKeys.set(baseKey, nextKey);
-        record = await getRuntime().invoke('jobs.start', {
-          connection_id: intent.connection_id, intent,
-          idempotency_key: nextKey, timestamp: now(),
-        });
+        record = await startProductionJob(intent, nextKey);
       }
-      await launchCrawler(record);
       return { record, accepted: { job_id: record.job_id, status: record.status, current_stage: record.stage, worker_slot_id: null } };
     }),
-    status: (jobId) => runBrokerCommand(() => getRuntime().invoke('jobs.status', { job_id: validateJobId(jobId) })),
-    summary: (jobId) => runBrokerCommand(() => getRuntime().invoke('jobs.summary', { job_id: validateJobId(jobId) })),
-    cancel: (jobId) => runBrokerCommand(() => getRuntime().invoke('jobs.cancel', { job_id: validateJobId(jobId), timestamp: now() })),
-    clear: () => runBrokerCommand(async () => { await getRuntime().invoke('jobs.clear'); return null; }),
+    status: (jobId) => runBrokerCommand(() => getRuntime().invoke('source.jobs.status', { job_id: validateJobId(jobId) })),
+    summary: (jobId) => runBrokerCommand(() => getRuntime().invoke('source.jobs.summary', { job_id: validateJobId(jobId) })),
+    cancel: (jobId) => runBrokerCommand(() => getRuntime().invoke('source.jobs.cancel', { job_id: validateJobId(jobId) })),
+    clear: () => runBrokerCommand(async () => null),
   });
 }
 

@@ -4,7 +4,24 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from xml.etree import ElementTree
+
+from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
+
+
+MAX_INVOICE_XML_BYTES = 10 * 1024 * 1024
+
+
+class InvoiceXmlError(RuntimeError):
+    code = 'invoice_xml_error'
+
+
+class InvoiceXmlTooLargeError(InvoiceXmlError):
+    code = 'invoice_xml_too_large'
+
+
+class InvoiceXmlMalformedError(InvoiceXmlError):
+    code = 'invoice_xml_malformed'
 
 
 @dataclass(frozen=True)
@@ -21,7 +38,15 @@ class XmlInvoiceLine:
 def parse_invoice_xml(path: Path | str) -> list[XmlInvoiceLine]:
     """Parse HHDVu lines regardless of XML namespace style."""
     source = Path(path)
-    tree = ElementTree.parse(source)
+    size = source.stat().st_size
+    if size > MAX_INVOICE_XML_BYTES:
+        raise InvoiceXmlTooLargeError(
+            f'Invoice XML exceeds {MAX_INVOICE_XML_BYTES} byte limit'
+        )
+    try:
+        tree = ElementTree.parse(source)
+    except (ElementTree.ParseError, DefusedXmlException) as error:
+        raise InvoiceXmlMalformedError('Invoice XML is malformed or unsafe') from error
     result: list[XmlInvoiceLine] = []
     for element in tree.getroot().iter():
         if _local_name(element.tag).casefold() != 'hhdvu':
@@ -109,4 +134,3 @@ def _element_text(element: ElementTree.Element) -> str:
 def _optional_text(value: str | None) -> str | None:
     text = str(value or '').strip()
     return text or None
-

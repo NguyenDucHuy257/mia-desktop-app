@@ -26,34 +26,36 @@ describe('offline job lifecycle IPC broker', () => {
   });
 
   it('sends only validated data to the offline runtime', async () => {
-    const invoke = vi.fn().mockResolvedValue({ job_id: 'job_1', status: 'queued', stage: 'queued' });
-    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now').start(intent);
+    const invoke = vi.fn(async (method: string) => method === 'accounts.secret'
+      ? { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') }
+      : { job_id: 'job_1', status: 'queued', stage: 'queued' });
+    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(intent);
     expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_1' }, accepted: { status: 'queued' } } });
-    expect(invoke).toHaveBeenCalledWith('jobs.start', expect.objectContaining({
-      connection_id: 'conn_123456', idempotency_key: expect.stringMatching(/^desktop-[a-f0-9]{64}$/), timestamp: 'now',
-    }));
+    expect(invoke).toHaveBeenCalledWith('source.jobs.start', expect.objectContaining({
+      intent, idempotency_key: expect.stringMatching(/^desktop-[a-f0-9]{64}$/),
+    }), { timeoutMs: 15000 });
   });
 
   it('decrypts the account secret only in main and starts the local crawler', async () => {
     const invoke = vi.fn(async (method: string) => {
-      if (method === 'jobs.start') return { job_id: 'job_1', connection_id: intent.connection_id, intent, status: 'queued', stage: 'queued' };
+      if (method === 'source.jobs.start') return { job_id: 'job_1', connection_id: intent.connection_id, intent, status: 'queued', stage: 'queued' };
       if (method === 'accounts.secret') return { username: 'masked-user', encrypted_password: Buffer.from('cipher').toString('base64') };
       return { accepted: true };
     });
     const protector = { decrypt: vi.fn(() => 'plain-in-memory') };
     await createJobLifecycleBroker(() => ({ invoke }), () => 'now', protector).start(intent);
     expect(protector.decrypt).toHaveBeenCalledWith(Buffer.from('cipher'));
-    expect(invoke).toHaveBeenCalledWith('crawler.start', expect.objectContaining({
-      job_id: 'job_1', username: 'masked-user', password: 'plain-in-memory', intent,
+    expect(invoke).toHaveBeenCalledWith('source.jobs.start', expect.objectContaining({
+      username: 'masked-user', password: 'plain-in-memory', intent,
     }), { timeoutMs: 15000 });
   });
 
   it('creates a new attempt when the deterministic job is already terminal', async () => {
     const invoke = vi.fn(async (method: string, params: { idempotency_key?: string }) => {
-      if (method === 'jobs.start' && !params.idempotency_key?.endsWith('-attempt-2')) {
+      if (method === 'source.jobs.start' && !params.idempotency_key?.endsWith('-attempt-2')) {
         return { job_id: 'job_old', connection_id: intent.connection_id, intent, status: 'failed', stage: 'failed' };
       }
-      if (method === 'jobs.start') return { job_id: 'job_new', connection_id: intent.connection_id, intent, status: 'queued', stage: 'queued' };
+      if (method === 'source.jobs.start') return { job_id: 'job_new', connection_id: intent.connection_id, intent, status: 'queued', stage: 'queued' };
       if (method === 'accounts.secret') return { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') };
       return { accepted: true };
     });
@@ -62,34 +64,33 @@ describe('offline job lifecycle IPC broker', () => {
     );
     const result = await broker.start(intent);
     expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_new', status: 'queued' } } });
-    expect(invoke.mock.calls.filter(([method]) => method === 'jobs.start')).toHaveLength(2);
-    expect(invoke).toHaveBeenCalledWith('crawler.start', expect.objectContaining({ job_id: 'job_new' }), { timeoutMs: 15000 });
+    expect(invoke.mock.calls.filter(([method]) => method === 'source.jobs.start')).toHaveLength(2);
     await broker.start(intent);
-    expect(invoke.mock.calls.filter(([method]) => method === 'jobs.start')).toHaveLength(3);
-    expect(invoke.mock.calls.filter(([method, params]) => method === 'jobs.start' && params.idempotency_key?.endsWith('-attempt-2'))).toHaveLength(2);
+    expect(invoke.mock.calls.filter(([method]) => method === 'source.jobs.start')).toHaveLength(3);
+    expect(invoke.mock.calls.filter(([method, params]) => method === 'source.jobs.start' && params.idempotency_key?.endsWith('-attempt-2'))).toHaveLength(2);
   });
 
   it.each(['resume', 'resumeAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }), () => 'now');
     await broker[method](...(method === 'resume' || method === 'clear' ? [] : ['job_1']));
-    if (method === 'resume' || method === 'resumeAll' || method === 'clear') expect(invoke).toHaveBeenCalledWith(method === 'resumeAll' ? 'jobs.resume_all' : `jobs.${method}`);
-    else expect(invoke).toHaveBeenCalledWith(`jobs.${method}`, expect.any(Object));
+    if (method === 'clear') expect(invoke).not.toHaveBeenCalled();
+    else if (method === 'resume' || method === 'resumeAll') expect(invoke).toHaveBeenCalledWith('source.jobs.resume_all');
+    else expect(invoke).toHaveBeenCalledWith(`source.jobs.${method}`, expect.any(Object));
   });
 
-  it('resumes multiple child jobs and caps immediate crawler launches', async () => {
+  it('resumes production jobs without relaunching a second crawler', async () => {
     const records = Array.from({ length: 3 }, (_, index) => ({
       job_id: `job_${index}`, connection_id: `conn_${index}`, intent: { ...intent, connection_id: `conn_${index}` }, status: 'queued',
     }));
-    const invoke = vi.fn(async (method: string) => method === 'jobs.resume_all' ? records : method === 'accounts.secret'
-      ? { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') } : null);
+    const invoke = vi.fn(async (method: string) => method === 'source.jobs.resume_all' ? records : null);
     const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).resumeAll();
     expect(result).toMatchObject({ ok: true, data: records });
-    expect(invoke.mock.calls.filter(([method]) => method === 'crawler.start')).toHaveLength(2);
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it('sanitizes runtime failures without returning intent data', async () => {
-    const broker = createJobLifecycleBroker(() => ({ invoke: vi.fn().mockRejectedValue(new Error('secret runtime payload')) }));
+    const broker = createJobLifecycleBroker(() => ({ invoke: vi.fn().mockRejectedValue(new Error('secret runtime payload')) }), undefined, { decrypt: () => 'memory-only' });
     const result = await broker.start(intent);
     expect(result).toEqual({ ok: false, error: { code: 'internal_error', message: 'MIA API request could not be processed.' } });
     expect(JSON.stringify(result)).not.toContain('conn_123456');
