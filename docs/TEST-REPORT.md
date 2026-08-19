@@ -125,3 +125,15 @@ Chưa chạy:
 - Portal dataset thật: BLOCKED — crawler/CAPTCHA artifacts chưa vượt provenance/license gate.
 - Visual Figma `1:466`, `85:16452`: NOT RUN — chưa có baseline export trực tiếp trong repo.
 - Kiểm chứng tay Windows Phase 4: NOT RUN — theo `PHASE-04-MANUAL-TEST.md`.
+
+## Production pipeline integration — 2026-08-19
+
+- Source pin: `hvsoftware26/mia-crawl-service@63acf111c64b47ac964608141b2c83bbb6e2f688`.
+- Job lifecycle: PASS — desktop delegates create, idempotency, weighted/current-month progress, retry/recovery, cancellation and terminal states to the production `job_engine` and `worker_runtime` pipeline.
+- Persistence/restart: PASS — production SQLite job/session/account repositories initialize locally and reconcile non-terminal jobs after restart.
+- Security boundary: PASS — renderer uses the IPC allowlist; portal passwords are decrypted only in Electron main; session credentials use a DPAPI-protected runtime key; endpoint/credential and renderer-bundle scans pass.
+- Runtime tests: PASS — 36/36, including the production sequential pipeline and desktop adapter idempotency/cancel coverage.
+- Electron/renderer tests: PASS — Vitest 85/85; Playwright 25/25; TypeScript, Electron syntax, web build and renderer secret scan pass.
+- Vendor integrity: PASS — 88 selected production files are pinned by SHA-256. CAPTCHA SVG rasterization uses packaged Qt on Windows because CairoSVG requires an unavailable native Cairo DLL; SVG validation and the production OCR model remain unchanged.
+- Packaged runtime smoke: PASS — the first executable build correctly exposed missing native Cairo; the Qt-backed rebuild passes health, storage migration, CAPTCHA model load and clean shutdown.
+- Real portal small job: NOT RUN on this revision — credentials remain outside source, logs and commands and must be entered through the application UI.

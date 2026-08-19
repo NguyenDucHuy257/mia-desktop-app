@@ -6,7 +6,10 @@ const SAFE_ENV_NAMES = [
   'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP',
   'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME', 'LANG',
 ];
-const SAFE_RUNTIME_ENV_NAMES = ['MIA_RUNTIME_DATA_DIR', 'MIA_RUNTIME_LOG_LEVEL', 'PLAYWRIGHT_BROWSERS_PATH'];
+const SAFE_RUNTIME_ENV_NAMES = [
+  'MIA_RUNTIME_DATA_DIR', 'MIA_RUNTIME_LOG_LEVEL', 'PLAYWRIGHT_BROWSERS_PATH',
+  'MIA_SESSION_ENCRYPTION_KEY', 'MIA_SESSION_ENCRYPTION_KEY_ID',
+];
 
 class RuntimeProtocolError extends Error {
   constructor(code, message) {
@@ -54,7 +57,9 @@ class PythonRuntimeClient {
   async start() {
     if (this.child) return;
     const executable = this.runtimeExecutable || this.pythonExecutable;
-    const args = this.runtimeExecutable ? [] : ['-I', '-u', this.runtimeScript];
+    // Ignore Python-specific environment variables while retaining the normal
+    // per-user site-packages used by the documented Windows development setup.
+    const args = this.runtimeExecutable ? [] : ['-E', '-u', this.runtimeScript];
     const child = spawn(executable, args, {
       cwd: this.runtimeExecutable ? path.dirname(this.runtimeExecutable) : path.dirname(this.runtimeScript),
       env: runtimeEnvironment(process.env, this.extraEnv),

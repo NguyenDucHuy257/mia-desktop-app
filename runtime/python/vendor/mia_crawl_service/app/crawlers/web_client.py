@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -46,7 +47,7 @@ class WebClient:
 
         return headers
         
-    def get(self, 
+    def get(self,
         url: str, 
         params: dict[str,Any] | None = None,
         headers: dict[str,str] | None = None,
@@ -55,14 +56,44 @@ class WebClient:
         rate_limit_attempts: int | None = None,
         ) -> requests.Response:
 
-        response = self.session.get(
-            url,
-            params = params,
-            headers = headers,
-            timeout=self.timeout if timeout is None else timeout,
-        )
-        response.raise_for_status()
-        return response
+        """GET with bounded direct-client retries.
+
+        Managed ``TaxPortalSession`` consumes these overrides before calling
+        this method, so its authenticated retry loop is never nested here.
+        """
+        normal_limit = max(1, int(retry_attempts or 1))
+        rate_limit = max(1, int(rate_limit_attempts or 1))
+        normal_failures = 0
+        rate_failures = 0
+        last_error: BaseException | None = None
+        for _ in range(normal_limit + rate_limit - 1):
+            try:
+                response = self.session.get(
+                    url, params=params, headers=headers,
+                    timeout=self.timeout if timeout is None else timeout,
+                )
+                response.raise_for_status()
+                return response
+            except requests.HTTPError as error:
+                last_error = error
+                status = error.response.status_code if error.response is not None else None
+                if status == 429:
+                    rate_failures += 1
+                    if rate_failures >= rate_limit:
+                        raise
+                    time.sleep((2, 10, 20, 40)[min(rate_failures - 1, 3)])
+                    continue
+                if status not in {500, 502, 503, 504}:
+                    raise
+            except (requests.Timeout, requests.ConnectionError) as error:
+                last_error = error
+            normal_failures += 1
+            if normal_failures >= normal_limit:
+                raise last_error
+            time.sleep(min(2 ** (normal_failures - 1), 10))
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError('WebClient GET retry loop ended without a response')
 
     def post(self, 
         url:str,

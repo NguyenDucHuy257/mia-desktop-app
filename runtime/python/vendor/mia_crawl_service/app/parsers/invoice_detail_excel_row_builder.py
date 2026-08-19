@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Any, Mapping, Sequence
 
 from app.services.overview_downloader import INVOICE_STATUS_LABELS
+from app.utils.date_utils import BUSINESS_TIMEZONE
 
 logger = logging.getLogger(__name__)
 
-VIETNAM_TIMEZONE = timezone(timedelta(hours=7))
 MISSING_SEARCH_CODE = (
     'Không tìm thấy mã tra cứu trên file XML, vui lòng liên hệ người bán '
     'để được cung cấp file PDF gốc.'
@@ -153,7 +153,7 @@ def format_vietnamese_date(value: Any) -> str:
             except ValueError:
                 return ''
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(VIETNAM_TIMEZONE)
+        parsed = parsed.astimezone(BUSINESS_TIMEZONE)
     return parsed.strftime('%d/%m/%Y')
 
 

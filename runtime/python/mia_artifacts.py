@@ -30,6 +30,14 @@ class ArtifactExporter:
         self.storage = storage
         self.data_directory = data_directory.resolve()
 
+    def _export_roots(self, username: str) -> tuple[Path, ...]:
+        # Keep artifacts produced by pre-production desktop builds visible while
+        # all new jobs write through the production source pipeline.
+        return tuple(
+            (self.data_directory / directory / username / "exports").resolve()
+            for directory in ("source-data", "crawler-data")
+        )
+
     def export(self, value: dict[str, Any]) -> dict[str, Any]:
         destination = Path(value["destination"])
         if not destination.is_absolute():
@@ -69,26 +77,26 @@ class ArtifactExporter:
             with closing(self.storage._connect()) as connection:
                 latest = connection.execute("SELECT job_id FROM jobs WHERE account_id=? ORDER BY created_at DESC,job_id DESC LIMIT 1", (account_id,)).fetchone()
             job_id = latest[0] if latest else "local"
-            root = (self.data_directory / "crawler-data" / account["username"] / "exports").resolve()
-            if not root.exists() or self.data_directory not in root.parents:
-                continue
-            for source in root.rglob(f"*.{kind}"):
-                relative = source.relative_to(root).as_posix()
-                lowered = relative.casefold()
-                inferred_direction = "purchase" if "purchase" in lowered or "mua" in lowered else "sold" if "sold" in lowered or "ban" in lowered else None
-                if direction and inferred_direction != direction:
+            for root in self._export_roots(account["username"]):
+                if not root.exists() or self.data_directory not in root.parents:
                     continue
-                if search and search not in lowered:
-                    continue
-                info = source.stat()
-                modified_date = datetime.fromtimestamp(info.st_mtime, timezone.utc).date().isoformat()
-                if date_from and modified_date < date_from or date_to and modified_date > date_to:
-                    continue
-                items.append({
-                    "artifact_id": f"{job_id}:{relative}", "connection_id": account_id, "job_id": job_id,
-                    "filename": source.name, "kind": kind, "direction": inferred_direction,
-                    "size": info.st_size, "updated_at": info.st_mtime_ns,
-                })
+                for source in root.rglob(f"*.{kind}"):
+                    relative = source.relative_to(root).as_posix()
+                    lowered = relative.casefold()
+                    inferred_direction = "purchase" if "purchase" in lowered or "mua" in lowered else "sold" if "sold" in lowered or "ban" in lowered else None
+                    if direction and inferred_direction != direction:
+                        continue
+                    if search and search not in lowered:
+                        continue
+                    info = source.stat()
+                    modified_date = datetime.fromtimestamp(info.st_mtime, timezone.utc).date().isoformat()
+                    if date_from and modified_date < date_from or date_to and modified_date > date_to:
+                        continue
+                    items.append({
+                        "artifact_id": f"{job_id}:{relative}", "connection_id": account_id, "job_id": job_id,
+                        "filename": source.name, "kind": kind, "direction": inferred_direction,
+                        "size": info.st_size, "updated_at": info.st_mtime_ns,
+                    })
         items.sort(key=lambda item: (item["updated_at"], item["artifact_id"]), reverse=True)
         page = items[offset:offset + limit]
         next_offset = offset + len(page)
@@ -129,22 +137,22 @@ class ArtifactExporter:
 
     def _copy_job_artifacts(self, destination: Path, account_id: str, kind: str) -> list[Path]:
         account = self.storage.get_account(account_id)
-        root = (self.data_directory / "crawler-data" / account["username"] / "exports").resolve()
         copied = []
-        if not root.exists() or self.data_directory not in root.parents:
-            return copied
-        for source in root.rglob(f"*.{kind}"):
-            target = self._available_path(destination, safe_filename(source.stem) + source.suffix.lower())
-            temporary = target.with_name(f".{target.name}.tmp")
-            try:
-                with source.open("rb") as reader, temporary.open("xb") as writer:
-                    shutil.copyfileobj(reader, writer)
-                    writer.flush()
-                    os.fsync(writer.fileno())
-                temporary.replace(target)
-                copied.append(target)
-            finally:
-                temporary.unlink(missing_ok=True)
+        for root in self._export_roots(account["username"]):
+            if not root.exists() or self.data_directory not in root.parents:
+                continue
+            for source in root.rglob(f"*.{kind}"):
+                target = self._available_path(destination, safe_filename(source.stem) + source.suffix.lower())
+                temporary = target.with_name(f".{target.name}.tmp")
+                try:
+                    with source.open("rb") as reader, temporary.open("xb") as writer:
+                        shutil.copyfileobj(reader, writer)
+                        writer.flush()
+                        os.fsync(writer.fileno())
+                    temporary.replace(target)
+                    copied.append(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
         return copied
 
     def _atomic_workbook(self, destination: Path, filename: str, workbook: Workbook) -> Path:

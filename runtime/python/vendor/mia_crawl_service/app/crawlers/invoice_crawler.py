@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable
+import hashlib
 import logging
 import math
 import random
@@ -19,6 +20,7 @@ from app.config.crawl_config import (
 )
 from app.crawlers.endpoints import invoice_export_url, invoice_list_url
 from app.crawlers.web_client import WebClient
+from app.models.overview import OverviewPageCommit, OverviewResumeState
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +68,17 @@ class InvoiceFetchResult:
     consecutive_429_count: int = 0
     checkpoint_state: str | None = None
     error_message: str | None = None
+    committed_count: int | None = None
+
+    @property
+    def fetched_count(self) -> int:
+        return len(self.records) if self.committed_count is None else self.committed_count
 
     @property
     def missing_count(self) -> int:
         if self.first_page_total is None:
             return 0
-        return max(self.first_page_total - len(self.records), 0)
+        return max(self.first_page_total - self.fetched_count, 0)
 
     @property
     def needs_audit(self) -> bool:
@@ -80,7 +87,7 @@ class InvoiceFetchResult:
             or self.retry_count > 0
             or self.timeout_count > 0
             or bool(self.suspicious_pages)
-            or len(self.records) != self.first_page_total
+            or self.fetched_count != self.first_page_total
         )
 
 
@@ -274,15 +281,42 @@ def adaptive_paging_options_from_config(
     )
 
 
-class InvoiceRateLimitError(RuntimeError):
+class OverviewCrawlError(RuntimeError):
+    """Structured overview failure suitable for a future job engine."""
+
+    code = 'overview_crawl_error'
+    retryable = False
+
+    def __init__(self, message: str, *, checkpoint_state: str | None = None) -> None:
+        super().__init__(message)
+        self.checkpoint_state = checkpoint_state
+
+
+class InvoiceRateLimitError(OverviewCrawlError):
     """The portal kept returning HTTP 429 after controlled cooldowns."""
 
+    code = 'overview_rate_limited'
+    retryable = True
 
-class IncompleteCursorError(RuntimeError):
+
+class RepeatedCursorError(OverviewCrawlError):
+    """The portal returned a cursor that would create an infinite loop."""
+
+    code = 'overview_repeated_cursor'
+
+
+class OverviewPageError(OverviewCrawlError):
+    """A page failed after its bounded timeout/network retry policy."""
+
+    code = 'overview_page_failed'
+    retryable = True
+
+
+class IncompleteCursorError(OverviewCrawlError):
     """A cursor ended before the advertised total was fetched."""
 
     def __init__(self, message: str, result: InvoiceFetchResult) -> None:
-        super().__init__(message)
+        super().__init__(message, checkpoint_state=result.checkpoint_state)
         self.result = result
 
 
@@ -401,7 +435,10 @@ class InvoiceCrawler:
             if not next_state:
                 return rows
             if next_state in seen_states:
-                raise RuntimeError('Invoice pagination returned a repeated state cursor')
+                raise RepeatedCursorError(
+                    'Invoice pagination returned a repeated state cursor',
+                    checkpoint_state=state,
+                )
             seen_states.add(next_state)
             state = next_state
             self._wait_after_successful_page(page_number)
@@ -417,19 +454,43 @@ class InvoiceCrawler:
         end_date: date,
         status: int | None = None,
         max_pages: int = 10000,
+        resume_state: OverviewResumeState | None = None,
+        initial_payload: dict[str, Any] | None = None,
+        page_committer: Callable[[OverviewPageCommit], object] | None = None,
+        interruption_check: Callable[[], object] | None = None,
+        retain_records: bool = True,
+        retain_page_details: bool = True,
     ) -> InvoiceFetchResult:
         """Page by cursor and return auditable partial state when a range cannot finish."""
         options = self.paging_options
         schedules = options.page_schedule
-        records: list[dict[str, Any]] = []
+        records: list[dict[str, Any]] = (
+            list(resume_state.records)
+            if resume_state is not None and retain_records else []
+        )
+        fetched_count = (
+            int(resume_state.fetched_count)
+            if resume_state is not None and resume_state.fetched_count is not None
+            else len(records)
+        )
         page_details: list[PageAuditEntry] = []
         suspicious_pages: list[SuspiciousPage] = []
-        state: str | None = None
-        seen_states: set[str] = set()
-        first_page_total: int | None = None
-        estimated_pages = 0
-        range_class = 'light'
-        pages = 0
+        state: str | None = resume_state.next_state if resume_state is not None else None
+        seen_states: set[str] = (
+            set(resume_state.seen_states) if resume_state is not None else set()
+        )
+        first_page_total: int | None = (
+            resume_state.first_page_total if resume_state is not None else None
+        )
+        estimated_pages = (
+            math.ceil(first_page_total / schedules[0][0])
+            if first_page_total else 0
+        )
+        range_class = (
+            self._classify_range(first_page_total, estimated_pages)
+            if first_page_total is not None else 'light'
+        )
+        pages = resume_state.page_number if resume_state is not None else 0
         total_retry_count = 0
         total_timeout_count = 0
         max_consecutive_429_count = 0
@@ -442,14 +503,45 @@ class InvoiceCrawler:
         )
         logger.info('===== [BẮT ĐẦU] %s | tổng=đang xác định =====', query_label)
 
+        if resume_state is not None:
+            logger.info(
+                'Overview checkpoint loaded direction=%s query_type=%s range=%s..%s '
+                'status=%s pages=%d fetched=%d/%s completed=%s',
+                direction, query_type, begin_date, end_date, status_label,
+                resume_state.page_number, fetched_count,
+                first_page_total if first_page_total is not None else '?',
+                resume_state.completed,
+            )
+            if resume_state.completed:
+                return InvoiceFetchResult(
+                    records=records,
+                    first_page_total=first_page_total,
+                    pages=pages,
+                    final_page_size=resume_state.last_page_size,
+                    final_status=resume_state.checkpoint_status,
+                    final_state=None,
+                    estimated_pages=estimated_pages,
+                    range_class=range_class,
+                    committed_count=fetched_count,
+                )
+
         while pages < max_pages:
+            if interruption_check is not None:
+                interruption_check()
             schedule_index = 0
             attempted_sizes: list[int] = []
-            payload: dict[str, Any] | None = None
+            payload: dict[str, Any] | None = (
+                initial_payload
+                if pages == 0 and resume_state is None and initial_payload is not None
+                else None
+            )
             last_error: Exception | None = None
             page_retry_count = 0
             page_timeout_count = 0
             for index, (page_size, read_timeout) in enumerate(schedules):
+                if payload is not None:
+                    schedule_index = 0
+                    break
                 attempted_sizes.append(page_size)
                 size_attempt_limit = options.attempts_for_size(
                     page_size, is_smallest=index == len(schedules) - 1
@@ -459,6 +551,8 @@ class InvoiceCrawler:
                 rate_attempt = 0
                 while True:
                     try:
+                        if interruption_check is not None:
+                            interruption_check()
                         payload = self.fetch_page(
                             headers=headers,
                             direction=direction,
@@ -503,7 +597,7 @@ class InvoiceCrawler:
                             retry_after = self._retry_after_seconds(response)
                             if rate_attempt >= options.rate_limit_attempts:
                                 expected_received = (
-                                    min(page_size, max(first_page_total - len(records), 0))
+                                    min(page_size, max(first_page_total - fetched_count, 0))
                                     if first_page_total is not None else None
                                 )
                                 page_details.append(PageAuditEntry(
@@ -511,8 +605,8 @@ class InvoiceCrawler:
                                     size=page_size,
                                     expected_received=expected_received,
                                     received=0,
-                                    fetched_before=len(records),
-                                    fetched_after=len(records),
+                                    fetched_before=fetched_count,
+                                    fetched_after=fetched_count,
                                     total=first_page_total,
                                     state=state,
                                     http_status=429,
@@ -531,7 +625,7 @@ class InvoiceCrawler:
                                 logger.error(
                                     '429 exhausted; marking range rate_limited and continuing next job '
                                     'direction=%s query_type=%s range=%s..%s fetched=%s/%s',
-                                    direction, query_type, begin_date, end_date, len(records),
+                                    direction, query_type, begin_date, end_date, fetched_count,
                                     first_page_total if first_page_total is not None else '?',
                                 )
                                 result = self._build_partial_result(
@@ -549,10 +643,12 @@ class InvoiceCrawler:
                                     timeout_count=total_timeout_count,
                                     consecutive_429_count=rate_attempt,
                                     error_message='HTTP 429 retries exhausted',
+                                    committed_count=fetched_count,
                                 )
                                 if not options.continue_on_rate_limited:
                                     raise InvoiceRateLimitError(
-                                        'Tax portal kept returning HTTP 429 after cooldowns'
+                                        'Tax portal kept returning HTTP 429 after cooldowns',
+                                        checkpoint_state=state,
                                     ) from error
                                 return result
 
@@ -614,7 +710,7 @@ class InvoiceCrawler:
                     else 'partial_saved'
                 )
                 expected_received = (
-                    min(schedules[-1][0], max(first_page_total - len(records), 0))
+                    min(schedules[-1][0], max(first_page_total - fetched_count, 0))
                     if first_page_total is not None else None
                 )
                 page_details.append(PageAuditEntry(
@@ -622,8 +718,8 @@ class InvoiceCrawler:
                     size=schedules[-1][0],
                     expected_received=expected_received,
                     received=0,
-                    fetched_before=len(records),
-                    fetched_after=len(records),
+                    fetched_before=fetched_count,
+                    fetched_after=fetched_count,
                     total=first_page_total,
                     state=state,
                     http_status=0,
@@ -654,17 +750,29 @@ class InvoiceCrawler:
                     timeout_count=total_timeout_count,
                     consecutive_429_count=max_consecutive_429_count,
                     error_message=str(last_error) if last_error else 'page retries exhausted',
+                    committed_count=fetched_count,
                 )
                 if options.continue_on_incomplete:
                     return result
                 sizes_label = '/'.join(str(size) for size, _ in schedules)
-                raise RuntimeError(
-                    f'Invoice page failed at sizes {sizes_label} for {begin_date}..{end_date}'
+                raise OverviewPageError(
+                    f'Invoice page failed at sizes {sizes_label} for {begin_date}..{end_date}',
+                    checkpoint_state=state,
                 ) from last_error
 
-            pages += 1
             page_records = payload.get('datas', [])
             current_page_size = schedules[schedule_index][0]
+            next_state_value = payload.get('state')
+            next_state = (
+                str(next_state_value) if next_state_value is not None else None
+            )
+            if next_state is not None and next_state in seen_states:
+                raise RepeatedCursorError(
+                    'Invoice pagination returned a repeated state cursor',
+                    checkpoint_state=state,
+                )
+
+            pages += 1
             if first_page_total is None:
                 first_page_total = self._parse_total(payload.get('total'), len(page_records))
                 estimated_pages = (
@@ -678,13 +786,15 @@ class InvoiceCrawler:
                     direction, query_type, first_page_total, estimated_pages, range_class,
                 )
 
-            fetched_before = len(records)
+            fetched_before = fetched_count
             expected_received = min(
                 current_page_size, max(first_page_total - fetched_before, 0)
             )
-            records.extend(page_records)
-            fetched_after = len(records)
-            next_state = payload.get('state')
+            if retain_records:
+                records.extend(page_records)
+            initial_payload = None
+            fetched_count += len(page_records)
+            fetched_after = fetched_count
             note = ''
             if len(page_records) != expected_received:
                 note = 'received_count_mismatch'
@@ -696,20 +806,51 @@ class InvoiceCrawler:
                     http_status=200,
                     note='cursor result differs from expected remaining rows',
                 ))
-            page_details.append(PageAuditEntry(
-                page=pages,
-                size=current_page_size,
-                expected_received=expected_received,
-                received=len(page_records),
-                fetched_before=fetched_before,
-                fetched_after=fetched_after,
-                total=first_page_total,
-                state=str(next_state) if next_state is not None else None,
-                http_status=200,
-                retry_count=page_retry_count,
-                timeout_count=page_timeout_count,
-                note=note,
-            ))
+            if retain_page_details or note or page_retry_count or page_timeout_count:
+                page_details.append(PageAuditEntry(
+                    page=pages,
+                    size=current_page_size,
+                    expected_received=expected_received,
+                    received=len(page_records),
+                    fetched_before=fetched_before,
+                    fetched_after=fetched_after,
+                    total=first_page_total,
+                    state=next_state,
+                    http_status=200,
+                    retry_count=page_retry_count,
+                    timeout_count=page_timeout_count,
+                    note=note,
+                ))
+
+            if next_state is None:
+                # The source cursor is authoritative. When the portal ends the
+                # cursor before its advertised total, retain every committed row
+                # and complete with a durable warning instead of failing the job.
+                page_checkpoint_status = (
+                    'completed_with_warning'
+                    if (
+                        fetched_after != first_page_total
+                        or total_retry_count
+                        or total_timeout_count
+                        or suspicious_pages
+                    )
+                    else 'completed'
+                )
+            else:
+                page_checkpoint_status = 'in_progress'
+            if page_committer is not None:
+                if interruption_check is not None:
+                    interruption_check()
+                page_committer(OverviewPageCommit(
+                    page_number=pages,
+                    page_size=current_page_size,
+                    records=tuple(page_records),
+                    total=first_page_total,
+                    next_state=next_state,
+                    fetched_count=fetched_after,
+                    checkpoint_status=page_checkpoint_status,
+                ))
+
             self._append_page_size_trace(attempted_sizes)
             progress = min(fetched_after / first_page_total * 100, 100.0) if first_page_total else 100.0
             logger.info(
@@ -720,15 +861,8 @@ class InvoiceCrawler:
                 'next' if next_state else 'end',
             )
 
-            if not next_state:
-                if fetched_after == first_page_total:
-                    final_status = (
-                        'completed_with_warning'
-                        if total_retry_count or total_timeout_count or suspicious_pages
-                        else 'completed'
-                    )
-                else:
-                    final_status = 'incomplete'
+            if next_state is None:
+                final_status = page_checkpoint_status
                 result = InvoiceFetchResult(
                     records=records,
                     first_page_total=first_page_total,
@@ -743,15 +877,17 @@ class InvoiceCrawler:
                     retry_count=total_retry_count,
                     timeout_count=total_timeout_count,
                     consecutive_429_count=max_consecutive_429_count,
+                    error_message=(
+                        f'Source cursor ended with {fetched_after}/{first_page_total} rows'
+                        if fetched_after != first_page_total else None
+                    ),
+                    committed_count=fetched_count,
                 )
-                if final_status == 'incomplete' and not options.continue_on_incomplete:
-                    raise IncompleteCursorError(
-                        f'Cursor ended with {fetched_after}/{first_page_total} rows', result
-                    )
-                if final_status == 'incomplete':
-                    logger.error(
-                        'Overview incomplete direction=%s query_type=%s range=%s..%s '
-                        'fetched=%s total=%s missing=%s report=pending',
+                if fetched_after != first_page_total:
+                    logger.warning(
+                        'Overview source total mismatch direction=%s query_type=%s '
+                        'range=%s..%s fetched=%s total=%s missing=%s '
+                        'source_state=end terminal=false',
                         direction, query_type, begin_date, end_date, fetched_after,
                         first_page_total, result.missing_count,
                     )
@@ -764,10 +900,8 @@ class InvoiceCrawler:
                     )
                 return result
 
-            if next_state in seen_states:
-                raise RuntimeError('Invoice pagination returned a repeated state cursor')
             seen_states.add(next_state)
-            state = str(next_state)
+            state = next_state
             self._wait_after_successful_page(
                 pages,
                 range_class=range_class,
@@ -790,10 +924,14 @@ class InvoiceCrawler:
             timeout_count=total_timeout_count,
             consecutive_429_count=max_consecutive_429_count,
             error_message=f'pagination exceeded {max_pages} pages',
+            committed_count=fetched_count,
         )
         if options.continue_on_incomplete:
             return result
-        raise RuntimeError(f'Invoice pagination exceeded {max_pages} pages')
+        raise OverviewPageError(
+            f'Invoice pagination exceeded {max_pages} pages',
+            checkpoint_state=state,
+        )
 
     def _wait_after_successful_page(
         self,
@@ -920,6 +1058,7 @@ class InvoiceCrawler:
         timeout_count: int,
         consecutive_429_count: int = 0,
         error_message: str | None = None,
+        committed_count: int | None = None,
     ) -> InvoiceFetchResult:
         return InvoiceFetchResult(
             records=records,
@@ -937,6 +1076,7 @@ class InvoiceCrawler:
             consecutive_429_count=consecutive_429_count,
             checkpoint_state=state,
             error_message=error_message,
+            committed_count=committed_count,
         )
 
     def _append_page_size_trace(self, attempted_sizes: list[int]) -> None:
@@ -1015,14 +1155,13 @@ class InvoiceCrawler:
             content_type = response.headers.get('Content-Type', '')
             content_length = response.headers.get('Content-Length', 'none')
             disposition = response.headers.get('Content-Disposition', 'none')
-            preview = self._invalid_export_preview(content, content_type)
             logger.error(
                 '===== [EXPORT INVALID] %s | HTTP=%s | content-type=%s '
                 '| bytes=%d | content-length=%s | disposition=%s '
-                '| first-bytes-hex=%s | preview=%r =====',
+                '| body-sha256=%s =====',
                 export_label, response.status_code, content_type or 'none',
                 len(content), content_length, disposition,
-                content[:16].hex() or 'empty', preview,
+                hashlib.sha256(content).hexdigest(),
             )
             raise RuntimeError(
                 f'Tax portal did not return an XLSX file for {export_label}; '
@@ -1035,16 +1174,3 @@ class InvoiceCrawler:
             response.headers.get('Content-Type', 'none'), len(content),
         )
         return content
-
-    @staticmethod
-    def _invalid_export_preview(content: bytes, content_type: str) -> str:
-        """Return a short single-line preview only for likely textual errors."""
-        lowered_type = content_type.lower()
-        stripped = content.lstrip()
-        is_text = (
-            any(marker in lowered_type for marker in ('json', 'text', 'html', 'xml'))
-            or stripped.startswith((b'{', b'[', b'<'))
-        )
-        if not is_text:
-            return '<non-text response>'
-        return content[:300].decode('utf-8', errors='replace').replace('\r', ' ').replace('\n', ' ')

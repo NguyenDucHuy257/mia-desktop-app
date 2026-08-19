@@ -7,12 +7,12 @@ import tempfile
 import time
 from copy import copy
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import TYPE_CHECKING, Iterable, Sequence
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.cell.cell import Cell
+if TYPE_CHECKING:
+    from openpyxl.cell.cell import Cell
 
 from app.config.crawl_config import category_to_query_type
 from app.crawlers.invoice_crawler import (
@@ -20,10 +20,28 @@ from app.crawlers.invoice_crawler import (
     InvoiceCrawler,
     InvoiceFetchResult,
     InvoiceRateLimitError,
+    RepeatedCursorError,
+)
+from app.models.overview import (
+    OverviewCheckpointError,
+    OverviewDownloadRequest,
+    OverviewPageCommit,
 )
 from app.services.invoice_overview_storage_service import InvoiceOverviewStorageService
+from app.utils.date_utils import split_by_calendar_month
+from app.utils.date_utils import BUSINESS_TIMEZONE
 
 logger = logging.getLogger(__name__)
+
+
+def _load_workbook(*args, **kwargs):
+    from openpyxl import load_workbook
+    return load_workbook(*args, **kwargs)
+
+
+def _new_workbook():
+    from openpyxl import Workbook
+    return Workbook()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE_DIR = PROJECT_ROOT / 'resources' / 'templates'
@@ -57,22 +75,6 @@ class DownloadReport:
     duplicate_rows: int
     json_total: int | None = None
     count_matches: bool | None = None
-
-
-def split_by_calendar_month(begin_date: date, end_date: date) -> list[tuple[date, date]]:
-    if begin_date > end_date:
-        raise ValueError('begin_date must not be after end_date')
-    ranges: list[tuple[date, date]] = []
-    current = begin_date
-    while current <= end_date:
-        if current.month == 12:
-            next_month = date(current.year + 1, 1, 1)
-        else:
-            next_month = date(current.year, current.month + 1, 1)
-        chunk_end = min(end_date, next_month - timedelta(days=1))
-        ranges.append((current, chunk_end))
-        current = chunk_end + timedelta(days=1)
-    return ranges
 
 
 def _find_header_row(ws) -> int:
@@ -127,6 +129,9 @@ class OverviewDownloader:
         keep_temp: bool = False,
         storage_service: InvoiceOverviewStorageService | None = None,
         company_tax_code: str | None = None,
+        page_committed=None,
+        interruption_check=None,
+        initial_payloads=None,
     ) -> None:
         if (storage_service is None) != (company_tax_code is None):
             raise ValueError(
@@ -138,8 +143,126 @@ class OverviewDownloader:
         self.keep_temp = keep_temp
         self.storage_service = storage_service
         self.company_tax_code = company_tax_code
+        self.page_committed = page_committed
+        self.interruption_check = interruption_check
+        self.initial_payloads = initial_payloads or {}
         self.storage_summaries: list[dict[str, object]] = []
+        self.overview_warnings: list[dict[str, object]] = []
         self.last_temp_dir: Path | None = None
+
+    def download_request(
+        self,
+        request: OverviewDownloadRequest,
+    ) -> list[DownloadReport]:
+        """Run the overview application flow from one shared input model."""
+        return self.download(
+            begin_date=request.begin_date,
+            end_date=request.end_date,
+            output_dir=request.output_dir,
+            directions=request.directions,
+            categories=request.categories,
+            overwrite=request.overwrite,
+            combined_workbook_name=request.combined_workbook_name,
+        )
+
+    def download_normalized_request(
+        self, request: OverviewDownloadRequest
+    ) -> dict[str, object]:
+        """Persist monthly pages/checkpoints and return durable source warnings."""
+        if self.storage_service is None or self.company_tax_code is None:
+            raise ValueError('normalized download requires durable storage')
+        self.overview_warnings = []
+        for direction in request.directions:
+            for category in request.categories:
+                query_type = category_to_query_type(category)
+                for begin, end in split_by_calendar_month(
+                    request.begin_date, request.end_date
+                ):
+                    results: list[tuple[int | None, InvoiceFetchResult]] = []
+                    for status in self._job_statuses(direction, category):
+                        result = self._fetch_records_resilient(
+                            direction=direction, category=category,
+                            begin_date=begin, end_date=end, status=status,
+                        )
+                        results.append((status, result))
+                        if (
+                            result.final_status == 'completed_with_warning'
+                            and result.first_page_total is not None
+                            and result.fetched_count != result.first_page_total
+                        ):
+                            warning = {
+                                'stage': 'overview',
+                                'code': 'source_total_mismatch',
+                                'direction': direction,
+                                'query_type': query_type,
+                                'status_filter': 'all' if status is None else str(status),
+                                'from_date': begin.isoformat(),
+                                'to_date': end.isoformat(),
+                                'expected_total': result.first_page_total,
+                                'fetched_count': result.fetched_count,
+                                'missing_count': result.missing_count,
+                                'source_state': 'end',
+                            }
+                            self.overview_warnings.append(warning)
+                            logger.warning(
+                                'Overview source warning direction=%s query_type=%s '
+                                'range=%s..%s status=%s fetched=%s total=%s missing=%s',
+                                direction, query_type, begin, end, status,
+                                result.fetched_count, result.first_page_total,
+                                result.missing_count,
+                            )
+                        if (
+                            result.final_status in {'completed', 'completed_with_warning'}
+                            and not self.storage_service.refresh_run_id
+                        ):
+                            self.storage_service.finalize_invoice_overview_checkpoint(
+                                company_tax_code=self.company_tax_code,
+                                direction=direction, query_type=query_type,
+                                from_date=begin.isoformat(), to_date=end.isoformat(),
+                                status=status,
+                            )
+                    options = getattr(self.crawler, 'paging_options', None)
+                    if (
+                        getattr(options, 'write_page_audit_report', False)
+                        and any(result.needs_audit for _, result in results)
+                    ):
+                        self.storage_service.write_overview_audit_report(
+                            company_tax_code=self.company_tax_code,
+                            direction=direction, query_type=query_type,
+                            from_date=begin.isoformat(), to_date=end.isoformat(),
+                            profile=getattr(options, 'profile', 'unknown'),
+                            results=[result for _, result in results],
+                            report_dir_name=getattr(
+                                options, 'incomplete_report_dir_name', 'overview_audit'
+                            ),
+                        )
+                    incomplete = next((
+                        result for _, result in results
+                        if result.final_status not in {'completed', 'completed_with_warning'}
+                    ), None)
+                    if incomplete is not None:
+                        raise IncompleteCursorError(
+                            'Overview range is incomplete; committed pages were retained',
+                            incomplete,
+                        )
+                    if self.storage_service.refresh_run_id:
+                        self.storage_service.activate_invoice_overview_refresh(
+                            company_tax_code=self.company_tax_code,
+                            direction=direction, query_type=query_type,
+                            from_date=begin.isoformat(), to_date=end.isoformat(),
+                            statuses=self._job_statuses(direction, category),
+                        )
+                    largest = max(
+                        (result for _, result in results),
+                        key=lambda item: {'light': 0, 'heavy': 1, 'extreme': 2}[
+                            item.range_class
+                        ],
+                    )
+                    self._sleep_after_large_range(largest, direction, category)
+        return {
+            'warning_count': len(self.overview_warnings),
+            'warnings': [dict(item) for item in self.overview_warnings],
+        }
 
     def _template_path(self, category: str, direction: str) -> Path:
         specific = self.template_dir / f'{category}_{direction}.xlsx'
@@ -281,10 +404,10 @@ class OverviewDownloader:
             'sold': 'Bán ra',
         }
         multiple_directions = len({direction for direction, _, _ in staged_jobs}) > 1
-        target_wb = Workbook()
+        target_wb = _new_workbook()
         target_wb.remove(target_wb.active)
         for direction, category, source_path in staged_jobs:
-            source_wb = load_workbook(source_path)
+            source_wb = _load_workbook(source_path)
             source_ws = source_wb.active
             title = sheet_names.get(category, category)
             if multiple_directions:
@@ -507,9 +630,21 @@ class OverviewDownloader:
                         )
                 path.write_bytes(content)
                 # Parse now so corrupt/error workbooks fail before merge.
-                workbook = load_workbook(path, read_only=True, data_only=False)
+                workbook = _load_workbook(path, read_only=True, data_only=False)
                 workbook.close()
                 paths.append(path)
+            if self.storage_service is not None and self.company_tax_code is not None:
+                query_type = category_to_query_type(category)
+                for status, result in batch_results:
+                    if result.final_status in {'completed', 'completed_with_warning'}:
+                        self.storage_service.finalize_invoice_overview_checkpoint(
+                            company_tax_code=self.company_tax_code,
+                            direction=direction,
+                            query_type=query_type,
+                            from_date=chunk_begin.isoformat(),
+                            to_date=chunk_end.isoformat(),
+                            status=status,
+                        )
             # A month/query_type is one logical persisted range even when the
             # portal requires several status cursors. Apply one post-range
             # cooldown using the largest measured cursor workload.
@@ -562,6 +697,39 @@ class OverviewDownloader:
         end_date: date,
         status: int | None,
     ) -> InvoiceFetchResult:
+        query_type = category_to_query_type(category)
+        resume_state = None
+        page_committer = None
+        if self.storage_service is not None and self.company_tax_code is not None:
+            resume_state = self.storage_service.load_invoice_overview_resume_state(
+                company_tax_code=self.company_tax_code,
+                direction=direction,
+                query_type=query_type,
+                from_date=begin_date.isoformat(),
+                to_date=end_date.isoformat(),
+                status=status,
+            )
+
+            def commit_page(page: OverviewPageCommit) -> None:
+                result = self.storage_service.save_invoice_overview_page(
+                    company_tax_code=self.company_tax_code,
+                    direction=direction,
+                    query_type=query_type,
+                    from_date=begin_date.isoformat(),
+                    to_date=end_date.isoformat(),
+                    status=status,
+                    page=page,
+                )
+                if self.page_committed is not None:
+                    self.page_committed(page, result, {
+                        'direction': direction,
+                        'query_type': query_type,
+                        'status_filter': 'all' if status is None else str(status),
+                        'from_date': begin_date.isoformat(),
+                        'to_date': end_date.isoformat(),
+                    })
+
+            page_committer = commit_page
         try:
             result = self.crawler.fetch_all_adaptive(
                 headers=self.headers_provider(),
@@ -570,21 +738,35 @@ class OverviewDownloader:
                 begin_date=begin_date,
                 end_date=end_date,
                 status=status,
+                resume_state=resume_state,
+                initial_payload=self.initial_payloads.get(
+                    'all' if status is None else str(status)
+                ),
+                page_committer=page_committer,
+                interruption_check=self.interruption_check,
+                retain_records=(
+                    self.storage_service is None
+                    or self.storage_service.capabilities.retain_overview_records
+                ),
+                retain_page_details=(
+                    self.storage_service is None
+                    or self.storage_service.capabilities.retain_overview_records
+                ),
             )
             logger.info(
                 'Overview range result %s/%s %s..%s status_filter=%s: '
                 'final_status=%s total=%s fetched=%s pages=%s size=%s',
                 direction, category, begin_date, end_date, status,
                 result.final_status,
-                result.first_page_total, len(result.records), result.pages,
+                result.first_page_total, result.fetched_count, result.pages,
                 result.final_page_size,
             )
-            if result.first_page_total != len(result.records):
+            if result.first_page_total != result.fetched_count:
                 logger.error(
                     'Overview incomplete direction=%s query_type=%s range=%s..%s '
                     'fetched=%s total=%s missing=%s report=pending',
                     direction, category_to_query_type(category), begin_date, end_date,
-                    len(result.records),
+                    result.fetched_count,
                     result.first_page_total, result.missing_count,
                 )
             return result
@@ -597,6 +779,10 @@ class OverviewDownloader:
         except InvoiceRateLimitError:
             # 429 is unrelated to date-range size. Splitting would only send
             # more requests and worsen the rate limit.
+            raise
+        except (OverviewCheckpointError, RepeatedCursorError):
+            # Persistence/cursor integrity errors are unrelated to range size.
+            # Splitting would hide the broken checkpoint or repeat bad data.
             raise
         except RuntimeError:
             if begin_date >= end_date:
@@ -620,7 +806,23 @@ class OverviewDownloader:
                 end_date=end_date,
                 status=status,
             )
-            return self._combine_split_results(left_result, right_result)
+            combined = self._combine_split_results(left_result, right_result)
+            if (
+                self.storage_service is not None
+                and self.company_tax_code is not None
+                and self.storage_service.refresh_run_id
+                and combined.final_status in {'completed', 'completed_with_warning'}
+            ):
+                self.storage_service.reconcile_split_invoice_overview_checkpoint(
+                    company_tax_code=self.company_tax_code,
+                    direction=direction,
+                    query_type=query_type,
+                    from_date=begin_date.isoformat(),
+                    to_date=end_date.isoformat(),
+                    status=status,
+                    result=combined,
+                )
+            return combined
 
     @staticmethod
     def _aggregate_range_status(results: Sequence[InvoiceFetchResult]) -> str:
@@ -650,8 +852,8 @@ class OverviewDownloader:
             replace(
                 detail,
                 page=page_offset + detail.page,
-                fetched_before=len(left.records) + detail.fetched_before,
-                fetched_after=len(left.records) + detail.fetched_after,
+                fetched_before=left.fetched_count + detail.fetched_before,
+                fetched_after=left.fetched_count + detail.fetched_after,
             )
             for detail in right.page_details
         )
@@ -681,6 +883,7 @@ class OverviewDownloader:
             ),
             checkpoint_state=right.checkpoint_state or left.checkpoint_state,
             error_message=right.error_message or left.error_message,
+            committed_count=left.fetched_count + right.fetched_count,
         )
 
     def _sleep_after_large_range(
@@ -716,7 +919,7 @@ class OverviewDownloader:
             except ValueError:
                 return str(value)
         if isinstance(parsed, datetime) and parsed.tzinfo is not None:
-            parsed = parsed.astimezone(timezone(timedelta(hours=7)))
+            parsed = parsed.astimezone(BUSINESS_TIMEZONE)
         return parsed.strftime('%d/%m/%Y')
 
     def _cash_records_to_xlsx(
@@ -728,7 +931,7 @@ class OverviewDownloader:
     ) -> bytes:
         started = time.perf_counter()
         template_path = self._template_path('cash_register', direction)
-        wb = load_workbook(template_path)
+        wb = _load_workbook(template_path)
         ws = wb.active
         header_row = _find_header_row(ws)
         prototype_row = header_row + 1
@@ -785,7 +988,7 @@ class OverviewDownloader:
         """Render already-fetched electronic rows without another portal request."""
         started = time.perf_counter()
         template_path = self._template_path('electronic', direction)
-        wb = load_workbook(template_path)
+        wb = _load_workbook(template_path)
         ws = wb.active
         header_row = _find_header_row(ws)
         prototype_row = header_row + 1
@@ -851,7 +1054,7 @@ class OverviewDownloader:
         if not template_path.is_file():
             raise FileNotFoundError(f'Missing Excel template: {template_path}')
 
-        target_wb = load_workbook(template_path)
+        target_wb = _load_workbook(template_path)
         target_ws = target_wb.active
         target_header_row = _find_header_row(target_ws)
         target_headers = [target_ws.cell(target_header_row, col).value for col in range(1, target_ws.max_column + 1)]
@@ -859,7 +1062,7 @@ class OverviewDownloader:
         rows: list[list[Cell]] = []
         source_workbooks = []
         for source_path in source_paths:
-            source_wb = load_workbook(source_path, data_only=False)
+            source_wb = _load_workbook(source_path, data_only=False)
             source_workbooks.append(source_wb)
             source_ws = source_wb.active
             source_header_row = _find_header_row(source_ws)

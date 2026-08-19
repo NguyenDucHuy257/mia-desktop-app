@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mia_logging import configure_logging
 from mia_storage import Storage, StorageError
 from mia_crawler import CrawlerCoordinator, verify_account
+from mia_backend import ProductionBackend
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
@@ -25,6 +26,7 @@ storage: Storage | None = None
 crawler: CrawlerCoordinator | None = None
 data_directory: Path | None = None
 logger = None
+production_backend: ProductionBackend | None = None
 
 
 class RpcError(Exception):
@@ -62,7 +64,7 @@ def validate_request(value: Any) -> tuple[str | int, str, Any]:
 
 
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
-    global storage, crawler, data_directory, logger
+    global storage, crawler, data_directory, logger, production_backend
     if method == "system.health":
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -80,6 +82,9 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         time.sleep(milliseconds / 1000)
         return {"slept_ms": milliseconds}, False
     if method == "system.shutdown":
+        if production_backend is not None:
+            production_backend.close()
+            production_backend = None
         return {"accepted": True}, True
     if method == "storage.initialize":
         if not isinstance(params, dict) or not isinstance(params.get("data_dir"), str):
@@ -97,6 +102,28 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             return result, False
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
+    if method.startswith("source.jobs."):
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            if production_backend is None:
+                production_backend = ProductionBackend(data_directory, logger)
+            if method == "source.jobs.start":
+                return production_backend.start(dict(params)), False
+            if method == "source.jobs.status":
+                return production_backend.get(params["job_id"]), False
+            if method == "source.jobs.summary":
+                return production_backend.summary(params["job_id"]), False
+            if method == "source.jobs.resume_all":
+                return production_backend.resume_all(), False
+            if method == "source.jobs.cancel":
+                return production_backend.cancel(params["job_id"]), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+        except Exception as error:
+            if logger is not None:
+                logger.error("production_backend_failed method=%s error_type=%s", method, type(error).__name__)
+            raise RpcError(-32070, "production_backend_failed") from None
     if method == "storage.status":
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -230,6 +257,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
+            if method in {"results.overview", "results.details"} and production_backend is not None:
+                return production_backend.results("overview" if method == "results.overview" else "details", dict(params)), False
             if method == "results.import_overviews":
                 return storage.import_overviews(params), False
             if method == "results.overview":

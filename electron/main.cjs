@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
@@ -13,6 +14,7 @@ const { readPreferences, readSanitizedLogs, writePreferences } = require('./loca
 const { createReleaseUpdater } = require('./release-updater.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
+const RUNTIME_KEY_FILE = 'runtime-session-key.bin';
 let jobLifecycleBroker;
 let offlineRuntime;
 let localAccountBroker;
@@ -47,6 +49,16 @@ function secureProtector() {
 
 function securityDirectory() {
   return path.join(app.getPath('userData'), 'security');
+}
+
+function runtimeSessionKey() {
+  const directory = securityDirectory();
+  const filename = path.join(directory, RUNTIME_KEY_FILE);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  if (fs.existsSync(filename)) return secureProtector().decrypt(fs.readFileSync(filename));
+  const key = randomBytes(32).toString('base64url');
+  fs.writeFileSync(filename, secureProtector().encrypt(key), { mode: 0o600 });
+  return key;
 }
 
 function productionEntryUrl() {
@@ -200,6 +212,7 @@ void app.whenReady().then(async () => {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
+    env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
   });
   await offlineRuntime.start();
   createWindow();

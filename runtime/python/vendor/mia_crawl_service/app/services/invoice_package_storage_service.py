@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
-import shutil
+import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -25,9 +26,11 @@ class InvoicePackageStorageService:
         base_data_dir: Path,
         package_repository: InvoicePackageRepository,
         resources_dir: Path | None = None,
+        progress_callback=None,
     ) -> None:
         self.base_data_dir = Path(base_data_dir)
         self.package_repository = package_repository
+        self.progress_callback = progress_callback
         self.resources_dir = (
             Path(resources_dir)
             if resources_dir is not None
@@ -51,23 +54,24 @@ class InvoicePackageStorageService:
             raise ValueError('At least one of export_xml/export_html must be True')
         if not zipfile.is_zipfile(io.BytesIO(zip_bytes)):
             raise RuntimeError('Cannot store invoice package because content is not a valid ZIP')
+        self._progress('zip_validated')
 
-        invoice_key = self._invoice_key(invoice_item)
-        package_dir = (
-            self.base_data_dir
-            / company_tax_code
-            / 'exports'
-            / 'invoice_packages'
-            / direction
-            / query_type
-            / f'{from_date}_{to_date}'
-        ).resolve()
-        zip_dir = package_dir / 'zip'
-        xml_dir = package_dir / 'xml'
-        html_dir = package_dir / 'html'
+        paths = self.artifact_paths(
+            company_tax_code=company_tax_code,
+            direction=direction,
+            query_type=query_type,
+            from_date=from_date,
+            to_date=to_date,
+            invoice_item=invoice_item,
+        )
+        invoice_key = str(paths['invoice_key'])
+        package_dir = Path(paths['package_dir'])
+        zip_dir = Path(paths['raw_zip_path']).parent
+        xml_dir = Path(paths['xml_path']).parent
+        html_dir = Path(paths['html_path']).parent
         zip_dir.mkdir(parents=True, exist_ok=True)
-        raw_zip_path = zip_dir / f'{invoice_key}.zip'
-        raw_zip_path.write_bytes(zip_bytes)
+        raw_zip_path = Path(paths['raw_zip_path'])
+        self._write_bytes_atomically(raw_zip_path, zip_bytes)
 
         xml_path: Path | None = None
         html_path: Path | None = None
@@ -82,8 +86,11 @@ class InvoicePackageStorageService:
                         f'Invoice package does not contain invoice.xml key={invoice_key}'
                     )
                 xml_dir.mkdir(parents=True, exist_ok=True)
-                xml_path = xml_dir / f'{invoice_key}.xml'
-                xml_path.write_bytes(archive.read(xml_member))
+                xml_path = Path(paths['xml_path'])
+                xml_bytes = archive.read(xml_member)
+                self._progress('xml_extracted')
+                self._write_bytes_atomically(xml_path, xml_bytes)
+                self._progress('xml_file_written')
 
             if export_html:
                 if html_member is None:
@@ -92,8 +99,8 @@ class InvoicePackageStorageService:
                     )
                 html_dir.mkdir(parents=True, exist_ok=True)
                 html_bytes = archive.read(html_member)
-                html_path = html_dir / f'{invoice_key}.html'
-                html_path.write_bytes(html_bytes)
+                html_path = Path(paths['html_path'])
+                self._write_bytes_atomically(html_path, html_bytes)
                 self._extract_zip_assets(
                     archive=archive,
                     file_names=file_names,
@@ -128,6 +135,7 @@ class InvoicePackageStorageService:
             html_fetched=html_path is not None,
             fetched_at=fetched_at,
         )
+        self._progress('package_database_upserted')
         result = {
             'invoice_key': invoice_key,
             'package_dir': str(package_dir),
@@ -143,6 +151,34 @@ class InvoicePackageStorageService:
             invoice_key, result['xml_fetched'], result['html_fetched'],
         )
         return result
+
+    def _progress(self, event: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(event)
+
+    def artifact_paths(
+        self,
+        *,
+        company_tax_code: str,
+        direction: str,
+        query_type: str,
+        from_date: str,
+        to_date: str,
+        invoice_item: dict[str, Any],
+    ) -> dict[str, Path | str]:
+        invoice_key = self._invoice_key(invoice_item)
+        package_dir = (
+            self.base_data_dir / company_tax_code / 'exports'
+            / 'invoice_packages' / direction / query_type
+            / f'{from_date}_{to_date}'
+        ).resolve()
+        return {
+            'invoice_key': invoice_key,
+            'package_dir': package_dir,
+            'raw_zip_path': package_dir / 'zip' / f'{invoice_key}.zip',
+            'xml_path': package_dir / 'xml' / f'{invoice_key}.xml',
+            'html_path': package_dir / 'html' / f'{invoice_key}.html',
+        }
 
     @staticmethod
     def _invoice_key(invoice_item: dict[str, Any]) -> str:
@@ -203,7 +239,7 @@ class InvoicePackageStorageService:
                 logger.warning('Skipped ZIP member outside HTML directory name=%s', member)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(archive.read(member))
+            self._write_bytes_atomically(target, archive.read(member))
 
     def _install_shared_assets(
         self,
@@ -217,11 +253,11 @@ class InvoicePackageStorageService:
             resource_path = self.resources_dir / asset_name
             target_path = html_dir / asset_name
             if resource_path.is_file():
-                shutil.copy2(resource_path, target_path)
+                self._write_bytes_atomically(target_path, resource_path.read_bytes())
                 continue
             zip_member = self._find_member(file_names, asset_name)
             if zip_member is not None:
-                target_path.write_bytes(archive.read(zip_member))
+                self._write_bytes_atomically(target_path, archive.read(zip_member))
             else:
                 logger.warning(
                     'HTML asset %s is missing from both resources and ZIP', asset_name
@@ -232,12 +268,33 @@ class InvoicePackageStorageService:
             resource_path = self.resources_dir / OPTIONAL_HTML_ASSET
             target_path = html_dir / OPTIONAL_HTML_ASSET
             if resource_path.is_file():
-                shutil.copy2(resource_path, target_path)
+                self._write_bytes_atomically(target_path, resource_path.read_bytes())
             elif not target_path.is_file():
                 zip_member = self._find_member(file_names, OPTIONAL_HTML_ASSET)
                 if zip_member is not None:
-                    target_path.write_bytes(archive.read(zip_member))
+                    self._write_bytes_atomically(target_path, archive.read(zip_member))
                 else:
                     logger.warning(
                         'HTML references details.js but it is missing from resources and ZIP'
                     )
+
+    @staticmethod
+    def _write_bytes_atomically(path: Path, content: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode='wb',
+                dir=path.parent,
+                prefix=f'.{path.name}.',
+                suffix='.tmp',
+                delete=False,
+            ) as temporary_file:
+                temporary_file.write(content)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+                temporary_path = Path(temporary_file.name)
+            temporary_path.replace(path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
