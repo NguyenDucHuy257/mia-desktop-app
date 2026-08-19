@@ -1,34 +1,25 @@
 import json
-import importlib
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mia_crawler import CrawlCancelled, CrawlerCoordinator
+from mia_crawler import CrawlCancelled, CrawlerCoordinator, verify_account
 from mia_storage import Storage
 
 
 class CrawlerAdapterTests(unittest.TestCase):
     def test_account_verification_returns_only_company_name(self):
-        import mia_runtime
-        with tempfile.TemporaryDirectory() as directory:
-            with patch.object(mia_runtime, "configure_logging"):
-                mia_runtime.dispatch("storage.initialize", {"data_dir": str(Path(directory).resolve())})
-            portal_session = importlib.import_module("app.services.portal_session")
-            with patch.object(portal_session, "TaxPortalSession") as session_type:
-                session = session_type.return_value
-                session.get_company_info.return_value = {"name": "Synthetic Company", "token": "must-not-return"}
-                result, should_stop = mia_runtime.dispatch("crawler.verify_account", {
-                    "username": "0100000000", "password": "synthetic-password",
-                })
-            self.assertEqual(result, {"company_name": "Synthetic Company"})
-            self.assertFalse(should_stop)
-            session.login.assert_called_once_with()
-            self.assertNotIn("token", result)
+        session_type = MagicMock()
+        session = session_type.return_value
+        session.get_company_info.return_value = {"name": "Synthetic Company", "token": "must-not-return"}
+        result = verify_account("0100000000", "synthetic-password", session_type)
+        self.assertEqual(result, {"company_name": "Synthetic Company"})
+        session.login.assert_called_once_with()
+        self.assertNotIn("token", result)
 
     def test_account_verification_revalidates_credentials_at_runtime_boundary(self):
         import mia_runtime

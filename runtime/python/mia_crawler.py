@@ -21,6 +21,19 @@ class CrawlCancelled(BaseException):
     pass
 
 
+def verify_account(username: str, password: str, session_factory=None) -> dict[str, str]:
+    if session_factory is None:
+        from app.services.portal_session import TaxPortalSession
+        session_factory = TaxPortalSession
+    portal = session_factory(username=username, password=password)
+    portal.login()
+    company = portal.get_company_info()
+    company_name = str(company.get("name") or "").strip()
+    if not company_name:
+        raise ValueError("missing_company_name")
+    return {"company_name": company_name[:300]}
+
+
 class CrawlerCoordinator:
     def __init__(self, storage, data_dir: Path) -> None:
         self.storage = storage
