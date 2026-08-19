@@ -7,11 +7,16 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mia_crawler import CrawlCancelled, CrawlerCoordinator, verify_account
+from mia_crawler import CrawlCancelled, CrawlerCoordinator, should_download_details, verify_account
 from mia_storage import Storage
 
 
 class CrawlerAdapterTests(unittest.TestCase):
+    def test_empty_overview_is_a_valid_detail_noop(self):
+        self.assertFalse(should_download_details(["overview", "detail"], 0))
+        self.assertTrue(should_download_details(["overview", "detail"], 1))
+        self.assertFalse(should_download_details(["overview"], 1))
+
     def test_vendored_adaptive_paging_factory_is_importable(self):
         from app.config.crawl_config import CrawlConfig
         from app.crawlers.invoice_crawler import adaptive_paging_options_from_config
@@ -47,8 +52,10 @@ class CrawlerAdapterTests(unittest.TestCase):
             overview_dir.mkdir(parents=True)
             payload = {"nbmst": "seller", "khhdon": "series", "shdon": 1, "khmshdon": 2, "value": "safe"}
             (overview_dir / "range.json").write_text(json.dumps({"datas": [payload, payload]}), encoding="utf-8")
-            adapter._import_raw("account-1", "synthetic-tax-code", root / "crawler-data", "purchase", "query")
+            self.assertEqual(adapter._import_raw("account-1", "synthetic-tax-code", root / "crawler-data", "purchase", "query"), 1)
             self.assertEqual(len(storage.query_overviews({"connection_id": "account-1"})["items"]), 1)
+
+            self.assertEqual(adapter._import_raw("account-1", "synthetic-tax-code", root / "crawler-data", "sold", "query"), 0)
 
             detail_dir = root / "crawler-data" / "synthetic-tax-code" / "raw" / "invoice_details" / "purchase" / "query" / "range"
             detail_dir.mkdir(parents=True)

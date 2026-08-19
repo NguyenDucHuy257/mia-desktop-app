@@ -21,6 +21,10 @@ class CrawlCancelled(BaseException):
     pass
 
 
+def should_download_details(scopes: list[str], overview_count: int) -> bool:
+    return "detail" in scopes and overview_count > 0
+
+
 def verify_account(username: str, password: str, session_factory=None) -> dict[str, str]:
     if session_factory is None:
         from app.services.portal_session import TaxPortalSession
@@ -141,8 +145,8 @@ class CrawlerCoordinator:
                     begin_date=date.fromisoformat(intent["date_from"]), end_date=date.fromisoformat(intent["date_to"]),
                     output_dir=output_root, directions=(direction,), categories=(category,), overwrite=True,
                 )
-                self._import_raw(value["connection_id"], value["username"], raw_root, direction, query_type)
-                if "detail" in intent["scopes"]:
+                overview_count = self._import_raw(value["connection_id"], value["username"], raw_root, direction, query_type)
+                if should_download_details(intent["scopes"], overview_count):
                     failure_stage = "detail"
                     database = raw_root / value["username"] / "db" / "invoices.sqlite3"
                     detail_repository = InvoiceDetailRepository(database)
@@ -215,7 +219,7 @@ class CrawlerCoordinator:
             with self._lock:
                 self._workers.pop(job_id, None)
 
-    def _import_raw(self, connection_id: str, tax_code: str, root: Path, direction: str, query_type: str) -> None:
+    def _import_raw(self, connection_id: str, tax_code: str, root: Path, direction: str, query_type: str) -> int:
         raw_dir = root / tax_code / "raw" / "invoice_lists" / direction / query_type
         items = []
         for raw_file in sorted(raw_dir.glob("*.json")):
@@ -228,6 +232,7 @@ class CrawlerCoordinator:
             self.storage.import_overviews({
                 "connection_id": connection_id, "items": items[offset:offset + 5000], "timestamp": utc_now(),
             })
+        return len({item["business_key"] for item in items})
 
     def _import_details(self, connection_id: str, tax_code: str, root: Path, direction: str, query_type: str) -> None:
         detail_root = root / tax_code / "raw" / "invoice_details" / direction / query_type
