@@ -12,6 +12,12 @@ from mia_storage import Storage
 
 
 class CrawlerAdapterTests(unittest.TestCase):
+    def test_vendored_adaptive_paging_factory_is_importable(self):
+        from app.config.crawl_config import CrawlConfig
+        from app.crawlers.invoice_crawler import adaptive_paging_options_from_config
+        self.assertTrue(callable(adaptive_paging_options_from_config))
+        self.assertTrue(callable(CrawlConfig.from_env))
+
     def test_account_verification_returns_only_company_name(self):
         session_type = MagicMock()
         session = session_type.return_value
