@@ -240,6 +240,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             from mia_artifacts import ArtifactExporter
+            if production_backend is not None:
+                production_backend.prepare_artifacts(dict(params))
             return ArtifactExporter(storage, data_directory).export(dict(params)), False
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None

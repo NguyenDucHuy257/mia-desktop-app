@@ -33,10 +33,27 @@ from app.worker_runtime.handler import InvoiceCrawlTaskHandler
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 from app.worker_runtime.proxy import ProxyRegistry
 from app.external_api.results import JobResultReader
+from app.repositories.invoice_package_repository import InvoicePackageRepository
+from app.services.invoice_pdf_export_service import InvoicePdfExportService
 
 
 OWNER_ID = "mia-desktop-local"
 WORKER_ID = "desktop-direct"
+
+
+class DesktopInvoiceCrawlTaskHandler(InvoiceCrawlTaskHandler):
+    """Translate desktop artifact intent into the production package service."""
+
+    def run_xml_unit(self, job, payload: dict, progress_callback=None):
+        requested = set(job.parameters.get("data_types") or ())
+        translated = {
+            **payload,
+            "export_xml": "xml" in requested,
+            "export_html": bool(requested.intersection({"html", "pdf"})),
+        }
+        return super().run_xml_unit(
+            job, translated, progress_callback=progress_callback,
+        )
 
 
 class ProductionBackend:
@@ -59,7 +76,7 @@ class ProductionBackend:
         self.repository.migrate()
         config = CrawlConfig.from_env()
         config.validate()
-        self.handler = InvoiceCrawlTaskHandler(
+        self.handler = DesktopInvoiceCrawlTaskHandler(
             self.repository, self.sessions, worker_id=WORKER_ID,
             data_root=self.data_root, crawl_config=config,
             proxy_registry=ProxyRegistry(direct_capacity=1),
@@ -109,7 +126,8 @@ class ProductionBackend:
             "query_types": sorted(intent["query_types"]),
             "force_refresh": False, "refresh_latest_month": False,
             "result_scope": result_scope, "include_xml": include_xml,
-            "include_mvt": False, "pipeline_plan": pipeline_plan,
+            "include_mvt": False, "data_types": sorted(data_types),
+            "pipeline_plan": pipeline_plan,
         }
         fingerprint = hashlib.sha256(json.dumps(
             parameters, sort_keys=True, separators=(",", ":"),
@@ -179,6 +197,31 @@ class ProductionBackend:
         return {"items": output[:limit], "pagination": {"limit": limit, "has_more": has_more,
                                                           "next_cursor": cursor if has_more else None}}
 
+    def prepare_artifacts(self, value: dict[str, Any]) -> None:
+        """Run production post-processing required before local file copying."""
+        if "pdf" not in set(value.get("kinds") or ()):
+            return
+        for connection_id in value.get("connection_ids") or ():
+            candidates = [
+                job for job in self.repository.list_jobs_for_reconciliation()
+                if str(job.parameters.get("connection_id")) == connection_id
+                and job.status in {"completed", "completed_with_warning"}
+            ]
+            if not candidates:
+                continue
+            job = max(candidates, key=lambda item: (item.updated_at, item.job_id))
+            database_path = self.data_root / job.company_tax_code / "db" / "invoices.sqlite3"
+            service = InvoicePdfExportService(
+                self.data_root, InvoicePackageRepository(database_path),
+            )
+            for direction in job.parameters["directions"]:
+                for query_type in job.parameters["query_types"]:
+                    service.export_invoice_pdfs(
+                        job.company_tax_code, direction, query_type,
+                        job.parameters["date_from"], job.parameters["date_to"],
+                        overwrite=False,
+                    )
+
     def _worker_loop(self) -> None:
         while not self.stop_event.is_set():
             try:
@@ -202,7 +245,9 @@ class ProductionBackend:
                 "directions": list(job.parameters["directions"]),
                 "query_types": list(job.parameters["query_types"]),
                 "scopes": ["overview", "detail"] if job.parameters.get("result_scope") == "detail" else ["overview"],
-                "data_types": ["invoice", "xml"] if job.parameters.get("include_xml") else ["invoice"],
+                "data_types": list(job.parameters.get("data_types") or (
+                    ["invoice", "xml"] if job.parameters.get("include_xml") else ["invoice"]
+                )),
             },
             "idempotency_key": "managed-by-production-engine",
             "status": job.status, "stage": job.current_stage,
