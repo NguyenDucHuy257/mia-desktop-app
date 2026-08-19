@@ -43,8 +43,8 @@ test('account forms validate input and submit through the browser demo adapter',
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Đã thêm tài khoản thành công.');
-  await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
+  await expect(page.getByRole('alertdialog', { name: 'Thông báo thành công' })).toContainText('Đã thêm tài khoản thành công.');
+  await expect(page.locator('.notice-icon[data-kind="success"]')).toHaveText('✓');
   await page.getByRole('button', { name: 'Đóng' }).click();
   await expect(page.getByLabel('Mật khẩu')).toHaveValue('');
 
@@ -178,8 +178,10 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Tổng quan')).not.toBeChecked();
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Chi tiết')).not.toBeChecked();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
-  await page.getByLabel('Từ ngày đồng bộ').fill('2026-01-01');
-  await page.getByLabel('Đến ngày đồng bộ').fill('2026-01-31');
+  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.getByLabel('Từ ngày đồng bộ nhập tay').fill('01/01/2026');
+  await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('31/01/2026');
+  await page.getByRole('button', { name: 'Áp dụng' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Vui lòng chọn ít nhất');
   await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
@@ -325,8 +327,10 @@ test('production artifact tabs render runtime files instead of demo rows', async
 
 test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
   await page.goto('/?figma=1');
-  await page.getByLabel('Từ ngày đồng bộ').fill('2023-09-01');
-  await page.getByLabel('Đến ngày đồng bộ').fill('2023-09-30');
+  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.getByLabel('Từ ngày đồng bộ nhập tay').fill('01/09/2023');
+  await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('30/09/2023');
+  await page.getByRole('button', { name: 'Áp dụng' }).click();
   await page.getByLabel('Tìm kiếm tài khoản').fill('0101234567');
   await expect(page.locator('.table-row')).toHaveCount(1);
   await page.getByLabel('Lọc trạng thái').selectOption('failed');
@@ -340,8 +344,10 @@ test('date, company, search, status and pagination controls update the UI', asyn
 
   await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'XML' }).click();
-  await page.getByLabel('Từ ngày').fill('2023-09-01');
-  await page.getByLabel('Đến ngày').fill('2023-09-30');
+  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.getByLabel('Từ ngày nhập tay').fill('01/09/2023');
+  await page.getByLabel('Đến ngày nhập tay').fill('30/09/2023');
+  await page.getByRole('button', { name: 'Áp dụng' }).click();
   await page.getByLabel('Chọn công ty').selectOption('company-b');
   await expect(page.getByLabel('Chọn công ty')).toHaveValue('company-b');
   await page.getByRole('button', { name: 'Trang sau' }).click();

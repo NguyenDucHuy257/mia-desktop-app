@@ -9,6 +9,7 @@ const DIRECTIONS = new Set(['purchase', 'sold']);
 const QUERY_TYPES = new Set(['query', 'sco-query']);
 const SCOPES = new Set(['overview', 'detail']);
 const DATA_TYPES = new Set(['invoice', 'xml', 'html', 'pdf']);
+const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
 
 class JobInputError extends Error {
   constructor(code = 'invalid_job_input') {
@@ -55,8 +56,9 @@ function idempotencyKey(intent) {
   return `desktop-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
-function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector) {
+function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector, createAttemptId = crypto.randomUUID) {
   if (typeof getRuntime !== 'function') throw new TypeError('Invalid offline runtime dependency.');
+  const attemptKeys = new Map();
   const launchCrawler = async (record) => {
     if (!record || !protector?.decrypt || !['queued', 'waiting_account', 'running'].includes(record.status)) return;
     const runtime = getRuntime();
@@ -84,9 +86,19 @@ function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString
     }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
-      const record = await getRuntime().invoke('jobs.start', {
-        connection_id: intent.connection_id, intent, idempotency_key: idempotencyKey(intent), timestamp: now(),
+      const baseKey = idempotencyKey(intent);
+      const currentKey = attemptKeys.get(baseKey) || baseKey;
+      let record = await getRuntime().invoke('jobs.start', {
+        connection_id: intent.connection_id, intent, idempotency_key: currentKey, timestamp: now(),
       });
+      if (TERMINAL_STATUSES.has(record.status)) {
+        const nextKey = `${baseKey}-${createAttemptId()}`;
+        attemptKeys.set(baseKey, nextKey);
+        record = await getRuntime().invoke('jobs.start', {
+          connection_id: intent.connection_id, intent,
+          idempotency_key: nextKey, timestamp: now(),
+        });
+      }
       await launchCrawler(record);
       return { record, accepted: { job_id: record.job_id, status: record.status, current_stage: record.stage, worker_slot_id: null } };
     }),

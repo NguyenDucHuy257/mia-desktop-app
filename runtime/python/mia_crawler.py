@@ -35,9 +35,10 @@ def verify_account(username: str, password: str, session_factory=None) -> dict[s
 
 
 class CrawlerCoordinator:
-    def __init__(self, storage, data_dir: Path) -> None:
+    def __init__(self, storage, data_dir: Path, logger=None) -> None:
         self.storage = storage
         self.data_dir = data_dir
+        self.logger = logger
         self._lock = threading.Lock()
         self._workers: dict[str, tuple[threading.Thread, threading.Event]] = {}
 
@@ -79,6 +80,7 @@ class CrawlerCoordinator:
     def _run(self, value: dict[str, Any], cancel: threading.Event) -> None:
         job_id = value["job_id"]
         password = value.pop("password")
+        failure_stage = "startup"
         try:
             from app.config.crawl_config import adaptive_paging_options_from_config, load_crawl_config
             from app.crawlers.invoice_crawler import InvoiceCrawler
@@ -97,6 +99,7 @@ class CrawlerCoordinator:
             from app.services.overview_downloader import OverviewDownloader
             from app.services.portal_session import TaxPortalSession
 
+            failure_stage = "authentication"
             self._transition(job_id, "running", 2, "authenticating")
             portal = TaxPortalSession(username=value["username"], password=password)
             portal.login()
@@ -127,6 +130,7 @@ class CrawlerCoordinator:
                     self._transition(job_id, "cancelling", max(2, int(index * 90 / len(jobs))), "cancelling")
                     self._transition(job_id, "cancelled", max(2, int(index * 90 / len(jobs))), "cancelled")
                     return
+                failure_stage = "overview"
                 category = "electronic" if query_type == "query" else "cash_register"
                 downloader = OverviewDownloader(
                     crawler=crawler, headers_provider=lambda: portal.headers,
@@ -139,6 +143,7 @@ class CrawlerCoordinator:
                 )
                 self._import_raw(value["connection_id"], value["username"], raw_root, direction, query_type)
                 if "detail" in intent["scopes"]:
+                    failure_stage = "detail"
                     database = raw_root / value["username"] / "db" / "invoices.sqlite3"
                     detail_repository = InvoiceDetailRepository(database)
                     detail_service = InvoiceDetailDownloadService(
@@ -155,6 +160,7 @@ class CrawlerCoordinator:
                 data_types = set(intent.get("data_types") or ())
                 wants_pdf = "pdf" in data_types
                 if data_types.intersection({"xml", "html", "pdf"}):
+                    failure_stage = "artifact"
                     database = raw_root / value["username"] / "db" / "invoices.sqlite3"
                     package_repository = InvoicePackageRepository(database)
                     package_repository.init_db()
@@ -189,7 +195,12 @@ class CrawlerCoordinator:
             except Exception:
                 pass
         except Exception as error:
-            safe_code = "portal_auth_failed" if "auth" in type(error).__name__.lower() else "crawler_failed"
+            safe_code = {
+                "authentication": "portal_auth_failed", "overview": "overview_failed",
+                "detail": "detail_failed", "artifact": "artifact_failed",
+            }.get(failure_stage, "crawler_failed")
+            if self.logger is not None:
+                self.logger.error("crawler_job_failed stage=%s error_type=%s", failure_stage, type(error).__name__)
             try:
                 current = self.storage.get_job(job_id)
                 if current["status"] == "cancelling" or cancel.is_set():

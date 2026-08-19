@@ -91,8 +91,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         try:
             result = storage.initialize()
             data_directory = data_dir
-            crawler = CrawlerCoordinator(storage, data_dir)
             logger = configure_logging(data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO"))
+            crawler = CrawlerCoordinator(storage, data_dir, logger)
             logger.info("storage_initialized schema_version=%s", result["schema_version"])
             return result, False
         except StorageError as error:

@@ -224,7 +224,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
           </form>
         )}
       </div>
-      {feedback ? <NoticeDialog kind={feedback.kind === 'error' ? 'error' : 'notice'} message={feedback.message} onClose={() => setFeedback(null)} /> : null}
+      {feedback ? <NoticeDialog kind={feedback.kind} message={feedback.message} onClose={() => setFeedback(null)} /> : null}
     </section>
   );
 }

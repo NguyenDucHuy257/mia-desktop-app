@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { DateRangePicker } from '../../components/DateRangePicker';
 import pdfProgressIcon from '../../assets/figma/pdf-progress.svg';
 import pdfStopIcon from '../../assets/figma/pdf-stop.svg';
 import pdfFolderIcon from '../../assets/figma/pdf-folder.svg';
@@ -7,7 +8,6 @@ import artifactCancelIcon from '../../assets/figma/artifact-cancel.svg';
 import artifactErrorIcon from '../../assets/figma/artifact-error.svg';
 import artifactPreviousIcon from '../../assets/figma/artifact-previous.svg';
 import artifactNextIcon from '../../assets/figma/artifact-next.svg';
-import artifactCalendarIcon from '../../assets/figma/artifact-calendar.svg';
 import artifactCompanyIcon from '../../assets/figma/artifact-company.svg';
 import artifactStatusCheckIcon from '../../assets/figma/artifact-status-check.svg';
 import artifactDownloadIcon from '../../assets/figma/artifact-download.svg';
@@ -131,13 +131,13 @@ export function ArtifactDownloaderPage({ kind, folder, connectionIds, accounts }
       {!demo && loadState === 'ready' && rows.length === 0 ? <div className="results-state">Chưa có file {name} cho lựa chọn hiện tại.</div> : null}
       {demo ? <ArtifactPager count={rows.length} page={page} onPage={setPage} /> : <footer className="artifact-pager"><span>Hiển thị {rows.length} file trên trang {page}</span><div><button type="button" disabled={!cursorHistory.length} onClick={() => { const history = [...cursorHistory]; setCursor(history.pop() ?? null); setCursorHistory(history); setPage((value) => Math.max(1, value - 1)); }}>Trang trước</button><button type="button" disabled={!nextCursor} onClick={() => { if (!nextCursor) return; setCursorHistory((value) => [...value, cursor]); setCursor(nextCursor); setPage((value) => value + 1); }}>Tải trang sau</button></div></footer>}
     </div>
-    {message ? <NoticeDialog kind="notice" message={message} onClose={() => setMessage(null)} /> : null}
+    {message ? <NoticeDialog kind={message.startsWith('Đã ') ? 'success' : 'notice'} message={message} onClose={() => setMessage(null)} /> : null}
   </section>;
 }
 
 function ArtifactToolbar({ direction, onDirection, company, onCompany, accounts = [], demo = false, dateFrom, dateTo, onDateFrom, onDateTo }: { direction: Direction; onDirection(value: Direction): void; company: string; onCompany(value: string): void; accounts?: AccountConnection[]; demo?: boolean; dateFrom: string; dateTo: string; onDateFrom(value: string): void; onDateTo(value: string): void }) {
   return <div className="artifact-toolbar">
-    <fieldset className="artifact-date"><img src={artifactCalendarIcon} alt="" /><legend>KHOẢNG THỜI GIAN</legend><strong>{formatDate(dateFrom)} - {formatDate(dateTo)}</strong><input aria-label="Từ ngày" type="date" value={dateFrom} max={dateTo} onChange={(event) => onDateFrom(event.target.value)} /><input aria-label="Đến ngày" type="date" value={dateTo} min={dateFrom} onChange={(event) => onDateTo(event.target.value)} /></fieldset>
+    <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} onChange={(from, to) => { onDateFrom(from); onDateTo(to); }} />
     <label className="artifact-company"><img src={artifactCompanyIcon} alt="" /><select aria-label="Chọn công ty" value={company} onChange={(event) => onCompany(event.target.value)}>{demo ? <><option value="company-a">Công ty Cổ phần ABC</option><option value="company-b">Công ty TNHH Thương mại B</option></> : accounts.map((account) => <option key={account.connection_id} value={account.connection_id}>{account.company_name || account.username}</option>)}<option value="all">Tất cả công ty đã chọn</option></select></label>
     <div className="artifact-segment" aria-label="Loại hóa đơn">
       {([['all', 'Tất cả'], ['purchase', 'Mua vào'], ['sold', 'Bán ra']] as const).map(([value, label]) => <button type="button" key={value} data-active={direction === value} onClick={() => onDirection(value)}>{label}</button>)}
@@ -145,7 +145,6 @@ function ArtifactToolbar({ direction, onDirection, company, onCompany, accounts 
   </div>;
 }
 
-function formatDate(value: string) { const [year, month, day] = value.split('-'); return year && month && day ? `${day}/${month}/${year}` : value; }
 
 function ArtifactPager({ count, page, onPage }: { count: number; page: number; onPage(value: number): void }) {
   return <footer className="artifact-pager"><span>Hiển thị {count ? (page - 1) * 50 + 1 : 0} - {Math.min(page * 50, 128)} trong tổng số 128 hóa đơn</span><div><span>Chọn trang:</span><button aria-label="Trang trước" disabled={page === 1} onClick={() => onPage(page - 1)}><img src={artifactPreviousIcon} alt="" /></button>{[1, 2, 3].map((value) => <button key={value} data-active={page === value} onClick={() => onPage(value)}>{value}</button>)}<span>...</span><button data-active={page === 3} onClick={() => onPage(3)}>3</button><button aria-label="Trang sau" disabled={page === 3} onClick={() => onPage(page + 1)}><img src={artifactNextIcon} alt="" /></button></div></footer>;
@@ -217,7 +216,7 @@ export function PdfDownloaderPage({ folder, onFolder, connectionIds, accounts }:
         <div className="pdf-actions"><button type="button" onClick={() => { if (!demo) void cancelPdfJobs(); setRunning(false); }}><img src={pdfStopIcon} alt="" />Dừng lại</button><button type="button" disabled={progress < 100} aria-disabled={progress < 100} onClick={() => void window.miaRuntime?.artifacts?.openDirectory(folder).catch(() => setMessage('Không thể mở thư mục đích.'))}><img src={pdfFolderIcon} alt="" />Mở thư mục</button></div>
       </div> : null}
     </div>
-    {message ? <NoticeDialog kind="notice" message={message} onClose={() => setMessage(null)} /> : null}
+    {message ? <NoticeDialog kind={message.startsWith('Đã ') ? 'success' : 'notice'} message={message} onClose={() => setMessage(null)} /> : null}
   </section>;
 }
 
@@ -241,5 +240,5 @@ export function UtilityPage({ title, description }: { title: string; description
       setMessage('Đã lưu cài đặt trên máy. Job mới sẽ áp dụng cấu hình này.');
     } catch { setMessage('Không thể lưu cài đặt.'); }
   }
-  return <section className="utility-page"><h1>{title}</h1><p>{description}</p>{isSettings ? <div className="utility-panel"><label>Giới hạn tài khoản chạy đồng thời<select value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}{value === 2 ? ' (khuyến nghị)' : ''}</option>)}</select></label><label>Số lần thử lại<input type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /></label><button type="button" onClick={() => void saveSettings()}>Lưu cài đặt</button></div> : isLogs ? <div className="utility-panel"><label>Tìm kiếm<input aria-label="Tìm kiếm Nhật ký" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" onClick={() => void window.miaRuntime?.logs?.list().then(setLogs).catch(() => setMessage('Không thể làm mới nhật ký.'))}>Làm mới</button>{visibleLogs.length ? <ol className="utility-log-list">{visibleLogs.map((line, index) => <li key={`${index}:${line}`}>{line}</li>)}</ol> : <div className="utility-empty"><strong>Chưa có nhật ký phù hợp</strong></div>}</div> : <div className="utility-panel"><div className="utility-empty"><strong>Chưa có nguồn dữ liệu mã vật tư</strong><span>Runtime crawler hiện không cung cấp danh mục mã vật tư. Không có dữ liệu giả được hiển thị.</span></div></div>}{message ? <NoticeDialog kind="notice" message={message} onClose={() => setMessage(null)} /> : null}</section>;
+  return <section className="utility-page"><h1>{title}</h1><p>{description}</p>{isSettings ? <div className="utility-panel"><label>Giới hạn tài khoản chạy đồng thời<select value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))}>{[1, 2, 3, 4].map((value) => <option key={value} value={value}>{value}{value === 2 ? ' (khuyến nghị)' : ''}</option>)}</select></label><label>Số lần thử lại<input type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /></label><button type="button" onClick={() => void saveSettings()}>Lưu cài đặt</button></div> : isLogs ? <div className="utility-panel"><label>Tìm kiếm<input aria-label="Tìm kiếm Nhật ký" value={query} onChange={(event) => setQuery(event.target.value)} /></label><button type="button" onClick={() => void window.miaRuntime?.logs?.list().then(setLogs).catch(() => setMessage('Không thể làm mới nhật ký.'))}>Làm mới</button>{visibleLogs.length ? <ol className="utility-log-list">{visibleLogs.map((line, index) => <li key={`${index}:${line}`}>{line}</li>)}</ol> : <div className="utility-empty"><strong>Chưa có nhật ký phù hợp</strong></div>}</div> : <div className="utility-panel"><div className="utility-empty"><strong>Chưa có nguồn dữ liệu mã vật tư</strong><span>Runtime crawler hiện không cung cấp danh mục mã vật tư. Không có dữ liệu giả được hiển thị.</span></div></div>}{message ? <NoticeDialog kind={message.startsWith('Đã ') ? 'success' : 'notice'} message={message} onClose={() => setMessage(null)} /> : null}</section>;
 }

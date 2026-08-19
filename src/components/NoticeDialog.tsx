@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 interface NoticeDialogProps {
-  kind: 'error' | 'notice';
+  kind: 'error' | 'notice' | 'success';
   message: string;
   onClose(): void;
   actionLabel?: string;
@@ -31,8 +31,8 @@ export function NoticeDialog({ kind, message, onClose, actionLabel, onAction }: 
     <div className="notice-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section ref={dialogRef} className="notice-dialog" role="alertdialog" aria-modal="true" aria-label={kind === 'error' ? 'Thông báo lỗi' : 'Thông báo'}>
-        <span className="notice-icon" data-kind={kind} aria-hidden="true">{kind === 'error' ? '×' : '!'}</span>
+      <section ref={dialogRef} className="notice-dialog" role="alertdialog" aria-modal="true" aria-label={kind === 'error' ? 'Thông báo lỗi' : kind === 'success' ? 'Thông báo thành công' : 'Thông báo'}>
+        <span className="notice-icon" data-kind={kind} aria-hidden="true">{kind === 'error' ? '×' : kind === 'success' ? '✓' : '!'}</span>
         <p>{message}</p>
         <div className="notice-actions">
           {actionLabel && onAction ? <button type="button" className="notice-action" onClick={onAction}>{actionLabel}</button> : null}

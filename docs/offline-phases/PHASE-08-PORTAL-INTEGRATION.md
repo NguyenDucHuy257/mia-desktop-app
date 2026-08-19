@@ -21,3 +21,10 @@ Branch: `feat/offline-phase-08-portal-integration`
 ## Manual acceptance
 
 Real credentials must be entered only in the packaged UI. Confirm the company name, run a small date range, then compare overview/detail counts with the portal. Do not place credentials in commands, screenshots or logs.
+
+## Local verification adjustments
+
+- Success dialogs use a green check; errors keep the red icon and other notices use the warning icon.
+- One shared date-range form is used by Invoice, XML, HTML and PDF. It accepts `dd/mm/yyyy` text or a native calendar selection.
+- A new sync after a terminal job creates a new attempt. Double-click/restart while an attempt is active continues to reuse its idempotency key.
+- Crawler failures are safely classified as authentication, overview, detail or artifact failures. Logs contain only stage and exception type, never exception messages, tax codes or passwords.

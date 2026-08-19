@@ -48,6 +48,27 @@ describe('offline job lifecycle IPC broker', () => {
     }), { timeoutMs: 15000 });
   });
 
+  it('creates a new attempt when the deterministic job is already terminal', async () => {
+    const invoke = vi.fn(async (method: string, params: { idempotency_key?: string }) => {
+      if (method === 'jobs.start' && !params.idempotency_key?.endsWith('-attempt-2')) {
+        return { job_id: 'job_old', connection_id: intent.connection_id, intent, status: 'failed', stage: 'failed' };
+      }
+      if (method === 'jobs.start') return { job_id: 'job_new', connection_id: intent.connection_id, intent, status: 'queued', stage: 'queued' };
+      if (method === 'accounts.secret') return { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') };
+      return { accepted: true };
+    });
+    const broker = createJobLifecycleBroker(
+      () => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }, () => 'attempt-2',
+    );
+    const result = await broker.start(intent);
+    expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_new', status: 'queued' } } });
+    expect(invoke.mock.calls.filter(([method]) => method === 'jobs.start')).toHaveLength(2);
+    expect(invoke).toHaveBeenCalledWith('crawler.start', expect.objectContaining({ job_id: 'job_new' }), { timeoutMs: 15000 });
+    await broker.start(intent);
+    expect(invoke.mock.calls.filter(([method]) => method === 'jobs.start')).toHaveLength(3);
+    expect(invoke.mock.calls.filter(([method, params]) => method === 'jobs.start' && params.idempotency_key?.endsWith('-attempt-2'))).toHaveLength(2);
+  });
+
   it.each(['resume', 'resumeAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }), () => 'now');
