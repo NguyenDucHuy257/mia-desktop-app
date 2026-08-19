@@ -37,6 +37,14 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - run: npx playwright install chromium
       - run: npm run test:visual
+      - name: Capture current app UI snapshots for review
+        run: npx playwright test --update-snapshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mia-ui-current-snapshots
+          path: tests/visual/__screenshots__/*.png
+          if-no-files-found: error
+          retention-days: 2
 
   windows-package:
     runs-on: windows-latest
@@ -55,4 +63,3 @@ jobs:
           path: release/*.exe
           if-no-files-found: error
           retention-days: 14
-
