@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -45,6 +45,30 @@ class ArtifactExporterTests(unittest.TestCase):
                 exporter.export({"destination": str(root), "connection_ids": ["a"], "kinds": ["exe"]})
             with self.assertRaisesRegex(ValueError, "invalid_artifact_accounts"):
                 exporter.export({"destination": str(root), "connection_ids": ["a", "a"], "kinds": ["xml"]})
+
+    def test_excel_export_prefers_production_pipeline_workbooks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = Storage(root / "mia.sqlite3")
+            storage.initialize()
+            storage.create_account({"account_id": "account-1", "tax_code": "0101234567", "encrypted_password": "cipher", "timestamp": "now"})
+            source = root / "source-data" / "0101234567" / "exports" / "overview" / "job-id" / "invoice.xlsx"
+            source.parent.mkdir(parents=True)
+            workbook = Workbook()
+            workbook.active.append(["production pipeline"])
+            workbook.save(source)
+            destination = root / "output"
+
+            result = ArtifactExporter(storage, root).export({
+                "destination": str(destination),
+                "connection_ids": ["account-1"],
+                "kinds": ["excel"],
+            })
+
+            self.assertEqual(result["count"], 1)
+            copied = load_workbook(result["files"][0], read_only=True)
+            self.assertEqual(copied.active.cell(1, 1).value, "production pipeline")
+            copied.close()
 
     def test_safe_excel_value_covers_all_formula_prefixes(self):
         for prefix in ("=", "+", "-", "@"):

@@ -137,3 +137,13 @@ Chưa chạy:
 - Vendor integrity: PASS — 88 selected production files are pinned by SHA-256. CAPTCHA SVG rasterization uses packaged Qt on Windows because CairoSVG requires an unavailable native Cairo DLL; SVG validation and the production OCR model remain unchanged.
 - Packaged runtime smoke: PASS — the first executable build correctly exposed missing native Cairo; the Qt-backed rebuild passes health, storage migration, CAPTCHA model load and clean shutdown.
 - Real portal small job: NOT RUN on this revision — credentials remain outside source, logs and commands and must be entered through the application UI.
+
+## Production artifact integration — 2026-08-20
+
+- HTML jobs: PASS — desktop `data_types` is preserved and translated to the production package handler with `export_html=True`; XML remains independently selectable.
+- PDF post-processing: PASS — completed HTML packages are converted through the production `InvoicePdfExportService` before Electron main copies files to the user-selected directory.
+- Excel download: PASS — invoice downloads prefer workbooks produced by the production `OverviewDownloader`; the legacy workbook builder remains only for pre-migration jobs.
+- Runtime tests: PASS — 39/39, including artifact intent translation, production PDF service dispatch and production workbook copying.
+- Interaction/visual: PASS — Playwright 25/25 at the required desktop widths; renderer bundle secret scan passes.
+- Packaged runtime: PASS — clean PyInstaller build plus packaged health/storage/CAPTCHA/shutdown smoke.
+- GitHub Actions: BLOCKED — rerun on 2026-08-20 still received no runner and zero steps because GitHub reports failed recent account payments or an insufficient Actions spending limit.

@@ -53,7 +53,15 @@ class ArtifactExporter:
         for account_id in account_ids:
             account = self.storage.get_account(account_id)
             if "excel" in kinds:
-                outputs.append(str(self._export_excel(destination, account_id, account["username"])))
+                production_excel = self._copy_job_artifacts(
+                    destination, account_id, "excel",
+                )
+                if production_excel:
+                    outputs.extend(str(item) for item in production_excel)
+                else:
+                    # Compatibility for jobs created before the production
+                    # pipeline became the local source of truth.
+                    outputs.append(str(self._export_excel(destination, account_id, account["username"])))
             for kind in set(kinds) - {"excel"}:
                 outputs.extend(str(item) for item in self._copy_job_artifacts(destination, account_id, kind))
         return {"count": len(outputs), "files": outputs}
@@ -138,10 +146,11 @@ class ArtifactExporter:
     def _copy_job_artifacts(self, destination: Path, account_id: str, kind: str) -> list[Path]:
         account = self.storage.get_account(account_id)
         copied = []
+        extension = "xlsx" if kind == "excel" else kind
         for root in self._export_roots(account["username"]):
             if not root.exists() or self.data_directory not in root.parents:
                 continue
-            for source in root.rglob(f"*.{kind}"):
+            for source in root.rglob(f"*.{extension}"):
                 target = self._available_path(destination, safe_filename(source.stem) + source.suffix.lower())
                 temporary = target.with_name(f".{target.name}.tmp")
                 try:
