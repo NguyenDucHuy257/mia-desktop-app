@@ -153,7 +153,12 @@ class ProductionBackend(SourceBackend):
                 else None
             )
             job = normalized
-        return SourceBackend.public_job(job)
+        payload = SourceBackend.public_job(job)
+        # The source repository already persists stage_progress_percent from its
+        # ProgressSnapshot. Expose that value unchanged so the renderer can give
+        # detailed auth/finalize feedback without inventing progress.
+        payload["stage_percent"] = float(getattr(job, "stage_progress_percent", 0.0) or 0.0)
+        return payload
 
 
 __all__ = ["ProductionBackend", "SourceBackend"]
