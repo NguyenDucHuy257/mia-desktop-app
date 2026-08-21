@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import sys
 import time
 import uuid
@@ -15,10 +16,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mia_logging import configure_logging
+from mia_logging import close_logging, configure_logging
 from mia_storage import Storage, StorageError
 from mia_crawler import CrawlerCoordinator, verify_account
 from mia_backend import ProductionBackend
+from mia_account_purge import purge_account_data, scrub_account_log_lines
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
@@ -137,6 +139,46 @@ def _log_job_status(value: dict[str, Any]) -> None:
     )
 
 
+def _purge_account(account_id: str) -> dict[str, Any]:
+    global crawler, logger, production_backend
+    if storage is None or data_directory is None:
+        raise RpcError(-32011, "storage_not_initialized")
+    secret = storage.get_account_secret(account_id)
+    tax_code = str(secret["username"])
+
+    # Stop the production worker before removing control rows or source-data so
+    # no in-flight lease can write back into a job that has just been deleted.
+    if production_backend is not None:
+        production_backend.close()
+        production_backend = None
+
+    result = purge_account_data(data_directory, account_id, tax_code)
+    identifiers = [account_id, tax_code, *list(result.get("job_ids") or ())]
+
+    # Python RotatingFileHandler keeps Windows file handles open. Close them
+    # before scrubbing account-attributable lines, then restore diagnostics.
+    close_logging()
+    removed_log_lines = scrub_account_log_lines(data_directory, identifiers)
+    logger = configure_logging(
+        data_directory / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
+    )
+    crawler = CrawlerCoordinator(storage, data_directory, logger)
+    logger.info(
+        "account_purge_completed jobs=%s artifact_files=%s source_directory=%s log_lines=%s",
+        len(result.get("job_ids") or ()),
+        int(result.get("artifact_files_removed") or 0),
+        bool(result.get("source_directory_removed")),
+        removed_log_lines,
+    )
+    return {
+        "deleted": True,
+        "jobs_removed": len(result.get("job_ids") or ()),
+        "artifact_files_removed": int(result.get("artifact_files_removed") or 0),
+        "source_directory_removed": bool(result.get("source_directory_removed")),
+        "log_lines_removed": removed_log_lines,
+    }
+
+
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
     if method == "system.health":
@@ -241,13 +283,14 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if method == "accounts.update_company":
                 storage.update_account_company(params["account_id"], params["company_name"], params["timestamp"])
                 return storage.get_account(params["account_id"]), False
-            if method == "accounts.delete":
-                storage.delete_account(params["account_id"])
-                return None, False
+            if method in {"accounts.delete", "accounts.purge"}:
+                return _purge_account(params["account_id"]), False
         except (KeyError, TypeError):
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32020, error.code) from None
+        except (OSError, sqlite3.Error):
+            raise RpcError(-32021, "account_purge_failed") from None
     if method.startswith("jobs."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
