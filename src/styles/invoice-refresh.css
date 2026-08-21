@@ -189,7 +189,8 @@
 .invoice-page .add-account,
 .invoice-page .stop-button,
 .invoice-page .pagination button,
-.invoice-page .date-range-trigger {
+.invoice-page .date-range-trigger,
+.invoice-page .date-range-popover button {
   transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 110ms ease;
 }
 
@@ -217,9 +218,15 @@
   color: #166534;
 }
 
+.invoice-page .date-range-popover button:hover {
+  filter: brightness(.96);
+  box-shadow: 0 3px 9px rgb(22 101 52 / 14%);
+}
+
 .invoice-page .compact-select:active,
 .invoice-page .add-account:active,
 .invoice-page .date-range-trigger:active,
+.invoice-page .date-range-popover button:active,
 .invoice-page .pagination button:not(:disabled):active {
   transform: scale(.98);
 }
