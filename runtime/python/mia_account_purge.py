@@ -17,6 +17,15 @@ def _table_exists(connection: sqlite3.Connection, name: str) -> bool:
     ).fetchone() is not None
 
 
+def _table_columns(connection: sqlite3.Connection, name: str) -> set[str]:
+    if not _table_exists(connection, name):
+        return set()
+    return {
+        str(row[1])
+        for row in connection.execute(f"PRAGMA table_info({name})").fetchall()
+    }
+
+
 def _safe_child(root: Path, relative: str | Path) -> Path | None:
     root = root.resolve()
     candidate = (root / relative).resolve()
@@ -41,11 +50,12 @@ def _finalize_secure_sqlite_delete(connection: sqlite3.Connection) -> None:
 def _purge_legacy_database(
     data_dir: Path, account_id: str, tax_code: str
 ) -> tuple[list[str], list[str], int]:
-    """Delete compatibility rows even when the new source conn_* ID differs.
+    """Delete compatibility rows across every legacy account schema.
 
-    Pre-refactor desktop accounts used random UUIDs. Source account-connections
-    use conn_* IDs, so cleanup resolves old rows by both ID and tax code and then
-    removes jobs/artifacts for every matching legacy account.
+    Pre-refactor builds used random UUID account IDs and the tax identifier has
+    appeared under ``normalized_tax_code``, ``tax_code`` and ``username`` over
+    time. Cleanup must inspect the actual SQLite schema instead of assuming one
+    historical column name.
     """
     database = data_dir / "mia.sqlite3"
     if not database.is_file():
@@ -57,12 +67,29 @@ def _purge_legacy_database(
     try:
         connection.execute("BEGIN IMMEDIATE")
         legacy_ids = {account_id}
-        if _table_exists(connection, "accounts"):
-            rows = connection.execute(
-                "SELECT account_id FROM accounts WHERE account_id=? OR tax_code=?",
-                (account_id, tax_code),
-            ).fetchall()
+        account_columns = _table_columns(connection, "accounts")
+        if "account_id" in account_columns:
+            identifier_column = next(
+                (
+                    name
+                    for name in ("normalized_tax_code", "tax_code", "username")
+                    if name in account_columns
+                ),
+                None,
+            )
+            if identifier_column is None:
+                rows = connection.execute(
+                    "SELECT account_id FROM accounts WHERE account_id=?",
+                    (account_id,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    f"SELECT account_id FROM accounts "
+                    f"WHERE account_id=? OR {identifier_column}=?",
+                    (account_id, tax_code.strip()),
+                ).fetchall()
             legacy_ids.update(str(row[0]) for row in rows)
+
         placeholders = ",".join("?" for _ in legacy_ids)
         parameters = tuple(sorted(legacy_ids))
         job_ids = [
@@ -82,7 +109,7 @@ def _purge_legacy_database(
                 f"DELETE FROM jobs WHERE account_id IN ({placeholders})", parameters
             )
         deleted = 0
-        if _table_exists(connection, "accounts"):
+        if "account_id" in account_columns:
             deleted = connection.execute(
                 f"DELETE FROM accounts WHERE account_id IN ({placeholders})", parameters
             ).rowcount
