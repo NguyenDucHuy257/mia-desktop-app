@@ -3,6 +3,7 @@ import { DateRangePicker } from '../../components/DateRangePicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
 import downloadIcon from '../../assets/figma/artifact-download.svg';
 import backIcon from '../../assets/figma/back.png';
+import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { DetailResult, LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
 import '../../styles/results-enhancements.css';
 
@@ -41,16 +42,18 @@ export function ResultsPage({ connectionId, onBack }: { connectionId: string; on
     const token = generation.current;
     if (cursor) consumedCursors.current.add(cursor);
     setState('loading');
+    const query = {
+      connection_id: connectionId,
+      cursor,
+      limit: 50,
+      search: debouncedSearch,
+      direction: direction || null,
+      date_from: dateFrom,
+      date_to: dateTo,
+    };
+    const started = performance.now();
+    diagnosticLog('results_request', { mode, date_from: dateFrom, date_to: dateTo, direction: direction || null, append, has_search: Boolean(debouncedSearch) });
     try {
-      const query = {
-        connection_id: connectionId,
-        cursor,
-        limit: 50,
-        search: debouncedSearch,
-        direction: direction || null,
-        date_from: dateFrom,
-        date_to: dateTo,
-      };
       const result = await bridge[mode](query) as LocalResultPage<ResultItem>;
       if (token !== generation.current) return;
       setItems((current) => append
@@ -58,7 +61,9 @@ export function ResultsPage({ connectionId, onBack }: { connectionId: string; on
         : result.items);
       setPage(result.pagination);
       setState('ready');
-    } catch {
+      diagnosticLog('results_response', { mode, row_count: result.items.length, has_more: result.pagination.has_more, duration_ms: Math.round(performance.now() - started) });
+    } catch (error) {
+      diagnosticLog('results_failed', { mode, date_from: dateFrom, date_to: dateTo, code: (error as { code?: string })?.code, duration_ms: Math.round(performance.now() - started) }, 'error');
       if (token === generation.current) setState('error');
     }
   }, [connectionId, dateFrom, dateTo, debouncedSearch, direction, mode]);
@@ -93,6 +98,7 @@ export function ResultsPage({ connectionId, onBack }: { connectionId: string; on
     if (!artifacts || !connectionId || exportScopes.length === 0) return;
     setFeedback('');
     setExportState('working');
+    diagnosticLog('results_export_requested', { scopes: exportScopes, date_from: dateFrom, date_to: dateTo, direction: direction || null });
     try {
       const destination = await artifacts.selectDirectory();
       if (!destination) return;
@@ -106,9 +112,11 @@ export function ResultsPage({ connectionId, onBack }: { connectionId: string; on
         direction: direction || null,
         search: debouncedSearch,
       });
+      diagnosticLog('results_export_completed', { scopes: exportScopes, file_count: result.count });
       setFeedback(`Đã tải ${result.count} file kết quả.`);
       setExportOpen(false);
-    } catch {
+    } catch (error) {
+      diagnosticLog('results_export_failed', { scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
       setFeedback('Không thể tải kết quả. Vui lòng thử lại.');
     } finally {
       setExportState('idle');
