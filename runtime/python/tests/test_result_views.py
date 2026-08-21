@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,85 +7,69 @@ from unittest.mock import Mock, patch
 from openpyxl import load_workbook
 
 import mia_runtime
-from mia_backend import BUSINESS_TIMEZONE, DesktopInvoiceCrawlPipeline, ProductionBackend
+from mia_backend import ProductionBackend
 
 
-class RefreshPolicyTests(unittest.TestCase):
-    @staticmethod
-    def pipeline(now=datetime(2026, 8, 21, 12, 0, tzinfo=BUSINESS_TIMEZONE)):
-        pipeline = object.__new__(DesktopInvoiceCrawlPipeline)
-        pipeline.clock = lambda: now
-        return pipeline
+class SourceJobIntentTests(unittest.TestCase):
+    def test_refresh_options_are_forwarded_to_source_create_job_body(self):
+        backend = object.__new__(ProductionBackend)
+        source_job = SimpleNamespace(job_id="job-source")
+        backend.service = Mock()
+        backend.service.create_job.return_value = source_job
+        with patch.object(
+            ProductionBackend,
+            "public_job",
+            return_value={"job_id": "job-source", "status": "queued"},
+        ):
+            result = backend.start({
+                "idempotency_key": "source-policy-test",
+                "intent": {
+                    "connection_id": "conn_123456",
+                    "date_from": "2026-07-15",
+                    "date_to": "2026-08-10",
+                    "directions": ["purchase", "sold"],
+                    "query_types": ["query", "sco-query"],
+                    "scopes": ["overview", "detail"],
+                    "data_types": ["invoice"],
+                    "force_refresh": False,
+                    "refresh_latest_month": True,
+                },
+            })
+        self.assertEqual(result["job_id"], "job-source")
+        body = backend.service.create_job.call_args.args[0]
+        self.assertEqual(body.connection_id, "conn_123456")
+        self.assertFalse(body.force_refresh)
+        self.assertTrue(body.refresh_latest_month)
+        self.assertEqual(body.result_scope, "detail")
+        self.assertFalse(body.include_xml)
+        backend.service.create_job.assert_called_once()
 
-    @staticmethod
-    def parameters(date_from, date_to, *, force_refresh=False):
-        return {
-            "date_from": date_from,
-            "date_to": date_to,
-            "directions": ["purchase", "sold"],
-            "query_types": ["query", "sco-query"],
-            "force_refresh": force_refresh,
-            "refresh_recent_months": True,
-        }
-
-    def test_old_historical_range_uses_verified_cache_when_fresh_download_is_off(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2023-10-01", "2023-10-31")
-        self.assertIsNone(pipeline._latest_month_range(parameters))
-        self.assertEqual(pipeline._latest_month_force_slices(parameters), frozenset())
-
-    def test_previous_and_current_calendar_month_are_always_forced(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2026-06-01", "2026-08-31")
-        self.assertEqual(
-            pipeline._latest_month_range(parameters),
-            (date(2026, 7, 1), date(2026, 8, 31)),
-        )
-        slices = pipeline._latest_month_force_slices(parameters)
-        expected = {
-            (direction, query_type, begin, end)
-            for direction in ("purchase", "sold")
-            for query_type in ("query", "sco-query")
-            for begin, end in (
-                (date(2026, 7, 1), date(2026, 7, 31)),
-                (date(2026, 8, 1), date(2026, 8, 31)),
-            )
-        }
-        self.assertEqual(slices, frozenset(expected))
-        self.assertFalse(any(item[2].month == 6 for item in slices))
-
-    def test_partial_recent_range_only_forces_selected_days(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2026-07-15", "2026-08-10")
-        self.assertEqual(
-            pipeline._latest_month_range(parameters),
-            (date(2026, 7, 15), date(2026, 8, 10)),
-        )
-        slices = pipeline._latest_month_force_slices(parameters)
-        self.assertIn(
-            ("purchase", "query", date(2026, 7, 15), date(2026, 7, 31)),
-            slices,
-        )
-        self.assertIn(
-            ("purchase", "query", date(2026, 8, 1), date(2026, 8, 10)),
-            slices,
-        )
-
-    def test_fresh_download_checkbox_delegates_to_full_production_force_refresh(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2023-01-01", "2026-08-31", force_refresh=True)
-        # Production CoveragePlanner sees force_refresh=True and refreshes every
-        # selected slice. The desktop recent-month hook must not narrow it.
-        self.assertIsNone(pipeline._latest_month_range(parameters))
-        self.assertEqual(pipeline._latest_month_force_slices(parameters), frozenset())
-
-    def test_january_policy_refreshes_previous_december_and_current_january(self):
-        pipeline = self.pipeline(datetime(2027, 1, 10, 12, 0, tzinfo=BUSINESS_TIMEZONE))
-        parameters = self.parameters("2026-12-01", "2027-01-31")
-        self.assertEqual(
-            pipeline._latest_month_range(parameters),
-            (date(2026, 12, 1), date(2027, 1, 31)),
-        )
+    def test_force_refresh_is_not_rewritten_by_desktop_policy(self):
+        backend = object.__new__(ProductionBackend)
+        backend.service = Mock(return_value=None)
+        backend.service.create_job.return_value = SimpleNamespace(job_id="job-source")
+        with patch.object(
+            ProductionBackend,
+            "public_job",
+            return_value={"job_id": "job-source", "status": "queued"},
+        ):
+            backend.start({
+                "idempotency_key": "source-force-refresh-test",
+                "intent": {
+                    "connection_id": "conn_123456",
+                    "date_from": "2023-01-01",
+                    "date_to": "2026-08-31",
+                    "directions": ["purchase"],
+                    "query_types": ["query"],
+                    "scopes": ["overview"],
+                    "data_types": ["invoice"],
+                    "force_refresh": True,
+                    "refresh_latest_month": False,
+                },
+            })
+        body = backend.service.create_job.call_args.args[0]
+        self.assertTrue(body.force_refresh)
+        self.assertFalse(body.refresh_latest_month)
 
 
 class ResultViewTests(unittest.TestCase):
@@ -95,21 +78,25 @@ class ResultViewTests(unittest.TestCase):
         backend.data_root = Path("source-data")
         job = SimpleNamespace(
             job_id="job-latest",
+            owner_id="mia-desktop-local",
+            account_key="conn_account_1",
             created_at="2026-08-20T10:00:00+00:00",
             updated_at="2026-08-20T10:00:00+00:00",
             company_tax_code="0100000000",
             parameters={
-                "connection_id": "account-1",
+                "connection_id": "conn_account_1",
                 "date_from": "2026-01-01",
                 "date_to": "2026-01-31",
                 "directions": ["purchase"],
                 "query_types": ["query"],
             },
         )
-        backend.repository = SimpleNamespace(list_jobs_for_reconciliation=lambda: [job])
+        backend.repository = SimpleNamespace(
+            list_jobs_for_reconciliation=lambda: [job]
+        )
         return backend, job
 
-    def test_result_range_overrides_latest_job_range_and_reads_all_invoice_types(self):
+    def test_result_range_overrides_latest_job_range_using_source_result_reader(self):
         backend, _ = self.backend_with_job()
         reader = Mock()
         reader.overview_page.return_value = {
@@ -125,16 +112,15 @@ class ResultViewTests(unittest.TestCase):
         }
 
         def replace_job(job, *, parameters):
-            return SimpleNamespace(**{
-                **vars(job),
-                "parameters": parameters,
-            })
+            return SimpleNamespace(**{**vars(job), "parameters": parameters})
 
-        with patch("mia_backend.JobResultReader", return_value=reader), patch(
-            "mia_backend.replace", side_effect=replace_job,
+        with patch(
+            "mia_source_backend.JobResultReader", return_value=reader
+        ), patch(
+            "mia_source_backend.replace", side_effect=replace_job
         ):
             result = backend.results("overview", {
-                "connection_id": "account-1",
+                "connection_id": "conn_account_1",
                 "date_from": "2026-02-01",
                 "date_to": "2026-02-28",
                 "direction": None,
@@ -148,9 +134,8 @@ class ResultViewTests(unittest.TestCase):
         self.assertEqual(read_job.parameters["query_types"], ["query", "sco-query"])
         self.assertEqual(result["items"][0]["direction"], "sold")
 
-    def test_result_dispatch_initializes_production_backend_after_restart(self):
+    def test_result_dispatch_initializes_source_backend_after_restart(self):
         previous = (
-            mia_runtime.storage,
             mia_runtime.data_directory,
             mia_runtime.logger,
             mia_runtime.production_backend,
@@ -160,36 +145,25 @@ class ResultViewTests(unittest.TestCase):
             "items": [{"overview_id": 1}],
             "pagination": {"limit": 50, "has_more": False, "next_cursor": None},
         }
-        backend.repository.recover_expired_leases.return_value = SimpleNamespace(
-            recovered_jobs=0,
-            recovered_tasks=0,
-            failed_tasks=0,
-            cancelled_jobs=0,
-            promoted_jobs=0,
-        )
         try:
             with tempfile.TemporaryDirectory() as directory, patch(
-                "mia_runtime.ProductionBackend", return_value=backend,
+                "mia_runtime.ProductionBackend", return_value=backend
             ) as constructor:
-                mia_runtime.storage = object()
                 mia_runtime.data_directory = Path(directory)
                 mia_runtime.logger = None
                 mia_runtime.production_backend = None
                 query = {
-                    "connection_id": "account-1",
+                    "connection_id": "conn_account_1",
                     "date_from": "2026-02-01",
                     "date_to": "2026-02-28",
                 }
                 result, should_stop = mia_runtime.dispatch("results.overview", query)
                 self.assertFalse(should_stop)
                 self.assertEqual(result["items"][0]["overview_id"], 1)
-                constructor.assert_called_once_with(Path(directory), None, start_worker=False)
-                backend.repository.recover_expired_leases.assert_called_once_with()
-                backend.worker.start.assert_called_once_with()
+                constructor.assert_called_once_with(Path(directory), None)
                 backend.results.assert_called_once_with("overview", query)
         finally:
             (
-                mia_runtime.storage,
                 mia_runtime.data_directory,
                 mia_runtime.logger,
                 mia_runtime.production_backend,
@@ -198,13 +172,22 @@ class ResultViewTests(unittest.TestCase):
     def test_result_workbook_can_include_overview_and_detail_sheets(self):
         backend, _ = self.backend_with_job()
         backend._all_result_rows = Mock(side_effect=[
-            [{"direction": "purchase", "business_key": "A", "payload": {"shdon": "1"}}],
-            [{"direction": "purchase", "business_key": "A", "line_key": "1", "payload": {"thhdvu": "Dịch vụ"}}],
+            [{
+                "direction": "purchase",
+                "business_key": "A",
+                "payload": {"shdon": "1"},
+            }],
+            [{
+                "direction": "purchase",
+                "business_key": "A",
+                "line_key": "1",
+                "payload": {"thhdvu": "Dịch vụ"},
+            }],
         ])
         with tempfile.TemporaryDirectory() as directory:
             result = backend.export_results({
                 "destination": directory,
-                "connection_ids": ["account-1"],
+                "connection_ids": ["conn_account_1"],
                 "result_scopes": ["overview", "details"],
                 "date_from": "2026-02-01",
                 "date_to": "2026-02-28",
