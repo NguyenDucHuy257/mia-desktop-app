@@ -159,11 +159,28 @@ class ProductionBackend(SourceBackend):
             )
             job = normalized
         payload = SourceBackend.public_job(job)
+        state = dict(getattr(job, "progress_state", None) or {})
         # The source repository already persists stage_progress_percent from its
         # ProgressSnapshot. Expose that value unchanged so the renderer can give
         # detailed auth/finalize feedback without inventing progress.
         payload["stage_percent"] = float(getattr(job, "stage_progress_percent", 0.0) or 0.0)
+        # The optimized host records only the exact source unit currently being
+        # executed. Counters remain the source month/overall counters.
+        payload["current_direction"] = state.get("current_direction")
+        payload["current_query_type"] = state.get("current_query_type")
         return payload
+
+    def results(self, kind, query):
+        # Import lazily so health/storage startup does not pay the Excel/result
+        # dependency cost. All paging is delegated to source JobResultReader.
+        from mia_source_results import read_results
+        return read_results(self, kind, query)
+
+    def export_results(self, value):
+        # Excel is built only after the user clicks Download. Detail work uses
+        # the exact vendored source exporter/template against persisted data.
+        from mia_source_results import export_results
+        return export_results(self, value)
 
 
 __all__ = ["ProductionBackend", "SourceBackend"]
