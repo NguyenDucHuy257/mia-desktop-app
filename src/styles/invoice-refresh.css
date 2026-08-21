@@ -14,6 +14,17 @@
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+}
+
+.refresh-data-toggle:hover {
+  border-color: #86efac;
+  background: #f0fdf4;
+  box-shadow: 0 3px 10px rgb(22 101 52 / 10%);
+}
+
+.refresh-data-toggle:active {
+  transform: scale(.98);
 }
 
 .refresh-data-toggle input {
@@ -61,19 +72,38 @@
   grid-template-columns:
     40px
     112px
-    minmax(130px, 1fr)
+    minmax(100px, 180px)
     110px
-    minmax(150px, 220px)
+    minmax(160px, 1fr)
     minmax(190px, 220px);
 }
 
+.invoice-page .company-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .invoice-page .progress-cell {
-  width: min(100%, 220px);
+  width: min(100%, 260px);
   min-width: 0;
 }
 
 .invoice-page .progress-copy span:first-child {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-page .failure-message {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.invoice-page .failure-message strong,
+.invoice-page .failure-message span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -105,14 +135,29 @@
   letter-spacing: 0;
   cursor: pointer;
   white-space: nowrap;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 100ms ease;
 }
 
 .invoice-page .row-result-button {
   color: var(--mia-green-700);
 }
 
+.invoice-page .row-result-button:hover,
+.invoice-page .row-result-button:focus-visible {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
 .invoice-page .row-excel-button {
   color: #2563eb;
+}
+
+.invoice-page .row-excel-button:hover,
+.invoice-page .row-excel-button:focus-visible {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .invoice-page .row-action-group .row-delete-button {
@@ -123,13 +168,68 @@
   font-size: 17px;
 }
 
-.invoice-page .row-action-group button:hover,
-.invoice-page .row-action-group button:focus-visible {
-  background: #f8fafc;
-  outline: none;
+.invoice-page .row-action-group .row-delete-button:hover,
+.invoice-page .row-action-group .row-delete-button:focus-visible {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #dc2626;
+}
+
+.invoice-page .row-action-group button:active {
+  transform: scale(.94);
 }
 
 .invoice-page .row-action-placeholder {
   color: #94a3b8;
   font-size: 12px;
+}
+
+.invoice-page .sync-button,
+.invoice-page .compact-select,
+.invoice-page .add-account,
+.invoice-page .stop-button,
+.invoice-page .pagination button,
+.invoice-page .date-range-trigger {
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 110ms ease;
+}
+
+.invoice-page .sync-button {
+  box-shadow: 0 4px 10px rgb(22 101 52 / 18%);
+}
+
+.invoice-page .sync-button:hover {
+  background: #14532d;
+  box-shadow: 0 7px 18px rgb(22 101 52 / 28%);
+  transform: translateY(-1px);
+}
+
+.invoice-page .sync-button:active {
+  transform: translateY(0) scale(.97);
+  box-shadow: 0 2px 7px rgb(22 101 52 / 22%);
+}
+
+.invoice-page .compact-select:hover,
+.invoice-page .add-account:hover,
+.invoice-page .date-range-trigger:hover,
+.invoice-page .pagination button:not(:disabled):hover {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.invoice-page .compact-select:active,
+.invoice-page .add-account:active,
+.invoice-page .date-range-trigger:active,
+.invoice-page .pagination button:not(:disabled):active {
+  transform: scale(.98);
+}
+
+.invoice-page .stop-button:not(:disabled):hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  box-shadow: 0 4px 10px rgb(185 28 28 / 20%);
+}
+
+.invoice-page .stop-button:not(:disabled):active {
+  transform: scale(.97);
 }
