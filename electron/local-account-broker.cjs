@@ -1,44 +1,31 @@
-const { randomUUID } = require('node:crypto');
 const { runBrokerCommand, validateConnectionId, validateCredentials } = require('./account-connection-broker.cjs');
 
-function createLocalAccountBroker(getRuntime, protector, now = () => new Date().toISOString(), createId = randomUUID) {
-  if (typeof getRuntime !== 'function' || !protector?.encrypt) throw new TypeError('Invalid local account dependencies.');
-  const encodePassword = (password) => protector.encrypt(password).toString('base64');
+function createLocalAccountBroker(getRuntime) {
+  if (typeof getRuntime !== 'function') throw new TypeError('Invalid local account dependency.');
   return Object.freeze({
     create: (credentials) => runBrokerCommand(async () => {
       const valid = validateCredentials(credentials);
-      const runtime = getRuntime();
-      const verified = await runtime.invoke('crawler.verify_account', valid, { timeoutMs: 90000 });
-      let account = await runtime.invoke('accounts.create', {
-        account_id: createId(), tax_code: valid.username,
-        encrypted_password: encodePassword(valid.password), timestamp: now(),
-      });
-      if (account.reused) {
-        account = await runtime.invoke('accounts.update', {
-          account_id: account.connection_id, tax_code: valid.username,
-          encrypted_password: encodePassword(valid.password), timestamp: now(),
-        });
-      }
-      return runtime.invoke('accounts.update_company', {
-        account_id: account.connection_id, company_name: verified.company_name, timestamp: now(),
-      });
+      return getRuntime().invoke('source.accounts.create', valid, { timeoutMs: 90000 });
     }),
-    list: () => runBrokerCommand(() => getRuntime().invoke('accounts.list')),
-    get: (accountId) => runBrokerCommand(() => getRuntime().invoke('accounts.get', { account_id: validateConnectionId(accountId) })),
-    reconnect: (accountId, credentials) => runBrokerCommand(async () => {
+    list: () => runBrokerCommand(() => getRuntime().invoke('source.accounts.list')),
+    get: (connectionId) => runBrokerCommand(() => getRuntime().invoke(
+      'source.accounts.get',
+      { connection_id: validateConnectionId(connectionId) },
+    )),
+    reconnect: (connectionId, credentials) => runBrokerCommand(async () => {
       const valid = validateCredentials(credentials);
-      const runtime = getRuntime();
-      const verified = await runtime.invoke('crawler.verify_account', valid, { timeoutMs: 90000 });
-      const account = await runtime.invoke('accounts.update', {
-        account_id: validateConnectionId(accountId), tax_code: valid.username,
-        encrypted_password: encodePassword(valid.password), timestamp: now(),
-      });
-      return runtime.invoke('accounts.update_company', {
-        account_id: account.connection_id, company_name: verified.company_name, timestamp: now(),
-      });
+      return getRuntime().invoke(
+        'source.accounts.reconnect',
+        { connection_id: validateConnectionId(connectionId), ...valid },
+        { timeoutMs: 90000 },
+      );
     }),
-    revoke: (accountId) => runBrokerCommand(async () => {
-      await getRuntime().invoke('accounts.purge', { account_id: validateConnectionId(accountId) }, { timeoutMs: 30000 });
+    revoke: (connectionId) => runBrokerCommand(async () => {
+      await getRuntime().invoke(
+        'source.accounts.purge',
+        { connection_id: validateConnectionId(connectionId) },
+        { timeoutMs: 120000 },
+      );
       return null;
     }),
   });
