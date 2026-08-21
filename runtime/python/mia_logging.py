@@ -6,6 +6,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
+LOGGER_NAMES = (
+    "mia_runtime",
+    "mia_crawler",
+    "app",
+    "mia.worker_runtime",
+)
+
 PATTERNS = (
     re.compile(
         r"(?i)(password|token|secret|authorization|cookie|session|credential|api[_-]?key)"
@@ -46,9 +53,23 @@ def _file_handler(filename: Path) -> RotatingFileHandler:
     return handler
 
 
+def close_logging() -> None:
+    """Detach and close every file handler owned by the desktop runtime loggers."""
+    handlers: dict[int, logging.Handler] = {}
+    for name in LOGGER_NAMES:
+        logger = logging.getLogger(name)
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handlers[id(handler)] = handler
+    for handler in handlers.values():
+        try:
+            handler.flush()
+        finally:
+            handler.close()
+
+
 def _reset_logger(name: str, level: int, handler: logging.Handler) -> logging.Logger:
     logger = logging.getLogger(name)
-    logger.handlers.clear()
     logger.setLevel(level)
     logger.addHandler(handler)
     logger.propagate = False
@@ -58,6 +79,11 @@ def _reset_logger(name: str, level: int, handler: logging.Handler) -> logging.Lo
 def configure_logging(log_directory: Path, level: str = "INFO") -> logging.Logger:
     log_directory.mkdir(parents=True, exist_ok=True)
     resolved_level = getattr(logging, level.upper(), logging.INFO)
+
+    # Reconfiguration can happen in tests and during runtime recovery. Always
+    # close previous RotatingFileHandler streams before replacing them so
+    # Windows does not retain locked log files or emit ResourceWarning entries.
+    close_logging()
 
     runtime_handler = _file_handler(log_directory / "runtime.log")
     runtime = _reset_logger("mia_runtime", resolved_level, runtime_handler)
