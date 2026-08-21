@@ -90,6 +90,12 @@ for (const relative of Object.keys(transport.transport_overrides ?? {})) {
   delete legacyActual[relative];
   delete legacyExpected[relative];
 }
+// These files are intentionally absent from the local desktop vendor. They are
+// present in the upstream full-source manifest but belong to the HTTP server
+// host, not to the in-process crawler/runtime dependency closure.
+for (const relative of forbiddenServerFiles) {
+  delete legacyExpected[relative];
+}
 
 if (JSON.stringify(legacyActual) !== JSON.stringify(legacyExpected)) {
   throw new Error('Vendored crawler hash manifest does not match the packaged files.');
