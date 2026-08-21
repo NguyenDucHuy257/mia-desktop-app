@@ -51,6 +51,9 @@ export interface JobStatusResponse {
   overall_percent: number;
   /** Source stage_progress_percent. Renderer may format it but never derives it. */
   stage_percent?: number;
+  /** Exact source unit currently executing; counters remain source-owned. */
+  current_direction?: InvoiceDirection | null;
+  current_query_type?: InvoiceQueryType | null;
   /** Raw source progress_state.message token used as presentation input. */
   message?: string | null;
   event_sequence?: number;
