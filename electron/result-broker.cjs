@@ -3,18 +3,19 @@
 const { runBrokerCommand, validateConnectionId } = require('./account-connection-broker.cjs');
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RESULT_PAGE_SIZE = 50;
 
 function validateQuery(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_result_query');
   const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'date_from', 'date_to']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_result_query');
-  const limit = value.limit ?? 50;
+  const limit = value.limit ?? MAX_RESULT_PAGE_SIZE;
   const cursor = value.cursor ?? null;
   const search = value.search ?? '';
   const direction = value.direction ?? null;
   const dateFrom = value.date_from ?? null;
   const dateTo = value.date_to ?? null;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new TypeError('invalid_result_query');
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RESULT_PAGE_SIZE) throw new TypeError('invalid_result_query');
   if (cursor !== null && (typeof cursor !== 'string' || cursor.length > 64)) throw new TypeError('invalid_result_query');
   if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_query');
   if (direction !== null && !['purchase', 'sold'].includes(direction)) throw new TypeError('invalid_result_query');
@@ -34,4 +35,4 @@ function createResultBroker(getRuntime) {
   });
 }
 
-module.exports = { createResultBroker, validateQuery };
+module.exports = { MAX_RESULT_PAGE_SIZE, createResultBroker, validateQuery };
