@@ -22,6 +22,7 @@ interface InvoiceRow {
   selected: boolean;
   progress: number;
   progressLabel: string;
+  monthProgress?: number;
   failureHint?: string;
   actionsReady?: boolean;
 }
@@ -31,7 +32,7 @@ const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
   { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT', failureHint: 'Vui lòng kiểm tra lại MST hoặc mật khẩu.' },
-  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Tháng 08/2026: 45/120 HĐ' },
+  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Chi tiết 08/2026 · 45/120 hóa đơn', monthProgress: 37.5 },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
     company: `Công ty CP Đầu tư ${letter}`,
@@ -58,6 +59,10 @@ function jobFailureHint(code?: string) {
   return 'Hãy thử lại hoặc xem Nhật ký để biết thêm chi tiết.';
 }
 
+function clampProgress(value: number) {
+  return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+}
+
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
   return <span className="selection-box" data-checked={checked || indeterminate}>{indeterminate ? '−' : checked ? '✓' : ''}</span>;
 }
@@ -71,10 +76,24 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
       </div>
     );
   }
+
+  const hasMonthProgress = row.monthProgress !== undefined;
+  const overallProgress = clampProgress(row.progress);
+  const monthProgress = clampProgress(row.monthProgress ?? 0);
+
   return (
-    <div className="progress-cell" data-status={row.status}>
-      <div className="progress-copy"><span>{row.progressLabel}</span><span>{Math.round(row.progress)}%</span></div>
-      <div className="progress-track"><span style={{ width: `${Math.max(0, Math.min(100, row.progress))}%` }} /></div>
+    <div className="progress-cell" data-status={row.status} data-has-month={hasMonthProgress}>
+      <div className="progress-section progress-section--overall">
+        <div className="progress-copy">
+          <span>{hasMonthProgress ? 'Tiến trình tổng' : row.progressLabel}</span>
+          <span>{Math.round(overallProgress)}%</span>
+        </div>
+        <div className="progress-track progress-track--overall"><span style={{ width: `${overallProgress}%` }} /></div>
+      </div>
+      {hasMonthProgress ? <div className="month-progress">
+        <div className="month-progress-copy">{row.progressLabel}</div>
+        <div className="month-progress-track"><span style={{ width: `${monthProgress}%` }} /></div>
+      </div> : null}
     </div>
   );
 }
@@ -213,6 +232,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const item = batchItems[account.connection_id];
     const job = item?.status ?? item?.record;
     const runtimeStatus = job?.status;
+    const currentMonth = job?.current_month;
     const errorCode = job?.error?.code ?? item?.errorCode;
     const sourceError = job?.error?.message;
     const inlineError = item?.error;
@@ -252,6 +272,9 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
               : status === 'ready'
                 ? 'Chưa đồng bộ'
                 : formatSourceJobProgress(job);
+    const monthProgress = !phase && runtimeStatus === 'running' && currentMonth
+      ? Number(currentMonth.percent ?? 0)
+      : undefined;
     return {
       taxCode: account.username,
       company: account.company_name || '—',
@@ -259,6 +282,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       selected: selectedAccountIds.includes(account.connection_id),
       progress,
       progressLabel,
+      monthProgress,
       failureHint: status === 'failed' ? jobFailureHint(errorCode) : undefined,
       actionsReady: runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning',
     };
