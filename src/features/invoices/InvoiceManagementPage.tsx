@@ -102,7 +102,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
   onSelectAccounts(ids: string[]): void;
-  onViewResults(id: string): void;
+  onViewResults(id: string, dateFrom: string, dateTo: string): void;
 }) {
   const initialRange = useRef(readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
@@ -311,7 +311,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
                 <ProgressCell row={row} />
                 {account ? <span className="row-action-group">
                   {row.actionsReady ? <>
-                    <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id }); onViewResults(account.connection_id); }}>Xem kết quả</button>
+                    <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button>
                     <button className="row-excel-button" type="button" onClick={() => void exportAccounts([account.connection_id])}>Tải Excel</button>
                   </> : <span className="row-action-placeholder">—</span>}
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
