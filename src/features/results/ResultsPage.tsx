@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
-import downloadIcon from '../../assets/figma/artifact-download.svg';
 import previousIcon from '../../assets/figma/artifact-previous.svg';
 import nextIcon from '../../assets/figma/artifact-next.svg';
 import backIcon from '../../assets/figma/back.png';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { DetailResult, LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
+import type { InvoiceQueryType } from '../../lib/api/contracts';
 import '../../styles/results-enhancements.css';
+import '../../styles/results-luxury.css';
 
 type ResultMode = 'overview' | 'details';
 type ResultItem = OverviewResult | DetailResult;
@@ -15,24 +16,6 @@ type PageToken = number | 'ellipsis';
 
 const DEFAULT_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const PAGE_SIZE = 50;
-
-const COLUMN_LABELS: Record<string, string> = {
-  id: 'ID',
-  company_tax_code: 'MST doanh nghiệp',
-  direction: 'Loại',
-  query_type: 'Loại truy vấn',
-  invoice_category: 'Nhóm hóa đơn',
-  nbmst: 'MST người bán',
-  khhdon: 'Ký hiệu HĐ',
-  shdon: 'Số hóa đơn',
-  khmshdon: 'Mẫu số',
-  nlap: 'Ngày lập',
-  nlap_date: 'Ngày lập chuẩn',
-  detail_fetched: 'Đã có chi tiết',
-  stt: 'STT',
-  created_at: 'Tạo lúc',
-  updated_at: 'Cập nhật lúc',
-};
 
 export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, onBack }: {
   connectionId: string;
@@ -48,12 +31,14 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   ).current;
   const [mode, setMode] = useState<ResultMode>('overview');
   const [direction, setDirection] = useState<'purchase' | 'sold' | ''>('');
+  const [queryType, setQueryType] = useState<InvoiceQueryType>('query');
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState<ResultItem[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
+  const [columnLabels, setColumnLabels] = useState<Record<string, string>>({});
   const [pagination, setPagination] = useState<LocalResultPage<ResultItem>['pagination'] | null>(null);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
@@ -76,6 +61,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       limit: PAGE_SIZE,
       search: debouncedSearch,
       direction: direction || null,
+      query_type: queryType,
       date_from: dateFrom,
       date_to: dateTo,
     };
@@ -86,6 +72,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       date_from: dateFrom,
       date_to: dateTo,
       direction: direction || null,
+      query_type: queryType,
       has_search: Boolean(debouncedSearch),
       cursor: Boolean(cursor),
     });
@@ -93,16 +80,18 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     diagnosticLog('results_response', {
       connection_id: connectionId,
       mode,
+      query_type: queryType,
       row_count: result.items.length,
       has_more: result.pagination.has_more,
       duration_ms: Math.round(performance.now() - started),
     });
     return result;
-  }, [connectionId, dateFrom, dateTo, debouncedSearch, direction, mode]);
+  }, [connectionId, dateFrom, dateTo, debouncedSearch, direction, mode, queryType]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
     setItems(result.items);
     setColumns(result.columns ?? collectColumns(result.items));
+    setColumnLabels(result.column_labels ?? {});
     setPagination(result.pagination);
     setTotalCount(typeof result.total_count === 'number' ? result.total_count : null);
     setPageNumber(targetPage);
@@ -123,9 +112,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           pageCache.current.set(current, result);
         }
         const nextCursor = result.pagination.next_cursor;
-        if (result.pagination.has_more && nextCursor) {
-          cursorByPage.current.set(current + 1, nextCursor);
-        }
+        if (result.pagination.has_more && nextCursor) cursorByPage.current.set(current + 1, nextCursor);
         if (current === targetPage) {
           applyPage(result, current);
           return;
@@ -141,11 +128,12 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         mode,
         date_from: dateFrom,
         date_to: dateTo,
+        query_type: queryType,
         code: (error as { code?: string })?.code,
       }, 'error');
       if (token === generation.current) setState('error');
     }
-  }, [applyPage, connectionId, dateFrom, dateTo, mode, requestPage]);
+  }, [applyPage, connectionId, dateFrom, dateTo, mode, queryType, requestPage]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 250);
@@ -160,6 +148,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     cursorByPage.current.set(1, null);
     setItems([]);
     setColumns([]);
+    setColumnLabels({});
     setPagination(null);
     setTotalCount(null);
     setPageNumber(1);
@@ -184,6 +173,13 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     setExportScopes((current) => current.includes(scope)
       ? current.filter((item) => item !== scope)
       : [...current, scope]);
+  }
+
+  function changeQueryType(value: InvoiceQueryType) {
+    setQueryType(value);
+    // Source has direction-specific cash-register templates. Keep the table on
+    // one exact template instead of inventing a union schema.
+    if (value === 'sco-query' && direction === '') setDirection('purchase');
   }
 
   async function exportResults() {
@@ -238,8 +234,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     [displayedPageCount, pageNumber],
   );
   const gridTemplateColumns = useMemo(
-    () => columns.map(columnWidth).join(' '),
-    [columns],
+    () => columns.map((column) => columnWidth(column, columnLabels[column])).join(' '),
+    [columnLabels, columns],
   );
 
   return <section className="results-page results-page--figma" aria-label="Kết quả hóa đơn">
@@ -247,11 +243,14 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     <header className="results-header results-header--figma">
       <div>
         <h1>Kết quả hóa đơn</h1>
-        <p>Dữ liệu được đọc trực tiếp từ SQLite của crawler nguồn; không hiển thị cột raw/path.</p>
+        <p>Cột và tiêu đề được đọc trực tiếp từ mẫu Excel gốc của crawler nguồn.</p>
       </div>
       <div className="results-export" ref={exportRoot}>
-        <button className="results-export-trigger" type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}><img src={downloadIcon} alt="" /> Tải xuống kết quả</button>
-        {exportOpen ? <div className="results-export-popover" role="dialog" aria-label="Chọn nội dung tải xuống">
+        <button className="results-export-trigger results-export-trigger--gold" type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}>
+          <svg className="results-export-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
+          <span>Tải xuống kết quả</span>
+        </button>
+        {exportOpen ? <div className="results-export-popover results-export-popover--gold" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
           <label><input type="checkbox" checked={exportScopes.includes('overview')} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
           <label><input type="checkbox" checked={exportScopes.includes('details')} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
@@ -268,8 +267,12 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
     <div className="results-filters results-filters--figma">
       <DateRangePicker className="results-date-range" dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
+      <select aria-label="Loại hóa đơn" value={queryType} onChange={(event) => changeQueryType(event.target.value as InvoiceQueryType)}>
+        <option value="query">Hóa đơn điện tử</option>
+        <option value="sco-query">Máy tính tiền</option>
+      </select>
       <select aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}>
-        <option value="">Mua vào và bán ra</option>
+        <option value="" disabled={queryType === 'sco-query'}>Mua vào và bán ra</option>
         <option value="purchase">Mua vào</option>
         <option value="sold">Bán ra</option>
       </select>
@@ -283,13 +286,19 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
     {state === 'loading' && items.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
     {state === 'ready' && items.length === 0 ? <div className="results-state results-empty">Không tồn tại hóa đơn trong thời gian này.</div> : null}
-    {items.length && columns.length ? <div className="results-table results-table--figma">
+    {items.length && columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
-        {columns.map((column) => <span key={column} title={column}>{columnLabel(column)}</span>)}
-      </div>
-      {items.map((item) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>
         {columns.map((column) => {
-          const display = formatCell(column, item.fields[column]);
+          const label = columnLabels[column] || column;
+          return <span key={column} title={label}>{label}</span>;
+        })}
+      </div>
+      {items.map((item, rowIndex) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>
+        {columns.map((column) => {
+          const rawValue = column === 'stt' && (item.fields[column] === null || item.fields[column] === undefined)
+            ? (pageNumber - 1) * PAGE_SIZE + rowIndex + 1
+            : item.fields[column];
+          const display = formatCell(rawValue);
           return <span key={column} title={display}>{display}</span>;
         })}
       </div>)}
@@ -327,40 +336,31 @@ function resultKey(item: ResultItem) {
   return `${item.direction}-${item.row_id}`;
 }
 
-function columnLabel(column: string) {
-  return COLUMN_LABELS[column] ?? column;
+function columnWidth(column: string, label = '') {
+  if (column === 'stt') return '66px';
+  if (['khmshdon', 'khhdon', 'shdon', 'dvtte', 'tgia', 'tthai'].includes(column)) return '150px';
+  if (['tdlap', 'ntao', 'nky'].includes(column)) return '170px';
+  if (column.includes('mst') || column === 'nmcmnd' || column === 'mhdon') return '180px';
+  if (['nbten', 'nmten', 'ten', 'nbdchi', 'nmdchi', 'url'].includes(column)) return '260px';
+  if (['tgtcthue', 'tgtthue', 'ttcktmai', 'tgtphi', 'tgtttbso', 'dgia', 'thtien', 'tthue'].includes(column)) return '180px';
+  return `${Math.max(150, Math.min(260, label.length * 8 + 36))}px`;
 }
 
-function columnWidth(column: string) {
-  if (column === 'id' || column === 'stt') return '72px';
-  if (column === 'direction') return '96px';
-  if (column === 'query_type' || column === 'invoice_category') return '122px';
-  if (column === 'detail_fetched') return '110px';
-  if (column === 'shdon' || column === 'khmshdon') return '126px';
-  if (column === 'khhdon' || column === 'nlap_date') return '148px';
-  if (column.includes('mst')) return '154px';
-  if (column === 'created_at' || column === 'updated_at' || column === 'nlap') return '190px';
-  return 'minmax(150px, 220px)';
-}
-
-function formatCell(column: string, value: unknown) {
-  if (column === 'direction') {
-    if (value === 'purchase') return 'Mua vào';
-    if (value === 'sold') return 'Bán ra';
-  }
-  if (column === 'query_type') {
-    if (value === 'query') return 'HĐĐT';
-    if (value === 'sco-query') return 'Máy tính tiền';
-  }
-  if (column === 'detail_fetched') return value ? 'Có' : 'Chưa';
+function formatCell(value: unknown) {
   if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Có' : 'Không';
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
 function paginationTokens(totalPages: number, currentPage: number): PageToken[] {
-  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
-  if (currentPage <= 4) return [1, 2, 3, 4, 5, 'ellipsis', totalPages];
-  if (currentPage >= totalPages - 3) return [1, 'ellipsis', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
-  return [1, 'ellipsis', currentPage - 1, currentPage, currentPage + 1, 'ellipsis', totalPages];
+  if (totalPages <= 5) return Array.from({ length: totalPages }, (_, index) => index + 1);
+  const candidates = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  const pages = [...candidates].filter((value) => value >= 1 && value <= totalPages).sort((a, b) => a - b);
+  const tokens: PageToken[] = [];
+  pages.forEach((value, index) => {
+    if (index > 0 && value - pages[index - 1] > 1) tokens.push('ellipsis');
+    tokens.push(value);
+  });
+  return tokens;
 }
