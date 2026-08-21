@@ -55,8 +55,6 @@ function validateJobId(value) {
 }
 
 function idempotencyKey(intent) {
-  // v3 adds the explicit force-refresh policy and the desktop recent-month
-  // refresh mapping. Keep old durable jobs from colliding with the new policy.
   return `desktop-v3-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
@@ -81,9 +79,8 @@ function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString
       const records = await getRuntime().invoke('source.jobs.resume_all');
       return records[0] ?? null;
     }),
-    resumeAll: () => runBrokerCommand(async () => {
-      return getRuntime().invoke('source.jobs.resume_all');
-    }),
+    resumeAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.resume_all')),
+    latestAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.latest')),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
       const baseKey = idempotencyKey(intent);
