@@ -29,7 +29,7 @@ describe('OfflineRuntimeManager', () => {
     const first = runtime.start();
     const second = runtime.start();
     expect(first).toBe(second);
-    await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.4.1' });
+    await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.5.0' });
     await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 4, integrity: 'ok' });
   }, PROCESS_TEST_TIMEOUT_MS);
 
@@ -41,7 +41,7 @@ describe('OfflineRuntimeManager', () => {
     await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 4, integrity: 'ok' });
   }, PROCESS_TEST_TIMEOUT_MS);
 
-  it('resumes the same idempotent job after a runtime crash', async () => {
+  it('resumes the same idempotent legacy job after a runtime crash', async () => {
     const runtime = await manager();
     await runtime.start();
     await runtime.invoke('accounts.create', {
