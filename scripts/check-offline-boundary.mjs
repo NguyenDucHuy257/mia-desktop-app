@@ -63,6 +63,20 @@ for (const relative of [
   }
 }
 
+// The production runtime may keep legacy DB compatibility helpers, but it must
+// never expose or construct the pre-refactor desktop crawler/thread system.
+const runtimeSource = await readFile(path.resolve('runtime/python/mia_runtime.py'), 'utf8');
+for (const marker of [
+  'CrawlerCoordinator',
+  '"crawler.start"',
+  '"crawler.health"',
+  '"crawler.verify_account"',
+]) {
+  if (runtimeSource.includes(marker)) {
+    failures.push(`runtime/python/mia_runtime.py: legacy crawler execution marker ${marker}`);
+  }
+}
+
 if (failures.length) {
   process.stderr.write(`${failures.join('\n')}\n`);
   process.exitCode = 1;
