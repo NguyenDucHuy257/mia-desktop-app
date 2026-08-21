@@ -12,7 +12,7 @@ import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
-type RowStatus = 'completed' | 'failed' | 'processing' | 'pending' | 'ready';
+type RowStatus = 'completed' | 'failed' | 'processing' | 'pending' | 'stopped' | 'ready';
 
 interface InvoiceRow {
   taxCode: string;
@@ -46,6 +46,7 @@ const statusLabels: Record<RowStatus, string> = {
   failed: 'ⓘ Lỗi',
   processing: 'ϟ Đang xử lý',
   pending: 'Chờ xử lý',
+  stopped: 'Đã dừng',
   ready: 'Sẵn sàng',
 };
 
@@ -115,7 +116,15 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
-  const { items: batchItems, startMany, cancelAll } = jobLifecycle;
+  const {
+    items: batchItems,
+    active: batchActive,
+    stopping: batchStopping,
+    startMany,
+    cancelAll,
+    message: batchMessage,
+    dismissMessage,
+  } = jobLifecycle;
   const figmaFixture = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('figma') === '1';
 
@@ -171,6 +180,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
   }
 
   function startJob() {
+    if (batchActive) return;
     if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
     if (directions.length === 0 || scopes.length === 0) {
       setSelectionError('Vui lòng chọn ít nhất một hướng và phạm vi dữ liệu trước khi đồng bộ.');
@@ -212,11 +222,6 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       : [...current, value]);
   }
 
-  const terminal = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
-  const activeJob = Object.values(batchItems).some((item) => {
-    const status = item.status?.status ?? item.record?.status;
-    return Boolean(item.record?.job_id && status && !terminal.has(status));
-  });
   const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => {
     const item = batchItems[account.connection_id];
     const job = item?.status ?? item?.record;
@@ -226,31 +231,49 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const sourceError = job?.error?.message;
     const sourceMessage = typeof job?.message === 'string' && job.message.trim() ? job.message.trim() : null;
     const inlineError = item?.error;
-    const status: RowStatus = inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
-      ? 'failed'
-      : runtimeStatus === 'running' || runtimeStatus === 'waiting_account' || runtimeStatus === 'cancelling'
-        ? 'processing'
-        : runtimeStatus === 'queued'
-          ? 'pending'
-          : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
-            ? 'completed'
-            : 'ready';
+    const phase = item?.phase;
+    const status: RowStatus = phase === 'stopped'
+      ? 'stopped'
+      : inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
+        ? 'failed'
+        : phase === 'starting' || phase === 'stopping'
+          ? 'processing'
+          : phase === 'queued'
+            ? 'pending'
+            : runtimeStatus === 'running' || runtimeStatus === 'waiting_account' || runtimeStatus === 'cancelling'
+              ? 'processing'
+              : runtimeStatus === 'queued'
+                ? 'pending'
+                : runtimeStatus === 'cancelled'
+                  ? 'stopped'
+                  : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
+                    ? 'completed'
+                    : 'ready';
 
-    // Source job progress is authoritative. The renderer only clamps for CSS.
+    // Source job progress is authoritative. Local batch phase only describes
+    // work that has not started yet or a user-requested stop.
     const progress = Number(job?.overall_percent ?? 0);
-    const progressLabel = status === 'failed'
-      ? inlineError ?? sourceError ?? errorCode ?? 'Job xử lý thất bại.'
-      : sourceMessage
-        ? sourceMessage
-        : status === 'completed'
-          ? 'Đã tải xong'
-          : status === 'pending'
-            ? 'Chờ trong hàng đợi…'
-            : status === 'ready'
-              ? 'Chưa đồng bộ'
-              : currentMonth
-                ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned ?? '…'} HĐ`
-                : stageLabel(job?.stage);
+    const progressLabel = phase === 'stopped' || runtimeStatus === 'cancelled'
+      ? 'Đã dừng'
+      : phase === 'stopping'
+        ? 'Đang dừng…'
+        : phase === 'starting'
+          ? 'Đang tạo tác vụ đồng bộ…'
+          : phase === 'queued'
+            ? 'Chờ đến lượt xử lý…'
+            : status === 'failed'
+              ? inlineError ?? sourceError ?? errorCode ?? 'Job xử lý thất bại.'
+              : sourceMessage
+                ? sourceMessage
+                : status === 'completed'
+                  ? 'Đã tải xong'
+                  : status === 'pending'
+                    ? 'Chờ trong hàng đợi…'
+                    : status === 'ready'
+                      ? 'Chưa đồng bộ'
+                      : currentMonth
+                        ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned ?? '…'} HĐ`
+                        : stageLabel(job?.stage);
     return {
       taxCode: account.username,
       company: account.company_name || '—',
@@ -294,7 +317,9 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
             <span className="refresh-data-box" data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>
             <span>Tải mới dữ liệu</span>
           </label>
-          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu</button>
+          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" disabled={batchActive} aria-busy={batchActive} onClick={startJob}>
+            <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
+          </button>
         </div>
       </section>
       <section className="invoice-content">
@@ -305,9 +330,9 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
               <img src={searchIcon} alt="" />
               <input aria-label="Tìm kiếm tài khoản" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
             </label>
-            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="ready">Sẵn sàng</option></select>
+            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="stopped">Đã dừng</option><option value="ready">Sẵn sàng</option></select>
           </div>
-          <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> Dừng tải</button>
+          <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
@@ -339,7 +364,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>‹</button>{[1, 2, 3].map((value) => <button type="button" key={value} data-active={page === value} onClick={() => setPage(value)}>{value}</button>)}<span>...</span><button type="button" onClick={() => setPage(3)}>3</button><button type="button" aria-label="Trang sau" disabled={page === 3} onClick={() => setPage((value) => Math.min(3, value + 1))}>›</button></div>
         </footer>
       </section>
-      {selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
+      {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
     </div>
   );
 }
