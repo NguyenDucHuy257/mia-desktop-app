@@ -1,5 +1,15 @@
 import type { JobStatusResponse } from '../../lib/api/contracts';
 
+export interface JobProgressView {
+  status?: string | null;
+  stage?: string | null;
+  overall_percent?: number | null;
+  stage_percent?: number | null;
+  message?: string | null;
+  current_month?: JobStatusResponse['current_month'];
+  error?: JobStatusResponse['error'];
+}
+
 const AUTH_MESSAGES: Record<string, string> = {
   session_loaded: 'Đang kiểm tra phiên đăng nhập đã lưu',
   auth_claim_started: 'Đang chuẩn bị phiên đăng nhập',
@@ -56,7 +66,7 @@ function withStagePercent(label: string, stagePercent?: number | null) {
   return percent ? `${label} · ${percent} giai đoạn` : label;
 }
 
-function monthProgress(job: JobStatusResponse) {
+function monthProgress(job: JobProgressView) {
   const month = job.current_month;
   const stage = job.stage ?? '';
   if (!month || !MONTH_STAGE_LABELS[stage]) return null;
@@ -84,7 +94,7 @@ function monthProgress(job: JobStatusResponse) {
  * raw milestone tokens all come from mia-crawl-service; this module is only a
  * Vietnamese presentation dictionary for the desktop UI.
  */
-export function formatSourceJobProgress(job?: JobStatusResponse | null) {
+export function formatSourceJobProgress(job?: JobProgressView | null) {
   if (!job) return 'Chưa đồng bộ';
 
   if (job.status === 'queued') return 'Đang chờ bộ xử lý bắt đầu';
