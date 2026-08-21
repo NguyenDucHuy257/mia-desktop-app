@@ -38,12 +38,13 @@ for (const file of await files(root)) {
   }
 }
 
-// MIA Desktop is a local process, not an HTTP API host. Keep server-framework
-// dependencies out of the packaged Python environment.
+// MIA Desktop is a local process, not an HTTP API host. Keep HTTP server/client
+// frameworks and the source HTTP DTO validation dependency out of the packaged
+// environment. The local transport uses small dataclass DTOs instead.
 const requirements = await readFile(path.resolve('runtime/requirements-crawler.txt'), 'utf8');
-for (const packageName of ['fastapi', 'uvicorn', 'httpx']) {
+for (const packageName of ['fastapi', 'uvicorn', 'httpx', 'pydantic']) {
   if (new RegExp(`^${packageName}(?:[=<>~!]|$)`, 'im').test(requirements)) {
-    failures.push(`runtime/requirements-crawler.txt: server-only dependency ${packageName}`);
+    failures.push(`runtime/requirements-crawler.txt: HTTP/API-only dependency ${packageName}`);
   }
 }
 
