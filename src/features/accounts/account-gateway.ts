@@ -102,8 +102,8 @@ export class InMemoryAccountConnectionGateway implements AccountConnectionGatewa
 class UnavailableAccountConnectionGateway implements AccountConnectionGateway {
   private reject(): never {
     throw new AccountGatewayError(
-      'api_not_configured',
-      'API desktop chưa được cấu hình. Hãy dùng xác thực thiết bị hoặc cấu hình staging trong Electron main process.',
+      'runtime_unavailable',
+      'Bộ xử lý dữ liệu cục bộ chưa sẵn sàng.',
     );
   }
 
@@ -130,16 +130,17 @@ export function createAccountConnectionGateway(): AccountConnectionGateway {
 export async function createAccountConnectionsInBatches(
   gateway: AccountConnectionGateway,
   credentials: AccountCredentials[],
-  batchSize = 3,
+  _batchSize = 1,
 ) {
-  if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 10) {
-    throw new RangeError('batchSize must be an integer between 1 and 10');
-  }
-
+  // One local runtime verifies/creates one account at a time. Keep the settled
+  // result shape used by the bulk-add UI without creating parallel portal logins.
   const results: PromiseSettledResult<AccountConnection>[] = [];
-  for (let index = 0; index < credentials.length; index += batchSize) {
-    const batch = credentials.slice(index, index + batchSize);
-    results.push(...await Promise.allSettled(batch.map((item) => gateway.create(item))));
+  for (const item of credentials) {
+    try {
+      results.push({ status: 'fulfilled', value: await gateway.create(item) });
+    } catch (reason) {
+      results.push({ status: 'rejected', reason });
+    }
   }
   return results;
 }
@@ -152,7 +153,7 @@ export function accountErrorMessage(error: unknown) {
       : 'unknown_error';
 
   const messages: Record<string, string> = {
-    api_not_configured: 'Ứng dụng chưa được kết nối với API. Bản production cần hoàn tất xác thực thiết bị.',
+    runtime_unavailable: 'Bộ xử lý dữ liệu cục bộ chưa sẵn sàng. Vui lòng mở lại ứng dụng.',
     invalid_credentials: 'Mã số thuế hoặc mật khẩu không hợp lệ.',
     authentication_failed: 'Không thể đăng nhập Cổng HĐĐT. Vui lòng kiểm tra lại thông tin.',
     invalid_source_credentials: 'Tên đăng nhập hoặc mật khẩu không đúng.',
@@ -162,10 +163,6 @@ export function accountErrorMessage(error: unknown) {
     source_rate_limited: 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.',
     connection_not_found: 'Không tìm thấy kết nối tài khoản.',
     resource_not_found: 'Không tìm thấy kết nối tài khoản.',
-    account_busy: 'Tài khoản đang được xử lý bởi một tác vụ khác.',
-    capacity_exhausted: 'Hàng đợi xử lý đang đầy. Vui lòng thử lại sau.',
-    network_error: 'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
-    api_timeout: 'Máy chủ phản hồi quá chậm. Vui lòng thử lại.',
   };
 
   if (code.startsWith('source_http_')) {
