@@ -69,6 +69,7 @@ export interface ArtifactExportRequest {
   date_from?: string;
   date_to?: string;
   direction?: InvoiceDirection | null;
+  query_type?: InvoiceQueryType | null;
   search?: string;
 }
 export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: InvoiceDirection | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
