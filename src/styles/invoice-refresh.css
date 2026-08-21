@@ -1,0 +1,53 @@
+.refresh-data-toggle {
+  height: 42px;
+  min-width: 164px;
+  padding: 0 12px;
+  border: 1px solid var(--mia-border-warm);
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mia-text-strong);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.refresh-data-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.refresh-data-box {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.refresh-data-box[data-checked='true'] {
+  border-color: #15803d;
+  background: #15803d;
+}
+
+.refresh-data-box img {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.refresh-data-toggle:has(input:focus-visible) {
+  outline: 2px solid #86efac;
+  outline-offset: 2px;
+}
