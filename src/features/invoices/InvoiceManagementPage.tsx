@@ -8,7 +8,7 @@ import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
-import { jobFailureMessage, type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import type { BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
@@ -21,15 +21,14 @@ interface InvoiceRow {
   selected: boolean;
   progress: number;
   progressLabel: string;
-  failureHint?: string;
   actionsReady?: boolean;
 }
 
 const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 
 const rows: InvoiceRow[] = [
-  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
-  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT', failureHint: 'Vui lòng kiểm tra lại MST hoặc mật khẩu.' },
+  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'completed', actionsReady: true },
+  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'invalid_source_credentials' },
   { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Tháng 08/2026: 45/120 HĐ' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
@@ -37,7 +36,7 @@ const rows: InvoiceRow[] = [
     status: 'ready' as const,
     selected: false,
     progress: 0,
-    progressLabel: 'Chưa đồng bộ',
+    progressLabel: '—',
   })),
 ];
 
@@ -49,25 +48,9 @@ const statusLabels: Record<RowStatus, string> = {
   ready: 'Sẵn sàng',
 };
 
-function jobFailureHint(code?: string) {
-  if (code === 'invalid_source_credentials') return 'Vui lòng kiểm tra lại MST hoặc mật khẩu.';
-  if (code === 'source_account_locked') return 'Vui lòng mở khóa tài khoản trên Cổng HĐĐT trước khi thử lại.';
-  if (code === 'source_rate_limited' || code?.startsWith('source_http_')) return 'Hãy chờ dịch vụ nguồn ổn định rồi thử lại.';
-  return 'Hãy thử lại hoặc xem Nhật ký để biết thêm chi tiết.';
-}
-
 function formatMonthKey(value?: string | null) {
   const match = String(value ?? '').match(/^(\d{4})-(\d{2})$/);
   return match ? `${match[2]}/${match[1]}` : value || '—';
-}
-
-function stageLabel(stage?: string | null) {
-  if (stage === 'auth') return 'Đang đăng nhập Cổng HĐĐT…';
-  if (stage === 'overview') return 'Đang chuẩn bị dữ liệu hóa đơn…';
-  if (stage === 'detail') return 'Đang tải chi tiết hóa đơn…';
-  if (stage === 'ensure_xml') return 'Đang tạo dữ liệu XML…';
-  if (stage === 'finalize') return 'Đang hoàn tất dữ liệu…';
-  return 'Đang xử lý…';
 }
 
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
@@ -76,12 +59,10 @@ function SelectionBox({ checked, indeterminate = false }: { checked: boolean; in
 
 function ProgressCell({ row }: { row: InvoiceRow }) {
   if (row.status === 'failed') {
-    return (
-      <div className="failure-message">
-        <strong>{row.progressLabel}</strong>
-        <span>{row.failureHint ?? 'Hãy thử lại hoặc xem Nhật ký.'}</span>
-      </div>
-    );
+    return <div className="failure-message"><strong>{row.progressLabel}</strong></div>;
+  }
+  if (row.status === 'ready') {
+    return <div className="progress-cell" data-status={row.status}><div className="progress-copy"><span>{row.progressLabel}</span></div></div>;
   }
   return (
     <div className="progress-cell" data-status={row.status}>
@@ -189,6 +170,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       connection_id, date_from: dateFrom, date_to: dateTo,
       directions, query_types: ['query', 'sco-query'], scopes, data_types: ['invoice'],
       force_refresh: forceRefresh,
+      refresh_latest_month: true,
     })));
   }
 
@@ -214,7 +196,10 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const job = item?.status ?? item?.record;
     const runtimeStatus = job?.status;
     const currentMonth = job?.current_month;
-    const errorCode = job?.error?.code ?? item?.errorCode;
+    const sourceError = job?.error;
+    const sourceMessage = typeof item?.summary?.work?.message === 'string'
+      ? item.summary.work.message
+      : null;
     const inlineError = item?.error;
     const status: RowStatus = inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
       ? 'failed'
@@ -227,16 +212,12 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
             : 'ready';
     const progress = status === 'completed' ? 100 : Number(job?.overall_percent ?? 0);
     const progressLabel = status === 'failed'
-      ? inlineError ?? jobFailureMessage(errorCode)
-      : status === 'completed'
-        ? 'Đã tải xong'
-        : status === 'pending'
-          ? 'Chờ trong hàng đợi…'
-          : status === 'ready'
-            ? 'Chưa đồng bộ'
-            : currentMonth
-              ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned ?? '…'} HĐ`
-              : stageLabel(job?.stage);
+      ? inlineError ?? sourceError?.message ?? sourceError?.code ?? runtimeStatus ?? 'failed'
+      : status === 'ready'
+        ? '—'
+        : currentMonth
+          ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned} HĐ`
+          : sourceMessage ?? job?.stage ?? runtimeStatus ?? '—';
     return {
       taxCode: account.username,
       company: account.company_name || '—',
@@ -244,7 +225,6 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       selected: selectedAccountIds.includes(account.connection_id),
       progress,
       progressLabel,
-      failureHint: status === 'failed' ? jobFailureHint(errorCode) : undefined,
       actionsReady: runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning',
     };
   });
@@ -275,7 +255,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
-          <label className="refresh-data-toggle" title="Tích để tải mới toàn bộ khoảng đã chọn. Nếu không tích, dữ liệu lịch sử hợp lệ được dùng lại; tháng hiện tại và tháng trước luôn được tải mới.">
+          <label className="refresh-data-toggle" title="Tích để source API force-refresh toàn bộ khoảng đã chọn. Khi không tích, cache/checkpoint và refresh tháng mới nhất do source API quyết định.">
             <input type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" />
             <span className="refresh-data-box" data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>
             <span>Tải mới dữ liệu</span>
