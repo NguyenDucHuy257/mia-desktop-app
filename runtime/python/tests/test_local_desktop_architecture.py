@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -20,7 +21,7 @@ class LocalDesktopArchitectureTests(unittest.TestCase):
             repository = LocalSequentialJobRepository(database)
             repository.migrate()
 
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection:
                 tables = {
                     row[0]
                     for row in connection.execute(
