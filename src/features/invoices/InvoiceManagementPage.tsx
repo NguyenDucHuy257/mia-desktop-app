@@ -224,12 +224,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
             ? 'completed'
             : 'ready';
-    const monthPercent = currentMonth ? Number(currentMonth.percent) : null;
-    const progress = status === 'completed'
-      ? 100
-      : status === 'processing' && monthPercent !== null && Number.isFinite(monthPercent)
-        ? monthPercent
-        : Number(job?.overall_percent ?? 0);
+    const progress = status === 'completed' ? 100 : Number(job?.overall_percent ?? 0);
     const progressLabel = status === 'failed'
       ? jobFailureMessage(errorCode)
       : status === 'completed'
