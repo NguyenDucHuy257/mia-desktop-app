@@ -102,15 +102,31 @@
 }
 
 .invoice-page .progress-cell {
-  width: min(100%, 260px);
+  width: min(100%, 300px);
   min-width: 0;
+  gap: 3px;
+}
+
+.invoice-page .progress-copy {
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .invoice-page .progress-copy span:first-child {
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: 13px;
+}
+
+.invoice-page .progress-copy span:last-child {
+  flex: 0 0 auto;
+  line-height: 13px;
 }
 
 .invoice-page .status-badge[data-status='stopped'] {
