@@ -51,10 +51,10 @@
   min-width: 177px;
   height: 40px;
   padding: 0 16px;
-  border: 1px solid #15803d;
+  border: 1px solid #2563eb;
   border-radius: 10px;
   outline: 0;
-  background: #15803d;
+  background: #2563eb;
   color: #fff;
   display: inline-flex;
   align-items: center;
@@ -63,7 +63,7 @@
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 3px 10px rgb(21 128 61 / 18%);
+  box-shadow: 0 3px 10px rgb(37 99 235 / 20%);
 }
 
 .results-export-trigger img {
@@ -73,8 +73,8 @@
 }
 
 .results-export-trigger:focus-visible {
-  border-color: #166534;
-  box-shadow: 0 0 0 3px rgb(34 197 94 / 20%), 0 4px 12px rgb(21 128 61 / 20%);
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 24%), 0 4px 12px rgb(37 99 235 / 22%);
 }
 
 .results-export-popover {
@@ -82,7 +82,7 @@
   z-index: 100;
   top: 48px;
   right: 0;
-  width: 230px;
+  width: 250px;
   padding: 14px;
   border: 1px solid #dbe7dd;
   border-radius: 12px;
@@ -105,18 +105,27 @@
   cursor: pointer;
 }
 
+.results-export-popover small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .results-export-popover input {
   width: 16px;
   height: 16px;
-  accent-color: #15803d;
+  accent-color: #2563eb;
 }
 
 .results-export-popover > button {
   height: 36px;
-  border: 1px solid #15803d;
+  border: 1px solid #2563eb;
   border-radius: 9px;
   outline: 0;
-  background: #15803d;
+  background: #2563eb;
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -124,12 +133,12 @@
 }
 
 .results-export-popover > button:hover {
-  border-color: #166534;
-  background: #166534;
+  border-color: #1d4ed8;
+  background: #1d4ed8;
 }
 
 .results-export-popover > button:focus-visible {
-  box-shadow: 0 0 0 3px rgb(34 197 94 / 18%);
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 22%);
 }
 
 .results-export-popover > button:disabled {
@@ -386,8 +395,8 @@
   margin: 0 0 8px;
   padding: 5px 10px;
   border-radius: 8px;
-  background: #f0fdf4;
-  color: #166534;
+  background: #eff6ff;
+  color: #1d4ed8;
   font-size: 12px;
   font-weight: 600;
 }
@@ -423,33 +432,98 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
-  border-color: #e5e5e0;
+  border: 1px solid #e5e5e0;
   border-radius: 6px;
+  background: #fff;
 }
 
 .results-table--figma .results-row {
+  width: max-content;
+  min-width: 100%;
   min-height: 44px;
-  grid-template-columns: 110px 280px minmax(360px, 1fr);
+}
+
+.results-table--figma .results-row > span {
+  min-width: 0;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border-right: 1px solid #eef1f4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.results-table--figma .results-row > span:last-child {
+  border-right: 0;
 }
 
 .results-table--figma .results-row--header {
   position: sticky;
-  z-index: 2;
+  z-index: 3;
   top: 0;
   background: #f1f5f9;
+  color: #111827;
+  font-weight: 700;
 }
 
-.results-more {
-  align-self: center;
-  min-width: 120px;
-  height: 36px;
+/* Copied from the artifact page pager so Results uses the same navigation
+ * geometry and active-page treatment instead of the old append button. */
+.results-pager {
+  width: 100%;
+  height: 57px;
+  flex: 0 0 57px;
   margin-top: 10px;
-  border: 1px solid #166534;
-  border-radius: 9px;
+  padding: 0 24px;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  background: #f7f9fb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #62625b;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.results-pager > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.results-pager button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 2px;
   background: #fff;
-  color: #166534;
-  font-weight: 700;
+  display: grid;
+  place-items: center;
+  color: #334155;
   cursor: pointer;
+}
+
+.results-pager button img {
+  width: 12px;
+  height: 12px;
+}
+
+.results-pager button[data-active='true'] {
+  color: #fff;
+  border-color: #166534;
+  background: #166534;
+}
+
+.results-pager button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.results-page-ellipsis {
+  min-width: 16px;
+  text-align: center;
 }
 
 .results-page--figma button,
@@ -460,23 +534,22 @@
 
 .results-page--figma .results-back:hover,
 .results-page--figma .results-tabs--figma button:hover,
-.results-page--figma .results-more:hover,
 .results-page--figma .results-state button:hover {
   color: #14532d;
   background: #f0fdf4;
 }
 
 .results-page--figma .results-export-trigger:hover {
-  border-color: #166534;
-  background: #166534;
-  box-shadow: 0 6px 16px rgb(22 101 52 / 24%);
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  box-shadow: 0 6px 16px rgb(29 78 216 / 26%);
   transform: translateY(-1px);
 }
 
 .results-page--figma .results-export-trigger:active {
-  border-color: #14532d;
-  background: #14532d;
-  box-shadow: 0 2px 7px rgb(20 83 45 / 22%);
+  border-color: #1e40af;
+  background: #1e40af;
+  box-shadow: 0 2px 7px rgb(30 64 175 / 24%);
   transform: translateY(0) scale(.98);
 }
 
@@ -489,10 +562,6 @@
 .results-page--figma button:not(:disabled):active,
 .results-page--figma .date-range-trigger:active {
   transform: scale(.97);
-}
-
-.results-more:disabled {
-  opacity: .5;
 }
 
 @media (max-width: 1200px) {
