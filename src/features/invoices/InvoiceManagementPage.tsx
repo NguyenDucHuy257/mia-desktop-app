@@ -9,6 +9,7 @@ import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { useBatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
+import '../../styles/invoice-refresh.css';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending';
 
@@ -81,6 +82,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
+  const [forceRefresh, setForceRefresh] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
@@ -136,6 +138,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
     startMany(selectedAccountIds.map((connection_id) => ({
       connection_id, date_from: dateFrom, date_to: dateTo,
       directions, query_types: ['query', 'sco-query'], scopes, data_types: ['invoice'],
+      force_refresh: forceRefresh,
     })));
   }
 
@@ -188,6 +191,11 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
+          <label className="refresh-data-toggle" title="Tích để tải mới toàn bộ khoảng đã chọn. Nếu không tích, dữ liệu lịch sử hợp lệ được dùng lại; tháng hiện tại và tháng trước luôn được tải mới.">
+            <input type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" />
+            <span className="refresh-data-box" data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>
+            <span>Tải mới dữ liệu</span>
+          </label>
           <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu</button>
           {primaryStatus ? <div className="job-progress-panel" role="status">
             <strong>{primaryStatus.status}</strong><span>{primaryStatus.overall_percent}% tổng thể</span>
