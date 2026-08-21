@@ -95,7 +95,14 @@ function createJobLifecycleBroker(
         attemptKeys.set(baseKey, nextKey);
         record = await startSourceJob(intent, nextKey);
       }
-      return { record, accepted: { job_id: record.job_id, status: record.status, current_stage: record.stage, worker_slot_id: null } };
+      return {
+        record,
+        accepted: {
+          job_id: record.job_id,
+          status: record.status,
+          current_stage: record.stage,
+        },
+      };
     }),
     status: (jobId) => runBrokerCommand(() => getRuntime().invoke('source.jobs.status', { job_id: validateJobId(jobId) })),
     summary: (jobId) => runBrokerCommand(() => getRuntime().invoke('source.jobs.summary', { job_id: validateJobId(jobId) })),
