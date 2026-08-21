@@ -40,9 +40,6 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
 
   useEffect(() => { setFromText(displayDate(dateFrom)); }, [dateFrom]);
   useEffect(() => { setToText(displayDate(dateTo)); }, [dateTo]);
-  useEffect(() => {
-    if (isSyncPicker) persistSyncDateRange(dateFrom, dateTo);
-  }, [dateFrom, dateTo, isSyncPicker]);
 
   function apply() {
     const nextFrom = parseDateText(fromText);
