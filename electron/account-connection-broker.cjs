@@ -43,20 +43,28 @@ function localErrorMessage(code) {
   if (code === 'source_login_rejected') return 'Cổng hóa đơn từ chối đăng nhập.';
   if (code === 'source_token_missing') return 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.';
   if (code === 'source_rate_limited') return 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.';
+  if (code === 'account_busy') return 'Tài khoản đang được xử lý bởi một job khác.';
+  if (code === 'capacity_exhausted') return 'Hàng đợi xử lý đang đầy; vui lòng thử lại sau.';
+  if (code === 'idempotency_conflict') return 'Yêu cầu đồng bộ bị xung đột idempotency.';
+  if (code === 'connection_not_found' || code === 'resource_not_found') return 'Không tìm thấy kết nối tài khoản nguồn.';
   if (code === 'account_purge_failed') return 'Không thể xóa sạch dữ liệu tài khoản.';
   if (String(code).startsWith('source_http_')) return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
-  return 'Local account operation failed.';
+  return String(code || 'Local account operation failed.');
 }
 
 function serializeError(error) {
-  const localCodes = new Set([
-    'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed', 'database_locked', 'database_unavailable',
-    'job_not_found', 'job_conflict', 'stale_job_update', 'invalid_job_transition', 'authentication_failed',
-    'invalid_source_credentials', 'source_account_locked', 'source_login_rejected', 'source_token_missing',
-    'source_rate_limited',
+  const sourceCodes = new Set([
+    'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed',
+    'database_locked', 'database_unavailable', 'job_not_found', 'job_conflict',
+    'stale_job_update', 'invalid_job_transition', 'authentication_failed',
+    'invalid_source_credentials', 'source_account_locked', 'source_login_rejected',
+    'source_token_missing', 'source_rate_limited', 'account_busy', 'capacity_exhausted',
+    'idempotency_conflict', 'connection_not_found', 'resource_not_found',
+    'source_account_failed', 'source_job_failed',
   ]);
-  if (localCodes.has(error?.message) || String(error?.message || '').startsWith('source_http_')) {
-    return { code: error.message, message: localErrorMessage(error.message) };
+  const runtimeMessage = String(error?.message || '');
+  if (sourceCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_')) {
+    return { code: runtimeMessage, message: localErrorMessage(runtimeMessage) };
   }
   if (error instanceof MiaApiError) {
     return {
