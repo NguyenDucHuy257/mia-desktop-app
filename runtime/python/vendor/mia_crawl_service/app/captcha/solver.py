@@ -8,9 +8,7 @@ from pathlib import Path
 import torch
 from defusedxml import ElementTree
 from PIL import Image, ImageOps, UnidentifiedImageError
-from PyQt5.QtCore import QBuffer, QByteArray, QIODevice, Qt
-from PyQt5.QtGui import QGuiApplication, QImage, QPainter
-from PyQt5.QtSvg import QSvgRenderer
+from resvg_py import svg_to_bytes
 from torchvision import transforms
 
 from app.captcha.model import DEVICE, OCRCNN
@@ -26,6 +24,7 @@ MODEL_PATH = (
 MAX_SVG_BYTES = 1_000_000
 MAX_SVG_DIMENSION = 4096
 _LENGTH = re.compile(r'^\s*([0-9]+(?:\.[0-9]+)?)')
+_SVG_RENDER_LOCK = threading.Lock()
 
 
 class CaptchaRenderError(RuntimeError):
@@ -78,7 +77,7 @@ class CaptchaSolver:
         _validate_svg_dimensions(svg_bytes)
 
         try:
-            png_bytes = _render_svg_with_qt(
+            png_bytes = _render_svg_with_resvg(
                 svg_bytes, self.image_width, self.image_height,
             )
         except Exception as error:
@@ -97,26 +96,6 @@ class CaptchaSolver:
             raise CaptchaRenderError('Captcha rendered image has invalid dimensions')
         return image
 
-
-def _render_svg_with_qt(svg_bytes: bytes, width: int, height: int) -> bytes:
-    """Windows-packaged SVG renderer; input was validated before this call."""
-    if QGuiApplication.instance() is None:
-        QGuiApplication([])
-    renderer = QSvgRenderer(QByteArray(svg_bytes))
-    if not renderer.isValid():
-        raise CaptchaRenderError('Captcha SVG renderer rejected input')
-    image = QImage(width, height, QImage.Format_ARGB32)
-    image.fill(Qt.white)
-    painter = QPainter(image)
-    try:
-        renderer.render(painter)
-    finally:
-        painter.end()
-    buffer = QBuffer()
-    if not buffer.open(QIODevice.WriteOnly) or not image.save(buffer, 'PNG'):
-        raise CaptchaRenderError('Captcha SVG renderer returned no image')
-    return bytes(buffer.data())
-
     @torch.no_grad()
     def _predict(self, image: Image.Image) -> str:
         tensor = self.preprocess(image).unsqueeze(0).to(DEVICE)
@@ -126,6 +105,16 @@ def _render_svg_with_qt(svg_bytes: bytes, width: int, height: int) -> bytes:
         pred_indices = output.argmax(dim=2)[0].cpu().tolist()
         return ''.join(self.charset[i] for i in pred_indices)
 
+
+def _render_svg_with_resvg(svg_bytes: bytes, width: int, height: int) -> bytes:
+    """Thread-safe Windows rasterization without Cairo or GUI lifecycle."""
+    with _SVG_RENDER_LOCK:
+        return svg_to_bytes(
+            svg_string=svg_bytes.decode('utf-8'),
+            width=width,
+            height=height,
+            background='white',
+        )
 
 def _validate_svg_dimensions(svg_bytes: bytes) -> None:
     try:

@@ -32,7 +32,7 @@ describe('offline job lifecycle IPC broker', () => {
     const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(intent);
     expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_1' }, accepted: { status: 'queued' } } });
     expect(invoke).toHaveBeenCalledWith('source.jobs.start', expect.objectContaining({
-      intent, idempotency_key: expect.stringMatching(/^desktop-[a-f0-9]{64}$/),
+        intent, idempotency_key: expect.stringMatching(/^desktop-v2-[a-f0-9]{64}$/),
     }), { timeoutMs: 15000 });
   });
 
