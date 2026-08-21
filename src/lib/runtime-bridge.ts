@@ -80,21 +80,24 @@ export interface ResultQuery {
   limit?: number;
   search?: string;
   direction?: InvoiceDirection | null;
+  query_type?: InvoiceQueryType | null;
   date_from?: string;
   date_to?: string;
 }
 export interface SourceResultRow {
   row_id: number | string;
   direction: InvoiceDirection;
-  /** Exact public fields read from source SQLite/result reader; no raw/path fields. */
+  /** Fields projected into the exact source Excel template schema. */
   fields: Record<string, unknown>;
 }
 export type OverviewResult = SourceResultRow;
 export type DetailResult = SourceResultRow;
 export interface LocalResultPage<T> {
   items: T[];
-  /** Stable public source field order for dynamic result tables. */
+  /** Exact column key order read from the source Excel template. */
   columns?: string[];
+  /** Exact Vietnamese header text read from the source Excel template. */
+  column_labels?: Record<string, string>;
   total_count?: number;
   row_count?: number;
   invoice_count?: number;
