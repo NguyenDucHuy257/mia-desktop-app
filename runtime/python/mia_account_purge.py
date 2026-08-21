@@ -32,12 +32,21 @@ def _delete_file_if_safe(root: Path, relative: str) -> bool:
     return True
 
 
+def _finalize_secure_sqlite_delete(connection: sqlite3.Connection) -> None:
+    # secure_delete overwrites deleted cells instead of leaving their payload in
+    # freelist pages. Truncating WAL and VACUUMing makes the destructive account
+    # action match the user's expectation that local account data is removed.
+    connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    connection.execute("VACUUM")
+
+
 def _purge_legacy_database(data_dir: Path, account_id: str) -> tuple[list[str], list[str], int]:
     database = data_dir / "mia.sqlite3"
     if not database.is_file():
         return [], [], 0
     connection = sqlite3.connect(database, timeout=30, isolation_level=None)
     connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA secure_delete=ON")
     connection.execute("PRAGMA busy_timeout=30000")
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -59,6 +68,7 @@ def _purge_legacy_database(data_dir: Path, account_id: str) -> tuple[list[str], 
                 "DELETE FROM accounts WHERE account_id=?", (account_id,)
             ).rowcount
         connection.commit()
+        _finalize_secure_sqlite_delete(connection)
         return job_ids, artifact_paths, deleted
     except BaseException:
         connection.rollback()
@@ -74,6 +84,7 @@ def _purge_production_control(data_dir: Path, account_id: str, tax_code: str) ->
     connection = sqlite3.connect(database, timeout=30, isolation_level=None)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA secure_delete=ON")
     connection.execute("PRAGMA busy_timeout=30000")
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -133,6 +144,7 @@ def _purge_production_control(data_dir: Path, account_id: str, tax_code: str) ->
                 source_account_ids,
             )
         connection.commit()
+        _finalize_secure_sqlite_delete(connection)
         return job_ids
     except BaseException:
         connection.rollback()
