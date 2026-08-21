@@ -176,6 +176,14 @@
   min-width: 100%;
 }
 
+.results-page.results-page--figma .results-table--excel-schema .results-row > span,
+.results-page.results-page--figma .results-table--excel-schema .results-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .results-page.results-page--figma .results-table--excel-schema .results-row--header {
   z-index: 6;
   min-height: 48px;
@@ -184,11 +192,16 @@
 }
 
 .results-page.results-page--figma .results-table--excel-schema .results-row--header > span {
+  overflow: hidden;
   color: #263142;
   font-size: 12px;
   font-weight: 750;
   line-height: 15px;
+  text-overflow: ellipsis;
   white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .results-page.results-page--figma .results-table--excel-schema .results-row:not(.results-row--header):hover {
