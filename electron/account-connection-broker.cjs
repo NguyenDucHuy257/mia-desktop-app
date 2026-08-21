@@ -43,13 +43,14 @@ function localErrorMessage(code) {
   if (code === 'source_login_rejected') return 'Cổng hóa đơn từ chối đăng nhập.';
   if (code === 'source_token_missing') return 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.';
   if (code === 'source_rate_limited') return 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.';
+  if (code === 'account_purge_failed') return 'Không thể xóa sạch dữ liệu tài khoản.';
   if (String(code).startsWith('source_http_')) return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
   return 'Local account operation failed.';
 }
 
 function serializeError(error) {
   const localCodes = new Set([
-    'account_not_found', 'account_duplicate', 'account_in_use', 'database_locked', 'database_unavailable',
+    'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed', 'database_locked', 'database_unavailable',
     'job_not_found', 'job_conflict', 'stale_job_update', 'invalid_job_transition', 'authentication_failed',
     'invalid_source_credentials', 'source_account_locked', 'source_login_rejected', 'source_token_missing',
     'source_rate_limited',
