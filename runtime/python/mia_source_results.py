@@ -27,8 +27,6 @@ BLOCKED_RESULT_FIELDS = {
     "detail_path",
 }
 
-# Exact positional values used by OverviewDownloader's local template
-# renderers. Titles are intentionally not copied here; they are read from XLSX.
 ELECTRONIC_TEMPLATE_KEYS = (
     "stt", "khmshdon", "khhdon", "shdon", "tdlap",
     "nbmst", "nbten", "nmmst", "nmten", "nmdchi",
@@ -190,7 +188,6 @@ def _overview_template_keys(category: str, direction: str) -> tuple[str, ...]:
 def _overview_template_schema(
     category: str, direction: str
 ) -> tuple[tuple[str, str], ...]:
-    """Read exact overview column titles/order from the source workbook."""
     from openpyxl import load_workbook
     from app.services.overview_downloader import OverviewDownloader, _find_header_row
 
@@ -225,12 +222,6 @@ def _overview_template_schema(
 
 @lru_cache(maxsize=1)
 def _detail_template_schema() -> tuple[tuple[str, str], ...]:
-    """Read the exact schema produced by InvoiceDetailExcelExporter.
-
-    The source exporter can move the header to row 5 and insert STT before
-    rendering. Mirror those preparation steps first; the UI must match the
-    exported workbook, not merely the unprepared template file on disk.
-    """
     from openpyxl import load_workbook
     from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
 
@@ -265,8 +256,6 @@ def _result_schema(kind: str, context) -> tuple[tuple[str, str], ...]:
 
     from app.config.crawl_config import query_type_to_category
 
-    # One overview Excel workbook represents exactly one query type. The desktop
-    # UI always sends one; keep a safe fallback for older local callers.
     query_type = context["query_types"][0]
     context["query_types"] = [query_type]
     category = query_type_to_category(query_type)
@@ -314,7 +303,6 @@ def _project_fields(
 
 
 def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
-    """Page source records using the exact source Excel presentation schema."""
     if kind not in {"overview", "details"}:
         raise ValueError("invalid_result_kind")
     limit = int(query.get("limit", 50))
@@ -324,14 +312,8 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     context = _result_context(backend, query)
     if context is None:
         return {
-            "items": [],
-            "columns": [],
-            "column_labels": {},
-            "pagination": {
-                "limit": limit,
-                "has_more": False,
-                "next_cursor": None,
-            },
+            "items": [], "columns": [], "column_labels": {},
+            "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
     schema = _result_schema(kind, context)
@@ -343,14 +325,8 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
 
     if direction_index >= len(directions):
         return {
-            "items": [],
-            "columns": columns,
-            "column_labels": column_labels,
-            "pagination": {
-                "limit": limit,
-                "has_more": False,
-                "next_cursor": None,
-            },
+            "items": [], "columns": columns, "column_labels": column_labels,
+            "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
     output: list[dict[str, Any]] = []
@@ -377,19 +353,14 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
             safe["direction"] = direction
             if not _search_matches(safe, search):
                 continue
-
             raw_id = safe.get("id")
             if isinstance(raw_id, int):
                 row_id: int | str = raw_id
             else:
                 fingerprint = json.dumps(
-                    safe,
-                    ensure_ascii=False,
-                    default=str,
-                    sort_keys=True,
+                    safe, ensure_ascii=False, default=str, sort_keys=True
                 ).encode("utf-8")
                 row_id = hashlib.sha256(fingerprint).hexdigest()[:20]
-
             output.append({
                 "row_id": row_id,
                 "direction": direction,
@@ -419,8 +390,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
             "has_more": bool(has_more),
             "next_cursor": (
                 _encode_page_cursor(next_direction_index, next_source_cursor)
-                if has_more
-                else None
+                if has_more else None
             ),
         },
     }
@@ -451,12 +421,8 @@ def _all_overview_fields(
             fields = _safe_fields(item)
             fields["direction"] = direction
             if _search_matches(fields, search):
-                # Source local renderer consumes tdlap. Older normalized rows
-                # may expose only nlap/nlap_date, so provide the equivalent
-                # source date input without changing persisted data.
                 fields.setdefault(
-                    "tdlap",
-                    fields.get("nlap") or fields.get("nlap_date"),
+                    "tdlap", fields.get("nlap") or fields.get("nlap_date")
                 )
                 rows.append(fields)
         pagination = page.get("pagination") or {}
@@ -485,7 +451,6 @@ def _write_overview_excel_from_source_template(
     date_to: str,
     target: Path,
 ) -> None:
-    """Render persisted overview data through source's own XLSX renderer."""
     from app.services.overview_downloader import OverviewDownloader
 
     renderer = OverviewDownloader(
@@ -495,22 +460,15 @@ def _write_overview_excel_from_source_template(
     )
     begin = date.fromisoformat(date_from)
     end = date.fromisoformat(date_to)
-
     if category == "electronic":
-        content = renderer._electronic_records_to_xlsx(
-            rows, direction, begin, end
-        )
+        content = renderer._electronic_records_to_xlsx(rows, direction, begin, end)
     elif category == "cash_register":
-        content = renderer._cash_records_to_xlsx(
-            rows, direction, begin, end
-        )
+        content = renderer._cash_records_to_xlsx(rows, direction, begin, end)
     else:
         raise ValueError("invalid_overview_export_category")
 
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.stem}-",
-        suffix=".tmp",
-        dir=target.parent,
+        prefix=f".{target.stem}-", suffix=".tmp", dir=target.parent
     )
     os.close(descriptor)
     temporary = Path(temporary_name)
@@ -528,9 +486,7 @@ def _filter_detail_records(
         return records
     result: list[dict[str, Any]] = []
     for record in records:
-        searchable = json.dumps(
-            record, ensure_ascii=False, default=str
-        ).casefold()
+        searchable = json.dumps(record, ensure_ascii=False, default=str).casefold()
         if search not in searchable:
             raw_path = Path(str(record.get("raw_detail_path") or ""))
             try:
@@ -560,7 +516,6 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
         or set(scopes) - {"overview", "details"}
     ):
         raise ValueError("invalid_result_export_scope")
-
     connection_ids = value.get("connection_ids") or []
     if len(connection_ids) != 1:
         raise ValueError("invalid_result_export_account")
@@ -570,6 +525,7 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
         "date_from": str(value["date_from"]),
         "date_to": str(value["date_to"]),
         "direction": value.get("direction"),
+        "query_type": value.get("query_type"),
     }
     context = _result_context(backend, query)
     if context is None:
@@ -582,18 +538,13 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
     if "overview" in scopes:
         for direction in context["directions"]:
             for query_type in context["query_types"]:
-                rows = _all_overview_fields(
-                    context, direction, query_type, search
-                )
+                rows = _all_overview_fields(context, direction, query_type, search)
                 if not rows:
                     continue
-
                 category = QUERY_TYPE_TO_CATEGORY.get(query_type)
                 source_name = OUTPUT_NAMES.get((direction, category))
                 if not source_name:
-                    source_name = (
-                        f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
-                    )
+                    source_name = f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
                 target = _available_path(destination, source_name)
                 _write_overview_excel_from_source_template(
                     rows,
@@ -622,13 +573,8 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
                 records = _filter_detail_records(records, search)
                 if not records:
                     continue
-
-                direction_label = (
-                    "MUA VÀO" if direction == "purchase" else "BÁN RA"
-                )
-                type_label = (
-                    "HĐĐT" if query_type == "query" else "MÁY TÍNH TIỀN"
-                )
+                direction_label = "MUA VÀO" if direction == "purchase" else "BÁN RA"
+                type_label = "HĐĐT" if query_type == "query" else "MÁY TÍNH TIỀN"
                 target = _available_path(
                     destination,
                     f"THỐNG KÊ CHI TIẾT HÓA ĐƠN "
