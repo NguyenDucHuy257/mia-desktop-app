@@ -10,6 +10,7 @@ const QUERY_TYPES = new Set(['query', 'sco-query']);
 const SCOPES = new Set(['overview', 'detail']);
 const DATA_TYPES = new Set(['invoice', 'xml', 'html', 'pdf']);
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
+const JOB_POLICY_NAMESPACE = 'desktop-v4';
 
 class JobInputError extends Error {
   constructor(code = 'invalid_job_input') {
@@ -55,7 +56,7 @@ function validateJobId(value) {
 }
 
 function idempotencyKey(intent) {
-  return `desktop-v3-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
+  return `${JOB_POLICY_NAMESPACE}-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
 function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector, createAttemptId = crypto.randomUUID) {
@@ -100,4 +101,4 @@ function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString
   });
 }
 
-module.exports = { createJobLifecycleBroker, idempotencyKey, validateIntent, validateJobId };
+module.exports = { JOB_POLICY_NAMESPACE, createJobLifecycleBroker, idempotencyKey, validateIntent, validateJobId };
