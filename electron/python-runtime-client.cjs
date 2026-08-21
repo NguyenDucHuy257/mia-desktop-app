@@ -142,7 +142,7 @@ class PythonRuntimeClient {
   }
 
   terminate() {
-    if (this.child && this.child.exitCode === null) child.kill();
+    if (this.child && this.child.exitCode === null) this.child.kill();
   }
 
   #handleStdout(chunk) {
