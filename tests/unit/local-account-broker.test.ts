@@ -39,6 +39,18 @@ describe('local account broker', () => {
     expect(invoke).not.toHaveBeenCalledWith('accounts.create', expect.anything());
   });
 
+  it('purges the account instead of only revoking the UI row', async () => {
+    const invoke = vi.fn().mockResolvedValue({ deleted: true });
+    const broker = createLocalAccountBroker(() => ({ invoke }), { encrypt: vi.fn() });
+    const result = await broker.revoke('account-1');
+    expect(result).toEqual({ ok: true, data: null });
+    expect(invoke).toHaveBeenCalledWith(
+      'accounts.purge',
+      { account_id: 'account-1' },
+      { timeoutMs: 30000 },
+    );
+  });
+
   it('validates input before encryption or runtime access', async () => {
     const invoke = vi.fn();
     const encrypt = vi.fn();
