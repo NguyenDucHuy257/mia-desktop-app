@@ -2,7 +2,6 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import mia_runtime
@@ -10,67 +9,54 @@ from mia_logging import close_logging, configure_logging
 
 
 class RuntimeDiagnosticsTests(unittest.TestCase):
+    def setUp(self):
+        self.previous = (
+            mia_runtime.storage,
+            mia_runtime.crawler,
+            mia_runtime.data_directory,
+            mia_runtime.logger,
+            mia_runtime.production_backend,
+        )
+
     def tearDown(self):
-        mia_runtime.production_backend = None
-        mia_runtime.data_directory = None
+        (
+            mia_runtime.storage,
+            mia_runtime.crawler,
+            mia_runtime.data_directory,
+            mia_runtime.logger,
+            mia_runtime.production_backend,
+        ) = self.previous
 
-    def test_latest_jobs_returns_newest_record_per_connection(self):
-        jobs = [
-            SimpleNamespace(job_id="job_old", account_key="a", created_at="2026-08-20T10:00:00Z", parameters={"connection_id": "a"}),
-            SimpleNamespace(job_id="job_new", account_key="a", created_at="2026-08-21T10:00:00Z", parameters={"connection_id": "a"}),
-            SimpleNamespace(job_id="job_b", account_key="b", created_at="2026-08-21T09:00:00Z", parameters={"connection_id": "b"}),
-        ]
-        backend = SimpleNamespace(
-            repository=SimpleNamespace(list_jobs_for_reconciliation=lambda: jobs),
-            public_job=lambda job: {"job_id": job.job_id, "connection_id": job.parameters["connection_id"]},
-        )
-        result = mia_runtime._latest_jobs(backend)
-        self.assertEqual({item["job_id"] for item in result}, {"job_new", "job_b"})
-
-    def test_production_backend_recovers_expired_leases_before_worker_start(self):
-        events = []
-        recovery = SimpleNamespace(
-            recovered_jobs=1,
-            recovered_tasks=0,
-            failed_tasks=0,
-            cancelled_jobs=0,
-            promoted_jobs=1,
-        )
-        repository = SimpleNamespace(
-            recover_expired_leases=lambda: events.append("recover") or recovery,
-        )
-        planner = SimpleNamespace(plan=lambda **_kwargs: SimpleNamespace(decisions=[]))
-        worker = SimpleNamespace(start=lambda: events.append("worker_start"))
-        backend = SimpleNamespace(
-            repository=repository,
-            pipeline=SimpleNamespace(planner=planner),
-            worker=worker,
-        )
+    def test_production_backend_is_the_single_source_runtime_instance(self):
+        backend = Mock()
         mia_runtime.data_directory = Path("C:/tmp/mia-test")
-        with patch.object(mia_runtime, "ProductionBackend", return_value=backend) as constructor:
-            result = mia_runtime._production_backend()
-        self.assertIs(result, backend)
-        self.assertEqual(events, ["recover", "worker_start"])
-        constructor.assert_called_once_with(mia_runtime.data_directory, mia_runtime.logger, start_worker=False)
+        mia_runtime.logger = None
+        mia_runtime.production_backend = None
+        with patch.object(
+            mia_runtime, "ProductionBackend", return_value=backend
+        ) as constructor:
+            first = mia_runtime._production_backend()
+            second = mia_runtime._production_backend()
+        self.assertIs(first, backend)
+        self.assertIs(second, backend)
+        constructor.assert_called_once_with(mia_runtime.data_directory, None)
 
-    def test_source_job_start_does_not_run_coverage_planner_on_rpc_thread(self):
-        planner = SimpleNamespace(plan=Mock(side_effect=AssertionError("planner must not run on start RPC")))
-        backend = SimpleNamespace(
-            pipeline=SimpleNamespace(planner=planner),
-            start=Mock(return_value={
-                "job_id": "job-new",
-                "connection_id": "connection-a",
-                "status": "queued",
-            }),
-        )
+    def test_source_job_start_delegates_the_source_intent_without_credentials(self):
+        backend = Mock()
+        backend.start.return_value = {
+            "job_id": "job-new",
+            "connection_id": "conn_123456",
+            "status": "queued",
+            "stage": None,
+            "overall_percent": 0,
+            "message": "Đang chờ worker xử lý",
+        }
         mia_runtime.data_directory = Path("C:/tmp/mia-test")
         mia_runtime.production_backend = backend
-        result, should_stop = mia_runtime.dispatch("source.jobs.start", {
-            "username": "0101234567",
-            "password": "secret",
-            "idempotency_key": "desktop-v4:test",
+        request = {
+            "idempotency_key": "desktop-source-v1:test",
             "intent": {
-                "connection_id": "connection-a",
+                "connection_id": "conn_123456",
                 "date_from": "2025-05-01",
                 "date_to": "2025-10-31",
                 "directions": ["purchase", "sold"],
@@ -78,12 +64,63 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 "scopes": ["overview", "detail"],
                 "data_types": ["invoice"],
                 "force_refresh": False,
+                "refresh_latest_month": True,
             },
-        })
+        }
+        result, should_stop = mia_runtime.dispatch("source.jobs.start", request)
         self.assertFalse(should_stop)
         self.assertEqual(result["job_id"], "job-new")
-        planner.plan.assert_not_called()
-        backend.start.assert_called_once()
+        backend.start.assert_called_once_with(request)
+        serialized = str(backend.start.call_args)
+        self.assertNotIn("password", serialized)
+        self.assertNotIn("username", serialized)
+
+    def test_source_account_routes_delegate_to_source_backend(self):
+        backend = Mock()
+        backend.create_connection.return_value = {
+            "connection_id": "conn_123456",
+            "username": "0101234567",
+            "company_name": "Synthetic Company",
+        }
+        mia_runtime.data_directory = Path("C:/tmp/mia-test")
+        mia_runtime.production_backend = backend
+        result, should_stop = mia_runtime.dispatch("source.accounts.create", {
+            "username": "0101234567",
+            "password": "portal-password",
+        })
+        self.assertFalse(should_stop)
+        self.assertEqual(result["connection_id"], "conn_123456")
+        backend.create_connection.assert_called_once_with(
+            "0101234567", "portal-password"
+        )
+
+    def test_source_job_status_logs_source_progress_fields(self):
+        backend = Mock()
+        backend.get.return_value = {
+            "job_id": "job-1",
+            "connection_id": "conn_123456",
+            "status": "running",
+            "stage": "overview",
+            "overall_percent": 12.5,
+            "message": "running:overview",
+            "current_month": {
+                "key": "2026-08",
+                "index": 1,
+                "total": 1,
+                "processed": 10,
+                "planned": 100,
+                "percent": 10.0,
+            },
+            "error": None,
+        }
+        mia_runtime.data_directory = Path("C:/tmp/mia-test")
+        mia_runtime.production_backend = backend
+        with patch.object(mia_runtime, "_crawler_logger") as logger_factory:
+            result, _ = mia_runtime.dispatch(
+                "source.jobs.status", {"job_id": "job-1"}
+            )
+        self.assertEqual(result["overall_percent"], 12.5)
+        logger_factory.return_value.info.assert_called()
 
     def test_runtime_and_crawler_logs_redact_sensitive_values_and_vendor_namespaces(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -120,8 +157,6 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 self.assertIn("vendor_pipeline_event", crawler_text)
                 self.assertIn("job_engine_event", crawler_text)
             finally:
-                # RotatingFileHandler keeps an exclusive file handle on Windows.
-                # Close it before TemporaryDirectory attempts to delete the logs.
                 close_logging()
 
 
