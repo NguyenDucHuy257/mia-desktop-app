@@ -31,6 +31,10 @@ a = Analysis(
         "app.job_engine.worker",
         "app.external_api.models",
         "pydantic",
+        # The pre-refactor desktop crawler spawned its own worker thread and
+        # duplicated source login/crawl behavior. ProductionBackend installs a
+        # disabled import shim and uses only the source-managed worker/session.
+        "mia_crawler",
     ],
     noarchive=False,
     optimize=1,
