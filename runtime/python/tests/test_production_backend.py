@@ -31,9 +31,10 @@ class ProductionBackendTests(unittest.TestCase):
 
     def _create_backend_and_connection(self, directory: str):
         backend = ProductionBackend(Path(directory), start_worker=False)
-        with patch(
-            "mia_source_backend.verify_account",
-            return_value={"company_name": "Synthetic Company"},
+        with patch.object(
+            ProductionBackend,
+            "_source_company_name",
+            return_value="Synthetic Company",
         ):
             connection = backend.create_connection(
                 "0100000000", "synthetic-password"
@@ -41,6 +42,27 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertTrue(connection["connection_id"].startswith("conn_"))
         self.assertEqual(connection["company_name"], "Synthetic Company")
         return backend, connection
+
+    def test_company_name_uses_same_source_managed_session_as_worker(self):
+        backend = object.__new__(ProductionBackend)
+        connection = SimpleNamespace(connection_id="conn_account_1")
+        backend.accounts = Mock()
+        backend.accounts.session_hash.return_value = (connection, "a" * 64)
+        portal = Mock()
+        portal.get_company_info.return_value = {"name": "  Source Company  "}
+        backend.sessions = Mock()
+        backend.sessions.build_worker_portal_session.return_value = portal
+
+        self.assertEqual(backend._source_company_name(connection), "Source Company")
+        backend.accounts.session_hash.assert_called_once_with(
+            "conn_account_1",
+            owner_id="mia-desktop-local",
+        )
+        backend.sessions.build_worker_portal_session.assert_called_once_with(
+            "a" * 64,
+            worker_id="desktop-local-worker",
+        )
+        portal.get_company_info.assert_called_once_with()
 
     def test_source_account_connection_and_job_engine_own_durable_state(self):
         with tempfile.TemporaryDirectory() as directory:
