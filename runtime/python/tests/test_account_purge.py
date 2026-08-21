@@ -1,7 +1,12 @@
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+RUNTIME_DIR = Path(__file__).resolve().parents[1]
+if str(RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_DIR))
 
 from mia_account_purge import purge_account_data, scrub_account_log_lines
 from mia_storage import Storage, StorageError
