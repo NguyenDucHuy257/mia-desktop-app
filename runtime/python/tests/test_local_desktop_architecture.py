@@ -35,9 +35,10 @@ class LocalDesktopArchitectureTests(unittest.TestCase):
             self.assertNotIn("account_execution_fences", tables)
             self.assertNotIn("api_request_audit", tables)
 
-    def test_backend_injects_one_named_local_worker(self):
+    def test_backend_injects_one_named_local_worker_and_local_dtos(self):
         import mia_backend
         import mia_source_backend
+        import app.external_api.models as source_models
 
         self.assertEqual(mia_source_backend.WORKER_ID, "desktop-local-worker")
         repository = mia_source_backend.create_job_engine_repository(
@@ -45,6 +46,7 @@ class LocalDesktopArchitectureTests(unittest.TestCase):
         )
         self.assertIsInstance(repository, LocalSequentialJobRepository)
         self.assertIs(mia_source_backend.WorkerLoop, LocalWorkerLoop)
+        self.assertEqual(source_models.__name__, "mia_local_source_models")
 
     def test_local_worker_loop_drives_only_one_supervisor(self):
         stop_event = threading.Event()
