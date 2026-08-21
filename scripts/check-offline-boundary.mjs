@@ -67,7 +67,8 @@ for (const relative of [
 // never expose or construct the pre-refactor desktop crawler/thread system.
 const runtimeSource = await readFile(path.resolve('runtime/python/mia_runtime.py'), 'utf8');
 for (const marker of [
-  'CrawlerCoordinator',
+  'from mia_crawler import',
+  'CrawlerCoordinator(',
   '"crawler.start"',
   '"crawler.health"',
   '"crawler.verify_account"',
