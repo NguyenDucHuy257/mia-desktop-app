@@ -49,6 +49,8 @@ export interface JobStatusResponse {
   status: JobStatus;
   stage: string | null;
   overall_percent: number;
+  /** Source pipeline progress_state.message; renderer displays, never computes it. */
+  message?: string | null;
   event_sequence?: number;
   current_month: null | {
     key: string;
