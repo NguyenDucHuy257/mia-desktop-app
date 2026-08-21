@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 from openpyxl import load_workbook
 
+import mia_runtime
 from mia_backend import ProductionBackend
 
 
@@ -67,6 +68,44 @@ class ResultViewTests(unittest.TestCase):
         self.assertEqual(read_job.parameters["directions"], ["purchase", "sold"])
         self.assertEqual(read_job.parameters["query_types"], ["query", "sco-query"])
         self.assertEqual(result["items"][0]["direction"], "sold")
+
+    def test_result_dispatch_initializes_production_backend_after_restart(self):
+        previous = (
+            mia_runtime.storage,
+            mia_runtime.data_directory,
+            mia_runtime.logger,
+            mia_runtime.production_backend,
+        )
+        backend = Mock()
+        backend.results.return_value = {
+            "items": [{"overview_id": 1}],
+            "pagination": {"limit": 50, "has_more": False, "next_cursor": None},
+        }
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch(
+                "mia_runtime.ProductionBackend", return_value=backend,
+            ) as constructor:
+                mia_runtime.storage = object()
+                mia_runtime.data_directory = Path(directory)
+                mia_runtime.logger = None
+                mia_runtime.production_backend = None
+                query = {
+                    "connection_id": "account-1",
+                    "date_from": "2026-02-01",
+                    "date_to": "2026-02-28",
+                }
+                result, should_stop = mia_runtime.dispatch("results.overview", query)
+                self.assertFalse(should_stop)
+                self.assertEqual(result["items"][0]["overview_id"], 1)
+                constructor.assert_called_once_with(Path(directory), None)
+                backend.results.assert_called_once_with("overview", query)
+        finally:
+            (
+                mia_runtime.storage,
+                mia_runtime.data_directory,
+                mia_runtime.logger,
+                mia_runtime.production_backend,
+            ) = previous
 
     def test_result_workbook_can_include_overview_and_detail_sheets(self):
         backend, _ = self.backend_with_job()
