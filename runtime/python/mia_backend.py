@@ -1,15 +1,17 @@
-"""Thin desktop boundary over the production MIA job engine (63acf11)."""
+"""Thin desktop transport over the byte-for-byte vendored MIA source service."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import sys
+from contextlib import closing
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,15 +24,22 @@ if str(VENDOR_ROOT) not in sys.path:
 from app.account_connections.repository import SQLiteAccountConnectionRepository
 from app.account_connections.service import AccountConnectionManager
 from app.config.crawl_config import CrawlConfig
-from app.job_engine.models import CreateJobRequest, JobStageSpec, JOB_TERMINAL_STATES
-from app.job_engine.progress import build_pipeline_plan, current_month_public
-from app.job_engine.repository import SQLiteJobEngineRepository
+from app.external_api.app import _job_status
+from app.external_api.models import (
+    CreateAccountConnectionBody,
+    CreateJobBody,
+    ReconnectAccountConnectionBody,
+)
+from app.external_api.service import ExternalApiService
+from app.job_engine.factory import create_job_engine_repository
+from app.job_engine.models import JOB_TERMINAL_STATES
 from app.job_engine.service import SequentialWorkerSupervisor
+from app.job_engine.worker import WorkerLoop
 from app.session_manager.crypto import SessionCipher
 from app.session_manager.portal_authenticator import PortalAuthenticator
 from app.session_manager.repository import SQLiteSessionRepository
 from app.session_manager.service import SessionTokenManager
-from app.utils.date_utils import BUSINESS_TIMEZONE, split_by_calendar_month
+from app.utils.date_utils import BUSINESS_TIMEZONE
 from app.worker_runtime.coverage_planner import CoveragePlanner
 from app.worker_runtime.handler import InvoiceCrawlTaskHandler
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
@@ -41,191 +50,211 @@ from app.services.invoice_pdf_export_service import InvoicePdfExportService
 
 
 OWNER_ID = "mia-desktop-local"
-WORKER_ID = "desktop-direct"
-
-
-def previous_calendar_month_start(value: date) -> date:
-    """Return the first day of the calendar month immediately before value."""
-    return (value.replace(day=1) - timedelta(days=1)).replace(day=1)
-
-
-def current_calendar_month_end(value: date) -> date:
-    """Return the last day of value's calendar month."""
-    current = value.replace(day=1)
-    next_month = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
-    return next_month - timedelta(days=1)
-
-
-class DesktopInvoiceCrawlTaskHandler(InvoiceCrawlTaskHandler):
-    """Translate desktop artifact intent into the production package service."""
-
-    def run_xml_unit(self, job, payload: dict, progress_callback=None):
-        requested = set(job.parameters.get("data_types") or ())
-        translated = {
-            **payload,
-            # The production coverage planner uses the XML file as the durable
-            # package checkpoint. Keep that checkpoint for HTML/PDF jobs while
-            # Electron exports only the user-requested artifact kind.
-            "export_xml": True,
-            "export_html": bool(requested.intersection({"html", "pdf"})),
-        }
-        return super().run_xml_unit(
-            job, translated, progress_callback=progress_callback,
-        )
-
-
-class DesktopInvoiceCrawlPipeline(InvoiceCrawlPipeline):
-    """Keep production behavior while forcing the two newest calendar months."""
-
-    def _recent_refresh_range(self, parameters):
-        # force_refresh is handled by the production planner and refreshes every
-        # selected slice. Do not add a narrower detail force range in that case.
-        if parameters.get("force_refresh") or not parameters.get("refresh_recent_months"):
-            return None
-        now = self.clock().astimezone(BUSINESS_TIMEZONE).date()
-        request_from = date.fromisoformat(parameters["date_from"])
-        request_to = date.fromisoformat(parameters["date_to"])
-        begin = max(request_from, previous_calendar_month_start(now))
-        end = min(request_to, current_calendar_month_end(now))
-        return (begin, end) if begin <= end else None
-
-    def _latest_month_range(self, parameters):
-        # Vendor pipeline uses this hook to force detail decisions. Desktop
-        # broadens it from one latest month to previous+current calendar month.
-        return self._recent_refresh_range(parameters)
-
-    def _latest_month_force_slices(self, parameters):
-        forced = self._recent_refresh_range(parameters)
-        if forced is None:
-            return frozenset()
-        begin, end = forced
-        return frozenset(
-            (direction, query_type, month_from, month_to)
-            for month_from, month_to in split_by_calendar_month(begin, end)
-            for direction in parameters["directions"]
-            for query_type in parameters["query_types"]
-        )
+WORKER_ID = "slot-direct"
 
 
 class ProductionBackend:
+    """Desktop host for the original source API/service/worker stack.
+
+    No crawl scheduling, coverage policy, progress calculation, retry policy or
+    public error mapping is reimplemented here. Those responsibilities remain
+    in the vendored source modules pinned by VENDOR-MANIFEST.json.
+    """
+
     def __init__(self, data_dir: Path, logger=None, *, start_worker: bool = True) -> None:
-        self.data_dir = data_dir
-        self.data_root = data_dir / "source-data"
+        self.data_dir = data_dir.resolve()
+        self.data_root = self.data_dir / "source-data"
+        self.control_db = self.data_dir / "source-control.sqlite3"
         self.logger = logger
-        control_db = data_dir / "source-control.sqlite3"
-        self.repository = SQLiteJobEngineRepository(control_db)
-        self.session_repository = SQLiteSessionRepository(control_db)
-        self.account_repository = SQLiteAccountConnectionRepository(control_db)
+
+        # All source factories and repositories point at the same local control
+        # database. This is transport configuration, not a second data model.
+        os.environ["MIA_DATA_ROOT"] = str(self.data_root)
+        os.environ["MIA_CONTROL_DATABASE_URL"] = self._sqlite_url(self.control_db)
+
+        self.repository = create_job_engine_repository(sqlite_path=self.control_db)
+        self.session_repository = SQLiteSessionRepository(self.control_db)
+        self.account_repository = SQLiteAccountConnectionRepository(self.control_db)
         self.cipher = SessionCipher.from_environment()
         self.sessions = SessionTokenManager(
-            self.session_repository, self.cipher, PortalAuthenticator(),
+            self.session_repository,
+            self.cipher,
+            PortalAuthenticator(),
         )
         self.accounts = AccountConnectionManager(
-            self.account_repository, self.sessions, self.cipher,
+            self.account_repository,
+            self.sessions,
+            self.cipher,
         )
-        self.accounts.initialize()
-        self.repository.migrate()
+        self.coverage_planner = CoveragePlanner(self.data_root)
+        self.service = ExternalApiService(
+            self.repository,
+            self.sessions,
+            self.accounts,
+            coverage_planner=self.coverage_planner,
+            business_clock=lambda: datetime.now(BUSINESS_TIMEZONE),
+        )
+        self.service.initialize()
+
         config = CrawlConfig.from_env()
         config.validate()
-        self.handler = DesktopInvoiceCrawlTaskHandler(
-            self.repository, self.sessions, worker_id=WORKER_ID,
-            data_root=self.data_root, crawl_config=config,
+        self.handler = InvoiceCrawlTaskHandler(
+            self.repository,
+            self.sessions,
+            worker_id=WORKER_ID,
+            data_root=self.data_root,
+            crawl_config=config,
             proxy_registry=ProxyRegistry(direct_capacity=1),
         )
-        self.pipeline = DesktopInvoiceCrawlPipeline(
-            self.repository, self.handler, CoveragePlanner(self.data_root),
+        self.pipeline = InvoiceCrawlPipeline(
+            self.repository,
+            self.handler,
+            self.coverage_planner,
             clock=lambda: datetime.now(BUSINESS_TIMEZONE),
         )
         self.supervisor = SequentialWorkerSupervisor(
-            self.repository, worker_id=WORKER_ID, pipeline=self.pipeline,
-            job_lease_seconds=120, heartbeat_interval_seconds=10,
+            self.repository,
+            worker_id=WORKER_ID,
+            pipeline=self.pipeline,
+            job_lease_seconds=120,
+            heartbeat_interval_seconds=10,
         )
         self.stop_event = threading.Event()
-        self.supervisor.set_stop_event(self.stop_event)
+        self.worker_loop = WorkerLoop(self.supervisor)
         self.worker = threading.Thread(
-            target=self._worker_loop, daemon=True, name="mia-production-worker",
+            target=self.worker_loop.run,
+            args=(self.stop_event,),
+            daemon=True,
+            name="mia-source-worker",
         )
         if start_worker:
             self.worker.start()
+
+    @staticmethod
+    def _sqlite_url(path: Path) -> str:
+        value = path.resolve().as_posix()
+        if len(value) >= 2 and value[1] == ":":
+            value = "/" + value
+        return "sqlite://" + value
 
     def close(self) -> None:
         self.stop_event.set()
         self.supervisor.request_shutdown()
         if self.worker.is_alive():
-            self.worker.join(timeout=15)
+            self.worker.join(timeout=20)
 
+    # ------------------------------------------------------------------
+    # Source account-connection contract
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _connection_public(connection, *, reused: bool = False) -> dict[str, Any]:
+        return {
+            "connection_id": connection.connection_id,
+            "username": connection.username,
+            "company_name": None,
+            "status": connection.status,
+            "token_generation": connection.token_generation,
+            "created_at": connection.created_at.isoformat(),
+            "updated_at": connection.updated_at.isoformat(),
+            "reused": reused,
+        }
+
+    def create_connection(self, username: str, password: str) -> dict[str, Any]:
+        body = CreateAccountConnectionBody(username=username, password=password)
+        connection, reused = self.service.create_account_connection(body, owner_id=OWNER_ID)
+        return self._connection_public(connection, reused=reused)
+
+    def get_connection(self, connection_id: str) -> dict[str, Any]:
+        connection = self.service.get_account_connection(connection_id, owner_id=OWNER_ID)
+        return self._connection_public(connection)
+
+    def reconnect_connection(self, connection_id: str, username: str, password: str) -> dict[str, Any]:
+        body = ReconnectAccountConnectionBody(username=username, password=password)
+        connection = self.service.reconnect_account_connection(
+            connection_id, body, owner_id=OWNER_ID
+        )
+        return self._connection_public(connection)
+
+    def revoke_connection(self, connection_id: str) -> dict[str, Any]:
+        connection = self.service.revoke_account_connection(connection_id, owner_id=OWNER_ID)
+        return self._connection_public(connection)
+
+    def list_connections(self) -> list[dict[str, Any]]:
+        # The upstream API intentionally exposes create/get/reconnect/revoke but
+        # no list route. Desktop needs inventory for its table, so enumerate only
+        # IDs from the same upstream control DB and resolve each record through
+        # the source AccountConnectionManager. No account state is synthesized.
+        with closing(sqlite3.connect(self.control_db)) as connection:
+            rows = connection.execute(
+                """SELECT connection_id FROM account_connections
+                   WHERE owner_id=? AND status<>'revoked'
+                   ORDER BY created_at, connection_id""",
+                (OWNER_ID,),
+            ).fetchall()
+        return [self.get_connection(str(row[0])) for row in rows]
+
+    def connection_username(self, connection_id: str) -> str:
+        return self.service.get_account_connection(
+            connection_id, owner_id=OWNER_ID
+        ).username
+
+    # ------------------------------------------------------------------
+    # Source job contract
+    # ------------------------------------------------------------------
     def start(self, value: dict[str, Any]) -> dict[str, Any]:
         intent = dict(value["intent"])
-        connection, _ = self.accounts.create(
-            username=value["username"], password=value["password"], owner_id=OWNER_ID,
+        connection_id = str(intent["connection_id"])
+
+        # Compatibility migration for accounts created by the former desktop
+        # account store. New UI accounts use conn_* IDs directly.
+        if not connection_id.startswith("conn_"):
+            username = str(value["username"])
+            password = str(value["password"])
+            connection = self.create_connection(username, password)
+            connection_id = str(connection["connection_id"])
+
+        scopes = set(intent.get("scopes") or ("overview", "detail"))
+        data_types = set(intent.get("data_types") or ("invoice",))
+        body = CreateJobBody(
+            connection_id=connection_id,
+            date_from=date.fromisoformat(str(intent["date_from"])),
+            date_to=date.fromisoformat(str(intent["date_to"])),
+            directions=list(intent["directions"]),
+            query_types=list(intent["query_types"]),
+            force_refresh=bool(intent.get("force_refresh")),
+            refresh_latest_month=bool(intent.get("refresh_latest_month", True)),
+            result_scope="detail" if "detail" in scopes else "overview",
+            include_xml=bool(data_types.intersection({"xml", "html", "pdf"})),
+            include_mvt=False,
         )
-        scopes = set(intent["scopes"])
-        data_types = set(intent.get("data_types") or ())
-        include_xml = bool(data_types.intersection({"xml", "html", "pdf"}))
-        # The production pipeline executes ensure_xml only after the detail
-        # module. Artifact tabs may present an overview-only UI scope, but the
-        # durable backend contract must include detail for package generation.
-        result_scope = "detail" if "detail" in scopes or include_xml else "overview"
-        pipeline_plan = build_pipeline_plan(
-            result_scope, False, include_xml,
-            date_from=date.fromisoformat(intent["date_from"]),
-            date_to=date.fromisoformat(intent["date_to"]),
-        )
-        parameters = {
-            "connection_id": intent["connection_id"],
-            "session_hash": connection.session_hash,
-            "company_tax_code": value["username"],
-            "date_from": intent["date_from"], "date_to": intent["date_to"],
-            "directions": sorted(intent["directions"]),
-            "query_types": sorted(intent["query_types"]),
-            # User checkbox refreshes all selected historical slices. Even when
-            # unchecked, the desktop pipeline always refreshes previous+current
-            # calendar month through refresh_recent_months.
-            "force_refresh": bool(intent.get("force_refresh")),
-            "refresh_recent_months": True,
-            "refresh_latest_month": False,
-            "result_scope": result_scope, "include_xml": include_xml,
-            "include_mvt": False, "data_types": sorted(data_types),
-            "pipeline_plan": pipeline_plan,
-        }
-        if self.logger is not None:
-            self.logger.info(
-                "source_job_refresh_policy force_refresh=%s recent_months=2 range=%s..%s",
-                parameters["force_refresh"], parameters["date_from"], parameters["date_to"],
-            )
-        fingerprint = hashlib.sha256(json.dumps(
-            parameters, sort_keys=True, separators=(",", ":"),
-        ).encode()).hexdigest()
-        key_hash = hashlib.sha256(value["idempotency_key"].encode()).hexdigest()
-        job = self.repository.create_job(
-            CreateJobRequest(
-                account_key=intent["connection_id"], company_tax_code=value["username"],
-                job_type="invoice_crawl", parameters=parameters, owner_id=OWNER_ID,
-                idempotency_key_hash=key_hash, request_fingerprint=fingerprint,
-                pipeline_version=2,
-            ), (), stages=tuple(JobStageSpec(item["name"]) for item in pipeline_plan["stages"]),
+        job = self.service.create_job(
+            body,
+            owner_id=OWNER_ID,
+            idempotency_key=str(value["idempotency_key"]),
         )
         return self.public_job(job)
 
     def get(self, job_id: str) -> dict[str, Any]:
-        return self.public_job(self.repository.get_job(job_id))
+        return self.public_job(self.service.get_job(job_id, owner_id=OWNER_ID))
 
     def resume_all(self) -> list[dict[str, Any]]:
-        return [self.public_job(job) for job in self.repository.list_jobs_for_reconciliation()
-                if job.status not in JOB_TERMINAL_STATES]
+        return [
+            self.public_job(job)
+            for job in self.repository.list_jobs_for_reconciliation()
+            if job.owner_id == OWNER_ID and job.status not in JOB_TERMINAL_STATES
+        ]
 
     def cancel(self, job_id: str) -> dict[str, Any]:
-        return self.public_job(self.repository.request_cancellation(job_id))
+        return self.public_job(self.service.cancel_job(job_id, owner_id=OWNER_ID))
 
     def summary(self, job_id: str) -> dict[str, Any]:
-        job = self.repository.get_job(job_id)
-        return {"job_id": job.job_id, "status": job.status, "warning_count": job.warning_count,
-                "work": job.progress_state or {}}
+        return self.service.get_summary(job_id, owner_id=OWNER_ID)
 
     def _result_job(self, connection_id: str):
         candidates = [
             job for job in self.repository.list_jobs_for_reconciliation()
-            if str(job.parameters.get("connection_id")) == connection_id
+            if job.owner_id == OWNER_ID
+            and str(job.parameters.get("connection_id")) == connection_id
         ]
         return max(candidates, key=lambda item: (item.created_at, item.job_id)) if candidates else None
 
@@ -254,9 +283,8 @@ class ProductionBackend:
         if direction not in (None, "purchase", "sold"):
             raise ValueError("invalid_result_direction")
 
-        # Results are a view over every durable invoice already synchronized for
-        # the account. The selected display range must not be constrained by
-        # whichever historical job happens to be the newest record.
+        # Read-only desktop range/search view over the source DB. The data model
+        # and cursor/page implementation remain JobResultReader from source.
         job = replace(base_job, parameters={
             **base_job.parameters,
             "date_from": date_from,
@@ -292,21 +320,17 @@ class ProductionBackend:
                     if raw_id is not None
                     else int(hashlib.sha256(serialized.encode()).hexdigest()[:12], 16)
                 )
+                row = {
+                    "direction": item.get("direction", "purchase"),
+                    "business_key": business_key,
+                    "payload": item,
+                }
                 if kind == "overview":
-                    output.append({
-                        "overview_id": identifier,
-                        "direction": item.get("direction", "purchase"),
-                        "business_key": business_key,
-                        "payload": item,
-                    })
+                    row["overview_id"] = identifier
                 else:
-                    output.append({
-                        "detail_id": identifier,
-                        "direction": item.get("direction", "purchase"),
-                        "business_key": business_key,
-                        "line_key": str(item.get("stt", identifier)),
-                        "payload": item,
-                    })
+                    row["detail_id"] = identifier
+                    row["line_key"] = str(item.get("stt", identifier))
+                output.append(row)
                 if len(output) >= limit:
                     break
             cursor = page["pagination"]["next_cursor"]
@@ -437,7 +461,6 @@ class ProductionBackend:
         raise OSError("artifact_name_exhausted")
 
     def prepare_artifacts(self, value: dict[str, Any]) -> None:
-        """Run production post-processing required before local file copying."""
         if "pdf" not in set(value.get("kinds") or ()):
             return
         for connection_id in value.get("connection_ids") or ():
@@ -461,39 +484,24 @@ class ProductionBackend:
                         overwrite=False,
                     )
 
-    def _worker_loop(self) -> None:
-        while not self.stop_event.is_set():
-            try:
-                result = self.supervisor.run_once()
-                if result.job is None:
-                    self.stop_event.wait(0.25)
-            except Exception as error:
-                if self.logger is not None:
-                    self.logger.error("production_worker_iteration_failed error_type=%s", type(error).__name__)
-                self.stop_event.wait(1)
-
     @staticmethod
     def public_job(job) -> dict[str, Any]:
-        state = dict(job.progress_state or {})
+        status = _job_status(job).model_dump()
         return {
-            "job_id": job.job_id,
+            **status,
             "connection_id": str(job.parameters.get("connection_id") or job.account_key),
             "intent": {
                 "connection_id": str(job.parameters.get("connection_id") or job.account_key),
-                "date_from": job.parameters["date_from"], "date_to": job.parameters["date_to"],
+                "date_from": job.parameters["date_from"],
+                "date_to": job.parameters["date_to"],
                 "directions": list(job.parameters["directions"]),
                 "query_types": list(job.parameters["query_types"]),
                 "scopes": ["overview", "detail"] if job.parameters.get("result_scope") == "detail" else ["overview"],
-                "data_types": list(job.parameters.get("data_types") or (
-                    ["invoice", "xml"] if job.parameters.get("include_xml") else ["invoice"]
-                )),
+                "data_types": ["invoice", "xml"] if job.parameters.get("include_xml") else ["invoice"],
                 "force_refresh": bool(job.parameters.get("force_refresh")),
+                "refresh_latest_month": bool(job.parameters.get("refresh_latest_month")),
             },
-            "idempotency_key": "managed-by-production-engine",
-            "status": job.status, "stage": job.current_stage,
-            "overall_percent": max(0, min(100, int(float(job.progress_percent)))),
-            "current_month": current_month_public(state),
-            "created_at": job.created_at, "updated_at": job.updated_at,
-            "error": {"code": job.last_error_code} if job.last_error_code else None,
+            "idempotency_key": "managed-by-source-api",
+            "created_at": job.created_at,
             "event_sequence": int(job.lease_generation),
         }
