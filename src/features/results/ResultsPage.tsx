@@ -156,7 +156,7 @@ export function ResultsPage({ connectionId, initialDateFrom, initialDateTo, onBa
     </div>
 
     <div className="results-filters results-filters--figma">
-      <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
+      <DateRangePicker className="results-date-range" dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
       <select aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}>
         <option value="">Mua vào và bán ra</option>
         <option value="purchase">Mua vào</option>
