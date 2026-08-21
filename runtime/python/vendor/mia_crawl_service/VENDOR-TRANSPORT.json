@@ -2,13 +2,16 @@
   "source_repository": "https://github.com/hvsoftware26/mia-crawl-service",
   "source_commit": "63acf111c64b47ac964608141b2c83bbb6e2f688",
   "source_files": {
+    "app/external_api/__init__.py": "cd3d924feee1f843703dfbe151fb0d0143424f7a",
+    "app/external_api/__main__.py": "39a27338563e8d2189e1acf1d59e85552bb5649b",
+    "app/external_api/app.py": "5c727b3525de5ffaf4e9789b01952ab960631b69",
+    "app/external_api/cli.py": "cc99e8f3912f9066fc8fc3a657d498ac375711d3",
+    "app/external_api/config.py": "b57f0bb5c869903037f835f0ea21b0174f0169e7",
+    "app/external_api/factory.py": "f9b82cc6ea6f550610db4380d0e7716f51e48c50",
     "app/external_api/models.py": "94175cb4615cf7b994ec7caf6365f45b1b10501a",
+    "app/external_api/repository.py": "925bca5aa5f6dcca3bd0cd40148f7b64ae2730bf",
+    "app/external_api/security.py": "5d0fb469550ac685c02138697c3f952d76da259b",
     "app/external_api/service.py": "16450929c9e3fa4ade5b82925733a6e2b898ed4b"
   },
-  "transport_overrides": {
-    "app/external_api/__init__.py": {
-      "desktop_git_blob": "ab56833d38f0f40baa355624e919c73fb910aefe",
-      "reason": "Electron uses local JSON-RPC instead of importing the FastAPI HTTP entrypoint eagerly; source business modules remain unchanged."
-    }
-  }
+  "transport_overrides": {}
 }
