@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CreateJobRequest, JobStatusResponse } from '../../lib/api/contracts';
 import type { PersistedJob } from '../../lib/runtime-bridge';
+import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
 import { DEFAULT_BATCH_CONCURRENCY, normalizeBatch } from './batch-scheduler';
 
@@ -30,6 +31,7 @@ export function useBatchJobLifecycle() {
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const pending = useRef<CreateJobRequest[]>([]);
   const retryLimit = useRef(MAX_RETRIES);
+  const lastLoggedStatus = useRef(new Map<string, string>());
 
   const stopTimers = useCallback(() => {
     generation.current += 1;
@@ -41,12 +43,21 @@ export function useBatchJobLifecycle() {
     if (token !== generation.current || !window.miaRuntime?.jobs) return;
     const intent = pending.current.shift();
     if (!intent) return;
+    diagnosticLog('job_start_requested', {
+      date_from: intent.date_from,
+      date_to: intent.date_to,
+      force_refresh: Boolean(intent.force_refresh),
+      directions: intent.directions,
+      scopes: intent.scopes,
+    });
     try {
       const { record } = await window.miaRuntime.jobs.start(intent);
       if (token !== generation.current || !record.job_id) return;
+      diagnosticLog('job_started', { job_id: record.job_id, connection_id: intent.connection_id, status: record.status });
       setItems((current) => ({ ...current, [intent.connection_id]: { connectionId: intent.connection_id, record } }));
       void poll(record.job_id, intent.connection_id, 0, token);
-    } catch {
+    } catch (error) {
+      diagnosticLog('job_start_failed', { connection_id: intent.connection_id, code: (error as { code?: string })?.code, name: (error as Error)?.name }, 'error');
       setItems((current) => ({ ...current, [intent.connection_id]: { connectionId: intent.connection_id, error: 'Không thể tạo job.' } }));
       setMessage({ kind: 'error', text: 'Không thể tạo job. Vui lòng thử lại.' });
       void launchNext(token);
@@ -61,6 +72,28 @@ export function useBatchJobLifecycle() {
       if (token !== generation.current) return;
       setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, status } }));
       setMessage(null);
+      const fingerprint = JSON.stringify([
+        status.status,
+        status.stage,
+        status.overall_percent,
+        status.current_month?.key,
+        status.current_month?.processed,
+        status.current_month?.planned,
+        status.current_month?.percent,
+        status.error?.code,
+      ]);
+      if (lastLoggedStatus.current.get(jobId) !== fingerprint) {
+        lastLoggedStatus.current.set(jobId, fingerprint);
+        diagnosticLog('job_progress', {
+          job_id: jobId,
+          connection_id: connectionId,
+          status: status.status,
+          stage: status.stage,
+          overall_percent: status.overall_percent,
+          current_month: status.current_month,
+          error_code: status.error?.code,
+        }, status.status === 'failed' ? 'error' : 'info');
+      }
       if (TERMINAL_JOB_STATUSES.has(status.status)) {
         if (status.status === 'completed' || status.status === 'completed_with_warning') {
           setMessage({ kind: 'success', text: status.status === 'completed' ? 'Đồng bộ dữ liệu thành công.' : 'Đồng bộ hoàn tất và có cảnh báo.' });
@@ -72,7 +105,8 @@ export function useBatchJobLifecycle() {
       }
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, 0, token); }, POLL_MS);
       timers.current.add(timer);
-    } catch {
+    } catch (error) {
+      diagnosticLog('job_poll_failed', { job_id: jobId, connection_id: connectionId, attempt, code: (error as { code?: string })?.code }, 'warn');
       setMessage(attempt >= retryLimit.current
         ? { kind: 'error', text: 'Không thể cập nhật tiến trình. Vui lòng thử lại.' }
         : { kind: 'notice', text: 'Mất kết nối tạm thời, đang thử lại…' });
@@ -89,18 +123,24 @@ export function useBatchJobLifecycle() {
   useEffect(() => {
     const token = generation.current;
     const jobs = window.miaRuntime?.jobs;
-    const resume = jobs && typeof jobs.resumeAll === 'function'
-      ? jobs.resumeAll()
-      : jobs?.resume().then((record) => record ? [record] : []);
-    void resume?.then((records) => {
+    if (!jobs) return stopTimers;
+    const hydrate = typeof jobs.latestAll === 'function'
+      ? jobs.latestAll()
+      : typeof jobs.resumeAll === 'function'
+        ? jobs.resumeAll()
+        : jobs.resume().then((record) => record ? [record] : []);
+    void hydrate.then((records) => {
       if (token !== generation.current) return;
-      const resumed: Record<string, BatchItem> = {};
+      const restored: Record<string, BatchItem> = {};
       for (const record of records) {
-        resumed[record.connection_id] = { connectionId: record.connection_id, record };
-        if (record.job_id) void poll(record.job_id, record.connection_id, 0, token);
+        restored[record.connection_id] = { connectionId: record.connection_id, record };
+        if (record.job_id && record.status && !TERMINAL_JOB_STATUSES.has(record.status as JobStatusResponse['status'])) {
+          void poll(record.job_id, record.connection_id, 0, token);
+        }
       }
-      setItems(resumed);
-    }).catch(() => undefined);
+      setItems((current) => ({ ...restored, ...current }));
+      diagnosticLog('job_state_hydrated', { account_count: records.length, active_count: records.filter((record) => record.status && !TERMINAL_JOB_STATUSES.has(record.status as JobStatusResponse['status'])).length });
+    }).catch((error) => diagnosticLog('job_state_hydrate_failed', { code: (error as { code?: string })?.code }, 'warn'));
     return stopTimers;
   }, [poll, stopTimers]);
 
@@ -108,9 +148,18 @@ export function useBatchJobLifecycle() {
     stopTimers();
     const token = generation.current;
     const normalized = normalizeBatch(intents);
+    diagnosticLog('job_batch_started', {
+      count: normalized.length,
+      date_from: normalized[0]?.date_from,
+      date_to: normalized[0]?.date_to,
+      force_refresh: normalized.some((intent) => Boolean(intent.force_refresh)),
+    });
     setMessage(null);
     pending.current = [...normalized];
-    setItems(Object.fromEntries(normalized.map((intent) => [intent.connection_id, { connectionId: intent.connection_id }])));
+    setItems((current) => ({
+      ...current,
+      ...Object.fromEntries(normalized.map((intent) => [intent.connection_id, { connectionId: intent.connection_id }])),
+    }));
     void (async () => {
       const preferences = await window.miaRuntime?.preferences?.get().catch(() => null);
       if (token !== generation.current) return;
@@ -122,6 +171,7 @@ export function useBatchJobLifecycle() {
 
   const cancelAll = useCallback(async () => {
     pending.current = [];
+    diagnosticLog('job_batch_cancel_requested', { active_count: Object.values(items).filter((item) => item.record?.job_id).length }, 'warn');
     await Promise.all(Object.values(items).map(async (item) => {
       if (!item.record?.job_id || !window.miaRuntime?.jobs) return;
       const status = await window.miaRuntime.jobs.cancel(item.record.job_id);
@@ -131,3 +181,5 @@ export function useBatchJobLifecycle() {
 
   return { items, startMany, cancelAll, message, dismissMessage: () => setMessage(null) };
 }
+
+export type BatchJobLifecycle = ReturnType<typeof useBatchJobLifecycle>;
