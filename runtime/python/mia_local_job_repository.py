@@ -3,14 +3,20 @@
 The upstream source service calls ``create_admitted_job`` because its web/server
 host adds worker-slot capacity admission around the relational repository.
 Desktop has exactly one local runtime and one sequential worker, so the source
-SQLite repository itself is the correct durable queue.  This adapter changes
+SQLite repository itself is the correct durable queue. This adapter changes
 only that host-facing method name; queueing, leases, recovery, progress and job
 state transitions remain implemented by the upstream repository.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+
+VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
+if str(VENDOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(VENDOR_ROOT))
 
 from app.job_engine.repository import SQLiteJobEngineRepository
 
