@@ -93,6 +93,8 @@ export type OverviewResult = SourceResultRow;
 export type DetailResult = SourceResultRow;
 export interface LocalResultPage<T> {
   items: T[];
+  /** Stable public source field order for dynamic result tables. */
+  columns?: string[];
   total_count?: number;
   row_count?: number;
   invoice_count?: number;
