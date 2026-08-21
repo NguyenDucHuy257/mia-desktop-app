@@ -1,13 +1,3 @@
-.sync-button {
-  font-size: 0;
-}
-
-.sync-button::after {
-  content: 'Đồng bộ dữ liệu';
-  font-size: 14px;
-  line-height: 18px;
-}
-
 .results-page--figma {
   height: 100%;
   padding: 24px;
