@@ -101,7 +101,7 @@ class ProductionBackendTests(unittest.TestCase):
             backend.cancel(record["job_id"])
             backend.close()
 
-    def test_public_job_uses_source_external_api_error_contract(self):
+    def test_public_job_uses_local_source_error_transport(self):
         now = datetime(2026, 8, 21, 8, 0, tzinfo=timezone.utc)
         job = SimpleNamespace(
             job_id="job-source",
@@ -138,7 +138,9 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(value["overall_percent"], 5)
         self.assertEqual(value["error"]["code"], "source_rate_limited")
         self.assertEqual(value["error"]["message"], "source_rate_limited")
-        self.assertTrue(value["error"]["retryable"])
+        # HTTP API retryability classification is intentionally not part of the
+        # local JSON-RPC contract. Desktop owns polling/retry behavior itself.
+        self.assertFalse(value["error"]["retryable"])
 
     def test_pdf_export_calls_source_pdf_service_for_latest_completed_job(self):
         backend = object.__new__(ProductionBackend)
