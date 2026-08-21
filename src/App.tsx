@@ -136,6 +136,7 @@ export default function App() {
         ) : view === 'results' ? (
           <ResultsPage
             connectionId={connectionId}
+            exportFolder={exportFolder}
             initialDateFrom={resultRange?.dateFrom}
             initialDateTo={resultRange?.dateTo}
             onBack={() => setView('navigation')}
