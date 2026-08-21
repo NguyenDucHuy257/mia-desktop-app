@@ -24,6 +24,8 @@ class CrawlerAdapterTests(unittest.TestCase):
         self.assertTrue(callable(CrawlConfig.from_env))
 
     def test_account_verification_returns_only_company_name(self):
+        # Compatibility helper remains testable for migration code, but it is no
+        # longer exposed by the production runtime or used by ProductionBackend.
         session_type = MagicMock()
         session = session_type.return_value
         session.get_company_info.return_value = {"name": "Synthetic Company", "token": "must-not-return"}
@@ -32,11 +34,12 @@ class CrawlerAdapterTests(unittest.TestCase):
         session.login.assert_called_once_with()
         self.assertNotIn("token", result)
 
-    def test_account_verification_revalidates_credentials_at_runtime_boundary(self):
+    def test_legacy_crawler_rpc_is_not_exposed_by_local_runtime(self):
         import mia_runtime
         with self.assertRaises(mia_runtime.RpcError) as raised:
-            mia_runtime.dispatch("crawler.verify_account", {"username": "../unsafe", "password": ""})
-        self.assertEqual(raised.exception.message, "invalid_params")
+            mia_runtime.dispatch("crawler.verify_account", {"username": "0100000000", "password": "secret"})
+        self.assertEqual(raised.exception.code, -32601)
+        self.assertEqual(raised.exception.message, "method_not_found")
 
     def test_imports_vendored_overview_and_detail_without_duplicates(self):
         with tempfile.TemporaryDirectory() as directory:
