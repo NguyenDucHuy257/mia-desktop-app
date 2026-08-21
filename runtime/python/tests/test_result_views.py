@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -7,7 +8,85 @@ from unittest.mock import Mock, patch
 from openpyxl import load_workbook
 
 import mia_runtime
-from mia_backend import ProductionBackend
+from mia_backend import BUSINESS_TIMEZONE, DesktopInvoiceCrawlPipeline, ProductionBackend
+
+
+class RefreshPolicyTests(unittest.TestCase):
+    @staticmethod
+    def pipeline(now=datetime(2026, 8, 21, 12, 0, tzinfo=BUSINESS_TIMEZONE)):
+        pipeline = object.__new__(DesktopInvoiceCrawlPipeline)
+        pipeline.clock = lambda: now
+        return pipeline
+
+    @staticmethod
+    def parameters(date_from, date_to, *, force_refresh=False):
+        return {
+            "date_from": date_from,
+            "date_to": date_to,
+            "directions": ["purchase", "sold"],
+            "query_types": ["query", "sco-query"],
+            "force_refresh": force_refresh,
+            "refresh_recent_months": True,
+        }
+
+    def test_old_historical_range_uses_verified_cache_when_fresh_download_is_off(self):
+        pipeline = self.pipeline()
+        parameters = self.parameters("2023-10-01", "2023-10-31")
+        self.assertIsNone(pipeline._latest_month_range(parameters))
+        self.assertEqual(pipeline._latest_month_force_slices(parameters), frozenset())
+
+    def test_previous_and_current_calendar_month_are_always_forced(self):
+        pipeline = self.pipeline()
+        parameters = self.parameters("2026-06-01", "2026-08-31")
+        self.assertEqual(
+            pipeline._latest_month_range(parameters),
+            (date(2026, 7, 1), date(2026, 8, 31)),
+        )
+        slices = pipeline._latest_month_force_slices(parameters)
+        expected = {
+            (direction, query_type, begin, end)
+            for direction in ("purchase", "sold")
+            for query_type in ("query", "sco-query")
+            for begin, end in (
+                (date(2026, 7, 1), date(2026, 7, 31)),
+                (date(2026, 8, 1), date(2026, 8, 31)),
+            )
+        }
+        self.assertEqual(slices, frozenset(expected))
+        self.assertFalse(any(item[2].month == 6 for item in slices))
+
+    def test_partial_recent_range_only_forces_selected_days(self):
+        pipeline = self.pipeline()
+        parameters = self.parameters("2026-07-15", "2026-08-10")
+        self.assertEqual(
+            pipeline._latest_month_range(parameters),
+            (date(2026, 7, 15), date(2026, 8, 10)),
+        )
+        slices = pipeline._latest_month_force_slices(parameters)
+        self.assertIn(
+            ("purchase", "query", date(2026, 7, 15), date(2026, 7, 31)),
+            slices,
+        )
+        self.assertIn(
+            ("purchase", "query", date(2026, 8, 1), date(2026, 8, 10)),
+            slices,
+        )
+
+    def test_fresh_download_checkbox_delegates_to_full_production_force_refresh(self):
+        pipeline = self.pipeline()
+        parameters = self.parameters("2023-01-01", "2026-08-31", force_refresh=True)
+        # Production CoveragePlanner sees force_refresh=True and refreshes every
+        # selected slice. The desktop recent-month hook must not narrow it.
+        self.assertIsNone(pipeline._latest_month_range(parameters))
+        self.assertEqual(pipeline._latest_month_force_slices(parameters), frozenset())
+
+    def test_january_policy_refreshes_previous_december_and_current_january(self):
+        pipeline = self.pipeline(datetime(2027, 1, 10, 12, 0, tzinfo=BUSINESS_TIMEZONE))
+        parameters = self.parameters("2026-12-01", "2027-01-31")
+        self.assertEqual(
+            pipeline._latest_month_range(parameters),
+            (date(2026, 12, 1), date(2027, 1, 31)),
+        )
 
 
 class ResultViewTests(unittest.TestCase):
