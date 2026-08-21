@@ -31,14 +31,32 @@ async function writePreferences(userDataDirectory, value) {
   return preferences;
 }
 
-async function readSanitizedLogs(userDataDirectory) {
-  const filename = path.join(userDataDirectory, 'offline-runtime', 'logs', 'runtime.log');
-  let content;
-  try { content = await fs.readFile(filename, 'utf8'); } catch (error) { if (error?.code === 'ENOENT') return []; throw error; }
-  return content.split(/\r?\n/).filter(Boolean).slice(-200).map((line) => line
+function sanitizeLogLine(line) {
+  return line
     .replace(/\b\d{10,14}\b/g, '[redacted-id]')
-    .replace(/(password|token|authorization|cookie)\s*[=:]\s*\S+/gi, '$1=[redacted]')
-    .slice(0, 500));
+    .replace(/(password|token|secret|authorization|cookie|session|credential|api[_-]?key)\s*[=:]\s*\S+/gi, '$1=[redacted]')
+    .slice(0, 1000);
+}
+
+async function readTail(filename, source) {
+  try {
+    const content = await fs.readFile(filename, 'utf8');
+    return content.split(/\r?\n/).filter(Boolean).slice(-200).map((line) => `[${source}] ${sanitizeLogLine(line)}`);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+async function readSanitizedLogs(userDataDirectory) {
+  const sources = [
+    ['electron', path.join(userDataDirectory, 'logs', 'electron.log')],
+    ['renderer', path.join(userDataDirectory, 'logs', 'renderer.log')],
+    ['runtime', path.join(userDataDirectory, 'offline-runtime', 'logs', 'runtime.log')],
+    ['crawler', path.join(userDataDirectory, 'offline-runtime', 'logs', 'crawler.log')],
+  ];
+  const groups = await Promise.all(sources.map(([source, filename]) => readTail(filename, source)));
+  return groups.flat().sort((left, right) => left.localeCompare(right)).slice(-500);
 }
 
 module.exports = { DEFAULTS, readPreferences, readSanitizedLogs, validatePreferences, writePreferences };
