@@ -177,8 +177,6 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
   function changeQueryType(value: InvoiceQueryType) {
     setQueryType(value);
-    // Source has direction-specific cash-register templates. Keep the table on
-    // one exact template instead of inventing a union schema.
     if (value === 'sco-query' && direction === '') setDirection('purchase');
   }
 
@@ -198,6 +196,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       date_from: dateFrom,
       date_to: dateTo,
       direction: direction || null,
+      query_type: queryType,
       destination_configured: true,
     });
     try {
@@ -209,6 +208,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         date_from: dateFrom,
         date_to: dateTo,
         direction: direction || null,
+        query_type: queryType,
         search: search.trim(),
       });
       diagnosticLog('results_export_completed', { connection_id: connectionId, scopes: exportScopes, file_count: result.count });
