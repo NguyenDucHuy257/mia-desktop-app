@@ -55,9 +55,31 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(result, {"downloaded_count": 1})
         production.assert_called_once_with(
             job,
-            {"export_xml": False, "export_html": True},
+            {"export_xml": True, "export_html": True},
             progress_callback=None,
         )
+
+    def test_artifact_job_enables_production_detail_prerequisite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = ProductionBackend(Path(directory), start_worker=False)
+            record = backend.start({
+                "username": "0100000000", "password": "synthetic-password",
+                "idempotency_key": "desktop-html-prerequisite",
+                "intent": {
+                    "connection_id": "desktop-account-1",
+                    "date_from": "2026-01-01", "date_to": "2026-01-01",
+                    "directions": ["purchase"], "query_types": ["query"],
+                    "scopes": ["overview"], "data_types": ["html"],
+                },
+            })
+            source = backend.repository.get_job(record["job_id"])
+            self.assertEqual(source.parameters["result_scope"], "detail")
+            self.assertEqual(
+                source.parameters["pipeline_plan"]["modules"],
+                ["overview", "detail", "ensure_xml"],
+            )
+            backend.cancel(record["job_id"])
+            backend.close()
 
     def test_pdf_export_uses_production_pdf_service_for_latest_completed_job(self):
         backend = object.__new__(ProductionBackend)

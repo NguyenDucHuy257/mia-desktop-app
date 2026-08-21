@@ -53,7 +53,10 @@ function validateJobId(value) {
 }
 
 function idempotencyKey(intent) {
-  return `desktop-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
+  // Version the key namespace whenever the main-to-production request mapping
+  // changes. This preserves restart idempotency without conflicting with a
+  // durable job created by an older adapter fingerprint.
+  return `desktop-v2-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
 function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector, createAttemptId = crypto.randomUUID) {

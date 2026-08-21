@@ -48,7 +48,10 @@ class DesktopInvoiceCrawlTaskHandler(InvoiceCrawlTaskHandler):
         requested = set(job.parameters.get("data_types") or ())
         translated = {
             **payload,
-            "export_xml": "xml" in requested,
+            # The production coverage planner uses the XML file as the durable
+            # package checkpoint. Keep that checkpoint for HTML/PDF jobs while
+            # Electron exports only the user-requested artifact kind.
+            "export_xml": True,
             "export_html": bool(requested.intersection({"html", "pdf"})),
         }
         return super().run_xml_unit(
@@ -110,8 +113,11 @@ class ProductionBackend:
         )
         scopes = set(intent["scopes"])
         data_types = set(intent.get("data_types") or ())
-        result_scope = "detail" if "detail" in scopes else "overview"
         include_xml = bool(data_types.intersection({"xml", "html", "pdf"}))
+        # The production pipeline executes ensure_xml only after the detail
+        # module. Artifact tabs may present an overview-only UI scope, but the
+        # durable backend contract must include detail for package generation.
+        result_scope = "detail" if "detail" in scopes or include_xml else "overview"
         pipeline_plan = build_pipeline_plan(
             result_scope, False, include_xml,
             date_from=date.fromisoformat(intent["date_from"]),
