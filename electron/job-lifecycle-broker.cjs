@@ -10,8 +10,6 @@ const QUERY_TYPES = new Set(['query', 'sco-query']);
 const SCOPES = new Set(['overview', 'detail']);
 const DATA_TYPES = new Set(['invoice', 'xml', 'html', 'pdf']);
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
-// The job contract now uses the source repository's conn_* account/session state
-// directly. Keep it isolated from durable jobs created by older desktop adapters.
 const JOB_POLICY_NAMESPACE = 'desktop-source-v1';
 
 class JobInputError extends Error {
@@ -64,14 +62,20 @@ function idempotencyKey(intent) {
   return `${JOB_POLICY_NAMESPACE}-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
-function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), createAttemptId = crypto.randomUUID) {
+// Keep the legacy constructor shape while the Electron shell is migrated.
+// `protector` is intentionally ignored: source account-connections own the
+// encrypted credential/session state, so jobs never decrypt credentials in JS.
+function createJobLifecycleBroker(
+  getRuntime,
+  _now = () => new Date().toISOString(),
+  _protector = undefined,
+  createAttemptId = crypto.randomUUID,
+) {
   if (typeof getRuntime !== 'function') throw new TypeError('Invalid offline runtime dependency.');
   const attemptKeys = new Map();
   const startSourceJob = async (intent, key) => getRuntime().invoke(
     'source.jobs.start',
     { intent, idempotency_key: key },
-    // Source ExternalApiService performs its own coverage-plan read before
-    // durable admission. That is source-owned work, not a desktop timeout bug.
     { timeoutMs: 90000 },
   );
   return Object.freeze({
