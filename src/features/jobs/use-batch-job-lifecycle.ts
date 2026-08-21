@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CreateJobRequest, JobStatusResponse } from '../../lib/api/contracts';
+import type { CreateJobRequest, JobStatusResponse, JobSummaryResponse } from '../../lib/api/contracts';
 import type { PersistedJob } from '../../lib/runtime-bridge';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
@@ -8,20 +8,13 @@ import { DEFAULT_BATCH_CONCURRENCY, normalizeBatch } from './batch-scheduler';
 const POLL_MS = 3_000;
 const MAX_RETRIES = 5;
 
-export interface BatchItem { connectionId: string; record?: PersistedJob; status?: JobStatusResponse; error?: string; errorCode?: string }
-
-export function jobFailureMessage(code?: string) {
-  if (code === 'invalid_source_credentials') return 'Tên đăng nhập hoặc mật khẩu không đúng.';
-  if (code === 'source_account_locked') return 'Tài khoản đã bị khóa vì nhập sai thông tin quá số lần quy định.';
-  if (code === 'source_login_rejected') return 'Cổng hóa đơn từ chối đăng nhập.';
-  if (code === 'source_token_missing') return 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.';
-  if (code === 'source_rate_limited') return 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.';
-  if (code?.startsWith('source_http_')) return 'Dịch vụ cổng hóa đơn đang tạm thời không khả dụng.';
-  if (code === 'portal_auth_failed') return 'Không thể xác thực lại tài khoản.';
-  if (code === 'overview_failed') return 'Không thể tải dữ liệu tổng quan.';
-  if (code === 'detail_failed') return 'Không thể tải dữ liệu chi tiết.';
-  if (code === 'crawler_runtime_unavailable') return 'Bộ xử lý crawler không thể khởi tạo.';
-  return 'Crawler không thể hoàn thành yêu cầu.';
+export interface BatchItem {
+  connectionId: string;
+  record?: PersistedJob;
+  status?: JobStatusResponse;
+  summary?: JobSummaryResponse;
+  error?: string;
+  errorCode?: string;
 }
 
 function jobStartFailureMessage(code?: string) {
@@ -80,8 +73,6 @@ export function useBatchJobLifecycle() {
           errorCode: code,
         },
       }));
-      // A failed account must not block a selected batch. Continue immediately
-      // with the next account and keep the failure inside that account's row.
       void launchNext(token);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,8 +82,29 @@ export function useBatchJobLifecycle() {
     if (token !== generation.current || !window.miaRuntime?.jobs) return;
     try {
       const status = await window.miaRuntime.jobs.status(jobId);
+      let summary: JobSummaryResponse | undefined;
+      try {
+        summary = await window.miaRuntime.jobs.summary(jobId);
+      } catch (summaryError) {
+        diagnosticLog('job_summary_poll_failed', {
+          job_id: jobId,
+          connection_id: connectionId,
+          code: (summaryError as { code?: string })?.code,
+        }, 'warn');
+      }
       if (token !== generation.current) return;
-      setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, status, error: undefined, errorCode: undefined } }));
+      setItems((current) => ({
+        ...current,
+        [connectionId]: {
+          ...current[connectionId],
+          connectionId,
+          status,
+          summary: summary ?? current[connectionId]?.summary,
+          error: undefined,
+          errorCode: undefined,
+        },
+      }));
+      const workMessage = typeof summary?.work?.message === 'string' ? summary.work.message : null;
       const fingerprint = JSON.stringify([
         status.status,
         status.stage,
@@ -102,6 +114,8 @@ export function useBatchJobLifecycle() {
         status.current_month?.planned,
         status.current_month?.percent,
         status.error?.code,
+        status.error?.message,
+        workMessage,
       ]);
       if (lastLoggedStatus.current.get(jobId) !== fingerprint) {
         lastLoggedStatus.current.set(jobId, fingerprint);
@@ -112,12 +126,11 @@ export function useBatchJobLifecycle() {
           stage: status.stage,
           overall_percent: status.overall_percent,
           current_month: status.current_month,
+          source_message: workMessage,
           error_code: status.error?.code,
         }, status.status === 'failed' ? 'error' : 'info');
       }
       if (TERMINAL_JOB_STATUSES.has(status.status)) {
-        // Terminal state is rendered on the account row. No modal/popup here:
-        // multi-account batches must continue unattended after one account fails.
         void launchNext(token);
         return;
       }
