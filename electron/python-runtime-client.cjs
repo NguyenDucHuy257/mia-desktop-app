@@ -1,7 +1,10 @@
+'use strict';
+
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 
 const DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024;
+const STDERR_TAIL_BYTES = 4096;
 const SAFE_ENV_NAMES = [
   'PATH', 'Path', 'PATHEXT', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP',
   'LOCALAPPDATA', 'APPDATA', 'USERPROFILE', 'HOME', 'LANG',
@@ -17,6 +20,14 @@ class RuntimeProtocolError extends Error {
     this.name = 'RuntimeProtocolError';
     this.code = code;
   }
+}
+
+function sanitizeRuntimeStderr(value) {
+  return String(value || '')
+    .replace(/\b\d{10,14}\b/g, '[redacted-id]')
+    .replace(/(password|token|secret|authorization|cookie|session|credential|api[_-]?key)\s*[=:]\s*\S+/gi, '$1=[redacted]')
+    .slice(-STDERR_TAIL_BYTES)
+    .trim();
 }
 
 function runtimeEnvironment(source = process.env, additions = {}) {
@@ -51,6 +62,7 @@ class PythonRuntimeClient {
     this.nextId = 1;
     this.pending = new Map();
     this.stdoutBuffer = Buffer.alloc(0);
+    this.stderrTail = '';
     this.stopping = false;
     this.extraEnv = options.env || {};
   }
@@ -59,6 +71,7 @@ class PythonRuntimeClient {
     if (this.child) return;
     const executable = this.runtimeExecutable || this.pythonExecutable;
     const args = this.runtimeExecutable ? [] : ['-E', '-u', this.runtimeScript];
+    this.stderrTail = '';
     this.logger?.info('python_runtime_spawn', { executable, packaged: Boolean(this.runtimeExecutable), cwd: this.runtimeExecutable ? path.dirname(this.runtimeExecutable) : path.dirname(this.runtimeScript) });
     const child = spawn(executable, args, {
       cwd: this.runtimeExecutable ? path.dirname(this.runtimeExecutable) : path.dirname(this.runtimeScript),
@@ -71,8 +84,10 @@ class PythonRuntimeClient {
     this.stopping = false;
     child.stdout.on('data', (chunk) => this.#handleStdout(chunk));
     child.stderr.on('data', (chunk) => {
-      const message = chunk.toString('utf8').trim();
-      if (message) this.logger?.error('python_runtime_stderr', { message });
+      const message = sanitizeRuntimeStderr(chunk.toString('utf8'));
+      if (!message) return;
+      this.stderrTail = sanitizeRuntimeStderr(`${this.stderrTail}\n${message}`);
+      this.logger?.error('python_runtime_stderr', { message });
     });
     child.once('error', (error) => {
       this.logger?.error('python_runtime_process_error', { name: error?.name, message: error?.message, stack: error?.stack });
@@ -80,9 +95,10 @@ class PythonRuntimeClient {
     });
     child.once('close', (code, signal) => {
       this.logger?.warn('python_runtime_closed', { code, signal, stopping: this.stopping });
+      const diagnostics = this.stderrTail ? ` Python stderr: ${this.stderrTail}` : '';
       this.#handleExit(new RuntimeProtocolError(
         'runtime_exited',
-        `Runtime exited unexpectedly (code=${code ?? 'n/a'}, signal=${signal ?? 'n/a'}).`,
+        `Runtime exited unexpectedly (code=${code ?? 'n/a'}, signal=${signal ?? 'n/a'}).${diagnostics}`,
       ));
     });
     await new Promise((resolve, reject) => {
@@ -217,4 +233,5 @@ module.exports = {
   defaultRuntimeScript,
   packagedRuntimeExecutable,
   runtimeEnvironment,
+  sanitizeRuntimeStderr,
 };
