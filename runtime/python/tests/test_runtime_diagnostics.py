@@ -22,14 +22,24 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         result = mia_runtime._latest_jobs(backend)
         self.assertEqual({item["job_id"] for item in result}, {"job_new", "job_b"})
 
-    def test_runtime_and_crawler_logs_redact_sensitive_values(self):
+    def test_runtime_and_crawler_logs_redact_sensitive_values_and_vendor_namespaces(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = configure_logging(root, "INFO")
             crawler = logging.getLogger("mia_crawler")
+            vendor_app = logging.getLogger("app.crawlers.invoice_crawler")
+            vendor_pipeline = logging.getLogger("mia.worker_runtime.pipeline")
             runtime.error("password=secret tax=0111380276 token=abc")
             crawler.error("authorization=BearerValue mst=0111380276")
-            for handler in [*runtime.handlers, *crawler.handlers]:
+            vendor_app.info("vendor_app_event status=200")
+            vendor_pipeline.info("vendor_pipeline_event stage=overview")
+            handlers = {
+                *runtime.handlers,
+                *crawler.handlers,
+                *logging.getLogger("app").handlers,
+                *logging.getLogger("mia.worker_runtime").handlers,
+            }
+            for handler in handlers:
                 handler.flush()
             runtime_text = (root / "runtime.log").read_text(encoding="utf-8")
             crawler_text = (root / "crawler.log").read_text(encoding="utf-8")
@@ -39,6 +49,8 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             self.assertNotIn("BearerValue", combined)
             self.assertNotIn("token=abc", combined)
             self.assertIn("[REDACTED]", combined)
+            self.assertIn("vendor_app_event", crawler_text)
+            self.assertIn("vendor_pipeline_event", crawler_text)
 
 
 if __name__ == "__main__":
