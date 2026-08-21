@@ -8,6 +8,7 @@ import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
+import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
@@ -55,20 +56,6 @@ function jobFailureHint(code?: string) {
   if (code === 'source_account_locked') return 'Vui lòng mở khóa tài khoản trên Cổng HĐĐT trước khi thử lại.';
   if (code === 'source_rate_limited' || code?.startsWith('source_http_')) return 'Hãy chờ dịch vụ nguồn ổn định rồi thử lại.';
   return 'Hãy thử lại hoặc xem Nhật ký để biết thêm chi tiết.';
-}
-
-function formatMonthKey(value?: string | null) {
-  const match = String(value ?? '').match(/^(\d{4})-(\d{2})$/);
-  return match ? `${match[2]}/${match[1]}` : value || '—';
-}
-
-function stageLabel(stage?: string | null) {
-  if (stage === 'auth') return 'Đang đăng nhập Cổng HĐĐT…';
-  if (stage === 'overview') return 'Đang chuẩn bị dữ liệu hóa đơn…';
-  if (stage === 'detail') return 'Đang tải chi tiết hóa đơn…';
-  if (stage === 'ensure_xml') return 'Đang tạo dữ liệu XML…';
-  if (stage === 'finalize') return 'Đang hoàn tất dữ liệu…';
-  return 'Đang xử lý…';
 }
 
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
@@ -226,10 +213,8 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const item = batchItems[account.connection_id];
     const job = item?.status ?? item?.record;
     const runtimeStatus = job?.status;
-    const currentMonth = job?.current_month;
     const errorCode = job?.error?.code ?? item?.errorCode;
     const sourceError = job?.error?.message;
-    const sourceMessage = typeof job?.message === 'string' && job.message.trim() ? job.message.trim() : null;
     const inlineError = item?.error;
     const phase = item?.phase;
     const status: RowStatus = phase === 'stopped'
@@ -251,7 +236,8 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
                     : 'ready';
 
     // Source job progress is authoritative. Local batch phase only describes
-    // work that has not started yet or a user-requested stop.
+    // work that has not started yet or a user-requested stop. Raw source tokens
+    // are translated by formatSourceJobProgress without changing their values.
     const progress = Number(job?.overall_percent ?? 0);
     const progressLabel = phase === 'stopped' || runtimeStatus === 'cancelled'
       ? 'Đã dừng'
@@ -263,17 +249,9 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
             ? 'Chờ đến lượt xử lý…'
             : status === 'failed'
               ? inlineError ?? sourceError ?? errorCode ?? 'Job xử lý thất bại.'
-              : sourceMessage
-                ? sourceMessage
-                : status === 'completed'
-                  ? 'Đã tải xong'
-                  : status === 'pending'
-                    ? 'Chờ trong hàng đợi…'
-                    : status === 'ready'
-                      ? 'Chưa đồng bộ'
-                      : currentMonth
-                        ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned ?? '…'} HĐ`
-                        : stageLabel(job?.stage);
+              : status === 'ready'
+                ? 'Chưa đồng bộ'
+                : formatSourceJobProgress(job);
     return {
       taxCode: account.username,
       company: account.company_name || '—',
