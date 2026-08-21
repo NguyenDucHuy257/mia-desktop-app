@@ -1,10 +1,11 @@
 """Offline JSON-RPC transport for the vendored mia-crawl-service runtime.
 
-Electron owns process transport and local file dialogs.  Crawl behavior,
+Electron owns process transport and local file dialogs. Crawl behavior,
 accounts/sessions, job admission, recovery, cache/coverage, persistence and
-progress are delegated to the source repository through ProductionBackend.
-Legacy desktop storage routes remain only for backward-compatible artifacts and
-tests; the production UI no longer uses them for account/job state.
+progress are delegated to the source repository through a lazily loaded
+ProductionBackend. Keeping that backend off the process bootstrap path lets the
+local JSON-RPC host always answer health/storage calls even if a production
+crawler dependency later fails to load.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mia_account_purge import purge_account_data, scrub_account_log_lines
-from mia_backend import ProductionBackend
 from mia_crawler import CrawlerCoordinator, verify_account
 from mia_logging import close_logging, configure_logging
 from mia_storage import Storage, StorageError
@@ -36,7 +36,9 @@ storage: Storage | None = None
 crawler: CrawlerCoordinator | None = None
 data_directory: Path | None = None
 logger = None
-production_backend: ProductionBackend | None = None
+production_backend: Any | None = None
+# Kept patchable for unit tests while avoiding an eager import of mia_backend.
+ProductionBackend = None
 
 
 class RpcError(Exception):
@@ -80,13 +82,21 @@ def _crawler_logger() -> logging.Logger:
     return logging.getLogger("mia_crawler")
 
 
-def _production_backend() -> ProductionBackend:
+def _production_backend_class():
+    global ProductionBackend
+    if ProductionBackend is None:
+        from mia_backend import ProductionBackend as backend_class
+        ProductionBackend = backend_class
+    return ProductionBackend
+
+
+def _production_backend():
     global production_backend
     if data_directory is None:
         raise RpcError(-32011, "storage_not_initialized")
     if production_backend is None:
-        # WorkerLoop, lease recovery, pipeline and progress are source-owned.
-        production_backend = ProductionBackend(data_directory, logger)
+        backend_class = _production_backend_class()
+        production_backend = backend_class(data_directory, logger)
         _crawler_logger().info("source_backend_ready runtime_version=%s", RUNTIME_VERSION)
     return production_backend
 
@@ -140,9 +150,6 @@ def _purge_source_account(connection_id: str) -> dict[str, Any]:
     except AttributeError:
         tax_code = backend.connection_username(connection_id)
 
-    # Stop the source worker before deleting its durable rows/files.  Deletion
-    # itself is a desktop filesystem concern; job/session semantics remain those
-    # of the source repository up to this boundary.
     backend.close()
     production_backend = None
 
@@ -204,8 +211,6 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         data_dir = Path(params["data_dir"])
         if not data_dir.is_absolute():
             raise RpcError(-32602, "data_dir_not_absolute")
-        # Keep the old DB initialized only for legacy artifacts/migration. New
-        # account and job state is created exclusively in source-control.sqlite3.
         storage = Storage(data_dir / "mia.sqlite3")
         try:
             result = storage.initialize()
@@ -219,7 +224,6 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
 
-    # Source account/session contract. Production UI uses only these routes.
     if method.startswith("source.accounts."):
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -244,14 +248,12 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except Exception as error:
             code = _source_error_name(error)
             if logger is not None:
-                logger.warning(
+                logger.exception(
                     "source_account_failed method=%s error_type=%s error_code=%s",
                     method, type(error).__name__, code,
                 )
             raise RpcError(-32051, code or "source_account_failed") from None
 
-    # Source durable job contract. No desktop scheduler/progress calculation is
-    # executed here; this is a direct transport adapter to source service/worker.
     if method.startswith("source.jobs."):
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -323,10 +325,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
 
-    # ------------------------------------------------------------------
-    # Legacy routes below are compatibility-only. Production React/Electron
-    # account and job brokers no longer call them.
-    # ------------------------------------------------------------------
+    # Legacy compatibility routes. Production UI does not use them.
     if method.startswith("accounts."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -473,7 +472,6 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             from mia_artifacts import ArtifactExporter
-
             return ArtifactExporter(storage, data_directory).list(dict(params)), False
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
@@ -543,29 +541,22 @@ def serve() -> int:
             if logger is not None:
                 logger.info(
                     "rpc_end request_id=%s method=%s outcome=ok duration_ms=%.1f",
-                    request_id, method, (time.perf_counter() - started) * 1000,
+                    request_id,
+                    method,
+                    (time.perf_counter() - started) * 1000,
                 )
         except UnicodeDecodeError:
             write_message(
-                {
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {"code": -32700, "message": "parse_error"},
-                }
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse_error"}}
             )
         except json.JSONDecodeError:
             write_message(
-                {
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {"code": -32700, "message": "parse_error"},
-                }
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse_error"}}
             )
         except RpcError as error:
             if logger is not None:
                 logger.warning(
-                    "rpc_end request_id=%s method=%s outcome=rpc_error code=%s "
-                    "duration_ms=%.1f",
+                    "rpc_end request_id=%s method=%s outcome=rpc_error code=%s duration_ms=%.1f",
                     request_id,
                     method,
                     error.code,
