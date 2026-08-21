@@ -72,17 +72,33 @@
   grid-template-columns:
     40px
     112px
-    minmax(100px, 180px)
+    minmax(130px, 225px)
     110px
     minmax(160px, 1fr)
     minmax(190px, 220px);
 }
 
 .invoice-page .company-name {
+  position: relative;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: default;
+}
+
+.invoice-page .company-name:hover {
+  z-index: 20;
+  width: max-content;
+  max-width: min(460px, 46vw);
+  margin: -7px -10px;
+  padding: 7px 10px;
+  overflow: visible;
+  white-space: normal;
+  border: 1px solid #dbe5dd;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 16%);
 }
 
 .invoice-page .progress-cell {
