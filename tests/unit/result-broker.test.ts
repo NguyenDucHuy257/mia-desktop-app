@@ -8,7 +8,7 @@ describe('result IPC broker', () => {
   it('normalizes safe cursor queries and enforces 50 rows per page', () => {
     expect(validateQuery({ connection_id: 'account-1' })).toEqual({
       connection_id: 'account-1', cursor: null, limit: 50, search: '', direction: null,
-      date_from: null, date_to: null,
+      query_type: null, date_from: null, date_to: null,
     });
     expect(validateQuery({ connection_id: 'account-1', limit: 50 }).limit).toBe(50);
     expect(() => validateQuery({ connection_id: 'account-1', limit: 51 })).toThrow();
@@ -16,14 +16,15 @@ describe('result IPC broker', () => {
     expect(() => validateQuery({ connection_id: '../bad' })).toThrow();
   });
 
-  it('accepts an explicit result range and requires paired ordered bounds', () => {
+  it('accepts an explicit result range and exact source invoice type', () => {
     expect(validateQuery({
       connection_id: 'account-1', date_from: '2026-08-01', date_to: '2026-08-31',
-      direction: 'sold', search: 'abc',
+      direction: 'sold', query_type: 'sco-query', search: 'abc',
     })).toMatchObject({
       connection_id: 'account-1', date_from: '2026-08-01', date_to: '2026-08-31',
-      direction: 'sold', search: 'abc',
+      direction: 'sold', query_type: 'sco-query', search: 'abc',
     });
+    expect(() => validateQuery({ connection_id: 'account-1', query_type: 'bad' })).toThrow();
     expect(() => validateQuery({ connection_id: 'account-1', date_from: '2026-08-01' })).toThrow();
     expect(() => validateQuery({ connection_id: 'account-1', date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
   });
