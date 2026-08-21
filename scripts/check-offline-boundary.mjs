@@ -22,8 +22,7 @@ async function files(directory) {
 
 const failures = [];
 for (const file of await files(root)) {
-  // Phase 4A permits only the pinned, hash-verified crawler distribution. The
-  // following manifest check rejects additions or byte changes in this tree.
+  // Vendored source bytes are verified separately by verify-vendored-crawler.
   if (file.startsWith(`${vendorRoot}${path.sep}`)) continue;
   const basename = path.basename(file).toLowerCase();
   const extension = path.extname(file).toLowerCase();
@@ -36,6 +35,15 @@ for (const file of await files(root)) {
     if (forbiddenContent.some((pattern) => pattern.test(source))) {
       failures.push(`${path.relative('.', file)}: forbidden endpoint/credential marker`);
     }
+  }
+}
+
+// MIA Desktop is a local process, not an HTTP API host. Keep server-framework
+// dependencies out of the packaged Python environment.
+const requirements = await readFile(path.resolve('runtime/requirements-crawler.txt'), 'utf8');
+for (const packageName of ['fastapi', 'uvicorn', 'httpx']) {
+  if (new RegExp(`^${packageName}(?:[=<>~!]|$)`, 'im').test(requirements)) {
+    failures.push(`runtime/requirements-crawler.txt: server-only dependency ${packageName}`);
   }
 }
 
