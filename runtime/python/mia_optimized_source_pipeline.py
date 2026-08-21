@@ -17,6 +17,13 @@ or artifact operation is reimplemented here.
 from __future__ import annotations
 
 from collections import defaultdict
+from pathlib import Path
+import sys
+
+
+VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
+if str(VENDOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(VENDOR_ROOT))
 
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
