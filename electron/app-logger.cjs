@@ -6,11 +6,12 @@ const path = require('node:path');
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
 const MAX_FIELD_LENGTH = 800;
 const SENSITIVE_KEY = /(password|token|secret|authorization|cookie|session|credential|api[_-]?key)/i;
+const SENSITIVE_TEXT = /(password|token|secret|authorization|cookie|session|credential|api[_-]?key)["']?\s*[=:]\s*(?:["'][^"']*["']|[^\s,;}\]]+)/gi;
 
 function redactText(value) {
   return String(value)
     .replace(/\b\d{10,14}\b/g, '[redacted-id]')
-    .replace(/(password|token|secret|authorization|cookie|api[_-]?key)\s*[=:]\s*[^\s,;]+/gi, '$1=[redacted]')
+    .replace(SENSITIVE_TEXT, '$1=[redacted]')
     .slice(0, MAX_FIELD_LENGTH);
 }
 
