@@ -1,38 +1,36 @@
-"""Compatibility name for the source-of-truth crawl runtime.
+"""Local desktop host for the source-of-truth crawl runtime.
 
-The crawler, account/session state, job admission, recovery, cache/coverage,
-progress and result persistence live in the vendored mia-crawl-service modules.
-This file keeps the historical ``ProductionBackend`` import while applying only
-JSON-RPC/desktop presentation concerns around that source backend.
+MIA Desktop does not expose the source HTTP control API and does not run a
+worker pool.  Electron talks to one Python process over local JSON-RPC; that
+process hosts one sequential source worker backed by the source SQLite job
+repository.  Crawl/cache/session/result behavior stays in the vendored source.
 """
 
 from __future__ import annotations
 
 import threading
 
-from app.external_api.app import _job_status
+import mia_source_backend as source_backend_module
+from mia_local_job_repository import create_local_job_repository
 
-from mia_source_backend import SourceBackend
+
+# Inject the local host dependency before SourceBackend is instantiated.  The
+# upstream web host uses SafeImmediateAdmissionJobRepository, which adds worker
+# slots/capacity/proxy failover.  Desktop needs only the source SQLite queue.
+source_backend_module.create_job_engine_repository = create_local_job_repository
+source_backend_module.WORKER_ID = "desktop-local-worker"
+SourceBackend = source_backend_module.SourceBackend
 
 
 class ProductionBackend(SourceBackend):
-    """Thin desktop transport over SourceBackend; no crawl policy lives here."""
+    """One local source worker; no HTTP listener and no worker-slot admission."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # Display-name metadata is desktop-only and its helpers can be nested
         # (_save -> _load/_write). RLock prevents a self-deadlock without
-        # changing any source crawler/session/job behavior.
+        # changing source crawler/session/job behavior.
         self._metadata_lock = threading.RLock()
-
-    @staticmethod
-    def public_job(job):
-        # Status/error/progress/current-month serialization comes directly from
-        # the pinned source external API.  SourceBackend only contributes the
-        # desktop transport envelope (connection/intent/source message).
-        value = SourceBackend.public_job(job)
-        value.update(_job_status(job).model_dump(mode="json"))
-        return value
 
 
 __all__ = ["ProductionBackend", "SourceBackend"]
