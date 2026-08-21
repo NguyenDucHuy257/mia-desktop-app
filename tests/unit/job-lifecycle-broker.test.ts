@@ -74,12 +74,13 @@ describe('offline job lifecycle IPC broker', () => {
     expect(invoke.mock.calls.filter(([method, params]) => method === 'source.jobs.start' && params.idempotency_key?.endsWith('-attempt-2'))).toHaveLength(2);
   });
 
-  it.each(['resume', 'resumeAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
+  it.each(['resume', 'resumeAll', 'latestAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }), () => 'now');
-    await broker[method](...(method === 'resume' || method === 'clear' ? [] : ['job_1']));
+    await broker[method](...(method === 'resume' || method === 'resumeAll' || method === 'latestAll' || method === 'clear' ? [] : ['job_1']));
     if (method === 'clear') expect(invoke).not.toHaveBeenCalled();
     else if (method === 'resume' || method === 'resumeAll') expect(invoke).toHaveBeenCalledWith('source.jobs.resume_all');
+    else if (method === 'latestAll') expect(invoke).toHaveBeenCalledWith('source.jobs.latest');
     else expect(invoke).toHaveBeenCalledWith(`source.jobs.${method}`, expect.any(Object));
   });
 
