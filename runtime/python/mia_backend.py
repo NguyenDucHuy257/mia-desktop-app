@@ -11,7 +11,9 @@ from __future__ import annotations
 import sys
 import threading
 import types
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 
 VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
@@ -46,6 +48,19 @@ source_backend_module.WORKER_ID = "desktop-local-worker"
 SourceBackend = source_backend_module.SourceBackend
 
 
+def _transport_datetime(value):
+    """Normalize source ISO timestamp strings for the existing JSON adapter.
+
+    ``JobRecord`` in mia-crawl-service deliberately stores timestamps as ISO
+    strings. The older desktop adapter called ``.isoformat()`` unconditionally.
+    Convert only at this presentation boundary; durable source records remain
+    untouched and string timestamps pass through source repositories unchanged.
+    """
+    if isinstance(value, str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return value
+
+
 class ProductionBackend(SourceBackend):
     """One local source worker; no HTTP listener and no worker-slot admission."""
 
@@ -55,6 +70,27 @@ class ProductionBackend(SourceBackend):
         # (_save -> _load/_write). RLock prevents a self-deadlock without
         # changing source crawler/session/job behavior.
         self._metadata_lock = threading.RLock()
+
+    @staticmethod
+    def public_job(job):
+        # Upstream JobRecord timestamps are strings. Keep the source record
+        # immutable and normalize only the three fields that the legacy JSON
+        # serializer expects to expose via ``.isoformat()``.
+        if any(
+            isinstance(value, str)
+            for value in (job.created_at, job.updated_at, job.progress_updated_at)
+            if value is not None
+        ):
+            normalized = SimpleNamespace(**vars(job))
+            normalized.created_at = _transport_datetime(job.created_at)
+            normalized.updated_at = _transport_datetime(job.updated_at)
+            normalized.progress_updated_at = (
+                _transport_datetime(job.progress_updated_at)
+                if job.progress_updated_at is not None
+                else None
+            )
+            job = normalized
+        return SourceBackend.public_job(job)
 
 
 __all__ = ["ProductionBackend", "SourceBackend"]
