@@ -1,4 +1,4 @@
-import type { AccountConnection, CreateJobRequest, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
+import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
 
 export interface MiaDeviceIdentity {
   algorithm: 'Ed25519';
@@ -28,6 +28,7 @@ export interface MiaRuntimeBridge {
   jobs: {
     resume(): Promise<PersistedJob | null>;
     resumeAll(): Promise<PersistedJob[]>;
+    latestAll(): Promise<PersistedJob[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;
@@ -41,7 +42,10 @@ export interface MiaRuntimeBridge {
     openDirectory(directory: string): Promise<boolean>;
   };
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
-  logs: { list(): Promise<string[]> };
+  logs: {
+    list(): Promise<string[]>;
+    write(level: 'info' | 'warn' | 'error', event: string, fields?: Record<string, unknown>): Promise<boolean>;
+  };
   updates: {
     status(): Promise<UpdateStatus>;
     check(): Promise<UpdateStatus>;
@@ -64,24 +68,38 @@ export interface ArtifactExportRequest {
   result_scopes?: Array<'overview' | 'details'>;
   date_from?: string;
   date_to?: string;
-  direction?: 'purchase' | 'sold' | null;
+  direction?: InvoiceDirection | null;
   search?: string;
 }
-export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: 'purchase' | 'sold' | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
-export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: 'purchase' | 'sold' | null; size: number; updated_at: number }
+export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: InvoiceDirection | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
+export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: InvoiceDirection | null; size: number; updated_at: number }
 
 export interface ResultQuery {
   connection_id: string;
   cursor?: string | null;
   limit?: number;
   search?: string;
-  direction?: 'purchase' | 'sold' | null;
+  direction?: InvoiceDirection | null;
   date_from?: string;
   date_to?: string;
 }
-export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }
-export interface DetailResult { detail_id: number; direction: 'purchase' | 'sold'; business_key: string; line_key: string; payload: Record<string, unknown> }
-export interface LocalResultPage<T> { items: T[]; pagination: { limit: number; has_more: boolean; next_cursor: string | null } }
+export interface SourceResultRow {
+  row_id: number | string;
+  direction: InvoiceDirection;
+  /** Exact public fields read from source SQLite/result reader; no raw/path fields. */
+  fields: Record<string, unknown>;
+}
+export type OverviewResult = SourceResultRow;
+export type DetailResult = SourceResultRow;
+export interface LocalResultPage<T> {
+  items: T[];
+  /** Stable public source field order for dynamic result tables. */
+  columns?: string[];
+  total_count?: number;
+  row_count?: number;
+  invoice_count?: number;
+  pagination: { limit: number; has_more: boolean; next_cursor: string | null };
+}
 
 export interface PersistedJob {
   job_id: string | null;
@@ -93,6 +111,10 @@ export interface PersistedJob {
   status?: string;
   stage?: string | null;
   overall_percent?: number;
+  stage_percent?: number;
+  current_direction?: InvoiceDirection | null;
+  current_query_type?: InvoiceQueryType | null;
+  message?: string | null;
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];
   event_sequence?: number;

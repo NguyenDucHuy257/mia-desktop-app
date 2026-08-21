@@ -27,7 +27,7 @@ describe('account connection gateway', () => {
     await expect(gateway.get('demo-connection-1')).rejects.toBeInstanceOf(AccountGatewayError);
   });
 
-  it('limits bulk API pressure to three requests at a time', async () => {
+  it('creates bulk local accounts strictly one at a time', async () => {
     let active = 0;
     let peak = 0;
     const gateway = {
@@ -58,6 +58,6 @@ describe('account connection gateway', () => {
 
     const results = await createAccountConnectionsInBatches(gateway, credentials, 3);
     expect(results).toHaveLength(8);
-    expect(peak).toBe(3);
+    expect(peak).toBe(1);
   });
 });

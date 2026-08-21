@@ -9,8 +9,11 @@ import '@fontsource/inter/vietnamese-700.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { installRendererDiagnostics } from './lib/diagnostic-logger';
 import './styles/tokens.css';
 import './styles/global.css';
+
+installRendererDiagnostics();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

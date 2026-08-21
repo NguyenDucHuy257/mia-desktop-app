@@ -1,0 +1,405 @@
+.refresh-data-toggle {
+  height: 42px;
+  min-width: 164px;
+  padding: 0 12px;
+  border: 1px solid var(--mia-border-warm);
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mia-text-strong);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 120ms ease;
+}
+
+.refresh-data-toggle:hover {
+  border-color: #86efac;
+  background: #f0fdf4;
+  box-shadow: 0 3px 10px rgb(22 101 52 / 10%);
+}
+
+.refresh-data-toggle:active {
+  transform: scale(.98);
+}
+
+.refresh-data-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.refresh-data-box {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  background: #fff;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.refresh-data-box[data-checked='true'] {
+  border-color: #15803d;
+  background: #15803d;
+}
+
+.refresh-data-box img {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.refresh-data-toggle:has(input:focus-visible) {
+  outline: 2px solid #86efac;
+  outline-offset: 2px;
+}
+
+/*
+ * Keep these selectors scoped to .invoice-page. global.css intentionally owns
+ * the legacy table/menu layout and is imported after App; without the extra
+ * specificity its 80px action column and 28px action buttons win the cascade.
+ */
+.invoice-page .table-grid {
+  grid-template-columns:
+    40px
+    112px
+    minmax(130px, 225px)
+    110px
+    minmax(160px, 1fr)
+    minmax(190px, 220px);
+}
+
+.invoice-page .company-name {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.invoice-page .company-name:hover {
+  z-index: 20;
+  width: max-content;
+  max-width: min(460px, 46vw);
+  margin: -7px -10px;
+  padding: 7px 10px;
+  overflow: visible;
+  white-space: normal;
+  border: 1px solid #dbe5dd;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 22px rgb(15 23 42 / 16%);
+}
+
+.invoice-page .progress-cell {
+  width: min(100%, 300px);
+  min-width: 0;
+  gap: 3px;
+}
+
+.invoice-page .progress-copy {
+  min-width: 0;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.invoice-page .progress-copy span:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: 13px;
+}
+
+.invoice-page .progress-copy span:last-child {
+  flex: 0 0 auto;
+  line-height: 13px;
+}
+
+.invoice-page .status-badge[data-status='stopped'] {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.invoice-page .progress-cell[data-status='stopped'] .progress-copy {
+  color: #64748b;
+}
+
+.invoice-page .progress-cell[data-status='stopped'] .progress-track > span {
+  opacity: .45;
+}
+
+.invoice-page .failure-message {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.invoice-page .failure-message strong,
+.invoice-page .failure-message span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-page .row-action-group {
+  position: static;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.invoice-page .row-action-group button {
+  width: auto;
+  min-width: 0;
+  height: 30px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid var(--mia-border-cool);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 100ms ease;
+}
+
+.invoice-page .row-result-button {
+  color: var(--mia-green-700);
+}
+
+.invoice-page .row-result-button:hover,
+.invoice-page .row-result-button:focus-visible {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.invoice-page .row-excel-button {
+  color: #2563eb;
+}
+
+.invoice-page .row-excel-button:hover,
+.invoice-page .row-excel-button:focus-visible {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.invoice-page .row-action-group .row-delete-button {
+  width: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  color: #64748b;
+  font-size: 17px;
+}
+
+.invoice-page .row-action-group .row-delete-button:hover,
+.invoice-page .row-action-group .row-delete-button:focus-visible {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #dc2626;
+}
+
+.invoice-page .row-action-group button:active {
+  transform: scale(.94);
+}
+
+.invoice-page .row-action-placeholder {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.invoice-page .sync-button,
+.invoice-page .compact-select,
+.invoice-page .add-account,
+.invoice-page .stop-button,
+.invoice-page .pagination button,
+.invoice-page .date-range-trigger,
+.invoice-page .date-range-popover button {
+  transition: color 160ms ease, border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 110ms ease;
+}
+
+.invoice-page .sync-button {
+  box-shadow: 0 4px 10px rgb(22 101 52 / 18%);
+}
+
+.invoice-page .sync-button:not(:disabled):hover {
+  background: #14532d;
+  box-shadow: 0 7px 18px rgb(22 101 52 / 28%);
+  transform: translateY(-1px);
+}
+
+.invoice-page .sync-button:not(:disabled):active {
+  transform: translateY(0) scale(.97);
+  box-shadow: 0 2px 7px rgb(22 101 52 / 22%);
+}
+
+.invoice-page .sync-button:disabled,
+.invoice-page .stop-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  box-shadow: none;
+  transform: none;
+}
+
+.invoice-page .compact-select:hover,
+.invoice-page .add-account:hover,
+.invoice-page .date-range-trigger:hover,
+.invoice-page .pagination button:not(:disabled):hover {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.invoice-page .date-range-popover button:hover {
+  filter: brightness(.96);
+  box-shadow: 0 3px 9px rgb(22 101 52 / 14%);
+}
+
+.invoice-page .compact-select:active,
+.invoice-page .add-account:active,
+.invoice-page .date-range-trigger:active,
+.invoice-page .date-range-popover button:active,
+.invoice-page .pagination button:not(:disabled):active {
+  transform: scale(.98);
+}
+
+.invoice-page .stop-button:not(:disabled):hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  box-shadow: 0 4px 10px rgb(185 28 28 / 20%);
+}
+
+.invoice-page .stop-button:not(:disabled):active {
+  transform: scale(.97);
+}
+
+/* Dual progress: the source overall percentage never resets, while the
+ * source current_month percentage restarts from zero for every new month. */
+.invoice-page .progress-cell[data-has-month='true'] {
+  gap: 6px;
+}
+
+.invoice-page .progress-section,
+.invoice-page .month-progress {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.invoice-page .progress-cell[data-has-month='true'] .progress-copy span:first-child {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-page .month-progress-copy {
+  overflow: hidden;
+  color: #5d6470;
+  font-size: 10px;
+  line-height: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-page .month-progress-track {
+  width: 100%;
+  height: 5px;
+  border-radius: 999px;
+  background: #dcfce7;
+  overflow: hidden;
+}
+
+.invoice-page .month-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #16a34a;
+  transition: width 180ms ease;
+}
+
+.invoice-page .table-row[data-status='processing']:has(.progress-cell[data-has-month='true']) {
+  height: 82px;
+  min-height: 82px;
+}
+
+/* Reuse the PDF storage selector interaction next to the sync button. */
+.invoice-page .invoice-export-folder {
+  position: absolute;
+  left: 184px;
+  bottom: 5px;
+  width: min(364px, calc(100% - 200px));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #45464d;
+  font-size: 10px;
+  line-height: 11px;
+  letter-spacing: .5px;
+}
+
+.invoice-page .invoice-export-folder > div {
+  width: 100%;
+  height: 34px;
+  display: flex;
+}
+
+.invoice-page .invoice-export-folder input {
+  min-width: 0;
+  flex: 1;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px 0 0 5px;
+  background: #fff;
+  color: #374151;
+  font-size: 12px;
+  letter-spacing: 0;
+  outline: none;
+}
+
+.invoice-page .invoice-export-folder input:focus {
+  border-color: #86a8d8;
+  box-shadow: inset 0 0 0 1px #bfdbfe;
+}
+
+.invoice-page .invoice-export-folder button {
+  width: 46px;
+  flex: 0 0 46px;
+  border: 1px solid #cbd5e1;
+  border-left: 0;
+  border-radius: 0 5px 5px 0;
+  background: #eef2ff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.invoice-page .invoice-export-folder button:hover,
+.invoice-page .invoice-export-folder button:focus-visible {
+  background: #e0e7ff;
+  border-color: #94a3b8;
+}

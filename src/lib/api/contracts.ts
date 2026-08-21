@@ -37,11 +37,11 @@ export interface CreateJobRequest {
   include_mvt?: boolean;
 }
 
+/** Local JSON-RPC acceptance envelope. No server worker-slot concept exists. */
 export interface JobAccepted {
   job_id: string;
   status: string;
   current_stage: string | null;
-  worker_slot_id: string | null;
 }
 
 export interface JobStatusResponse {
@@ -49,6 +49,13 @@ export interface JobStatusResponse {
   status: JobStatus;
   stage: string | null;
   overall_percent: number;
+  /** Source stage_progress_percent. Renderer may format it but never derives it. */
+  stage_percent?: number;
+  /** Exact source unit currently executing; counters remain source-owned. */
+  current_direction?: InvoiceDirection | null;
+  current_query_type?: InvoiceQueryType | null;
+  /** Raw source progress_state.message token used as presentation input. */
+  message?: string | null;
   event_sequence?: number;
   current_month: null | {
     key: string;

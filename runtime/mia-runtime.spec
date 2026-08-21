@@ -13,12 +13,38 @@ a = Analysis(
         # Vendored modules are frozen as top-level ``app``; their unchanged
         # resource lookup therefore resolves from the bundle root.
         (str(vendor_root / "resources"), "resources"),
+        # The desktop result adapter passes the source detail template by its
+        # vendored path in development. Preserve that exact path in packaged
+        # builds too; the template is tiny and this avoids a packaging-only
+        # branch in the source exporter call.
+        (
+            str(vendor_root / "resources" / "templates" / "invoice_detail.xlsx"),
+            "vendor/mia_crawl_service/resources/templates",
+        ),
         (str(vendor_root / "VENDOR-MANIFEST.json"), "vendor/mia_crawl_service"),
+        (str(vendor_root / "VENDOR-TRANSPORT.json"), "vendor/mia_crawl_service"),
     ],
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[str(runtime_root / "torch_runtime_hook.py")],
-    excludes=["setuptools", "distutils", "pkg_resources"],
+    excludes=[
+        "setuptools",
+        "distutils",
+        "pkg_resources",
+        # Server admission, multi-slot worker-host and HTTP schema modules are
+        # intentionally absent from the local desktop execution graph. Local
+        # shims are installed before mia_source_backend is imported.
+        "app.job_engine.factory",
+        "app.job_engine.admission",
+        "app.job_engine.admission_safe",
+        "app.job_engine.worker",
+        "app.external_api.models",
+        "pydantic",
+        # The pre-refactor desktop crawler spawned its own worker thread and
+        # duplicated source login/crawl behavior. ProductionBackend installs a
+        # disabled import shim and uses only the source-managed worker/session.
+        "mia_crawler",
+    ],
     noarchive=False,
     optimize=1,
 )

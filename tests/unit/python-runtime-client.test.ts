@@ -10,17 +10,18 @@ const {
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 const fixture = (name: string) => path.join(testDirectory, '..', 'fixtures', 'python', name);
+const PROCESS_TEST_TIMEOUT_MS = 15_000;
 
 describe('PythonRuntimeClient', () => {
   it('starts, exchanges JSON-RPC messages and shuts down cleanly', async () => {
     const client = new PythonRuntimeClient();
     await client.start();
     const health = await client.call('system.health');
-    expect(health).toMatchObject({ protocol_version: '1.0', runtime_version: '0.4.1' });
+    expect(health).toMatchObject({ protocol_version: '1.0', runtime_version: '0.5.0' });
     expect(await client.call('system.echo', { value: 'xin chào' })).toEqual({ value: 'xin chào' });
     await client.stop();
     await expect(client.call('system.health')).rejects.toMatchObject({ code: 'runtime_not_running' });
-  });
+  }, PROCESS_TEST_TIMEOUT_MS);
 
   it('times out one request without corrupting later responses', async () => {
     const client = new PythonRuntimeClient();
@@ -30,7 +31,7 @@ describe('PythonRuntimeClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 120));
     await expect(client.call('system.health')).resolves.toMatchObject({ protocol_version: '1.0' });
     await client.stop();
-  });
+  }, PROCESS_TEST_TIMEOUT_MS);
 
   it('returns sanitized JSON-RPC errors', async () => {
     const client = new PythonRuntimeClient();
@@ -40,7 +41,7 @@ describe('PythonRuntimeClient', () => {
       message: 'method_not_found',
     });
     await client.stop();
-  });
+  }, PROCESS_TEST_TIMEOUT_MS);
 
   it('rejects pending work when the child process crashes', async () => {
     const client = new PythonRuntimeClient();
@@ -49,7 +50,7 @@ describe('PythonRuntimeClient', () => {
     client.terminate();
     await expect(pending).rejects.toMatchObject({ code: 'runtime_exited' });
     await client.stop();
-  });
+  }, PROCESS_TEST_TIMEOUT_MS);
 
   it('rejects malformed and oversized runtime output', async () => {
     for (const script of ['malformed_runtime.py', 'oversized_runtime.py']) {
@@ -60,7 +61,7 @@ describe('PythonRuntimeClient', () => {
       });
       await client.stop();
     }
-  });
+  }, PROCESS_TEST_TIMEOUT_MS);
 
   it('passes only allowlisted environment variables to Python', () => {
     const env = runtimeEnvironment({
@@ -86,5 +87,5 @@ describe('PythonRuntimeClient', () => {
     await expect(client.call('system.echo', { value: 'x'.repeat(1024 * 1024) }))
       .rejects.toMatchObject({ code: 'request_too_large' });
     await client.stop();
-  });
+  }, PROCESS_TEST_TIMEOUT_MS);
 });

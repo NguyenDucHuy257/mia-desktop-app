@@ -12,6 +12,7 @@ const { createResultBroker } = require('./result-broker.cjs');
 const { createArtifactBroker } = require('./artifact-file-broker.cjs');
 const { readPreferences, readSanitizedLogs, writePreferences } = require('./local-preferences.cjs');
 const { createReleaseUpdater } = require('./release-updater.cjs');
+const { createDiagnosticLogger } = require('./app-logger.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 const RUNTIME_KEY_FILE = 'runtime-session-key.bin';
@@ -22,6 +23,22 @@ let resultBroker;
 let artifactBroker;
 let releaseUpdater;
 let runtimeShutdownStarted = false;
+let electronLogger;
+let rendererLogger;
+
+function diagnosticDirectory() {
+  return path.join(app.getPath('userData'), 'logs');
+}
+
+function electronLog() {
+  if (!electronLogger) electronLogger = createDiagnosticLogger(diagnosticDirectory(), 'electron.log');
+  return electronLogger;
+}
+
+function rendererLog() {
+  if (!rendererLogger) rendererLogger = createDiagnosticLogger(diagnosticDirectory(), 'renderer.log');
+  return rendererLogger;
+}
 
 function jobs() {
   if (!jobLifecycleBroker) {
@@ -93,8 +110,14 @@ function createWindow() {
     },
   });
 
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => {
+    electronLog().info('window_ready');
+    window.show();
+  });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('render-process-gone', (_event, details) => {
+    electronLog().error('renderer_process_gone', { reason: details.reason, exit_code: details.exitCode });
+  });
   window.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedAppUrl(url, {
       devServerUrl: process.env.VITE_DEV_SERVER_URL,
@@ -157,6 +180,15 @@ ipcMain.handle('mia:artifacts:open-directory', async (event, directory) => {
 ipcMain.handle('mia:preferences:get', (event) => { assertTrustedSender(event); return readPreferences(app.getPath('userData')); });
 ipcMain.handle('mia:preferences:set', (event, value) => { assertTrustedSender(event); return writePreferences(app.getPath('userData'), value); });
 ipcMain.handle('mia:logs:list', (event) => { assertTrustedSender(event); return readSanitizedLogs(app.getPath('userData')); });
+ipcMain.handle('mia:logs:write', (event, payload) => {
+  assertTrustedSender(event);
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new TypeError('invalid_log_payload');
+  const level = String(payload.level ?? 'info').toLowerCase();
+  if (!['info', 'warn', 'error'].includes(level)) throw new TypeError('invalid_log_level');
+  if (typeof payload.event !== 'string' || !/^[a-z0-9_.-]{1,80}$/i.test(payload.event)) throw new TypeError('invalid_log_event');
+  rendererLog().write(level, payload.event, payload.fields && typeof payload.fields === 'object' ? payload.fields : {});
+  return true;
+});
 for (const [channel, method] of [['mia:updates:status', 'status'], ['mia:updates:check', 'check'], ['mia:updates:download', 'download'], ['mia:updates:install', 'install'], ['mia:updates:channel', 'setChannel']]) {
   ipcMain.handle(channel, (event, ...args) => { assertTrustedSender(event); return releaseUpdater[method](...args); });
 }
@@ -190,7 +222,7 @@ ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
   return localAccounts().revoke(connectionId);
 });
 for (const [channel, method] of [
-  ['mia:jobs:resume', 'resume'], ['mia:jobs:resume-all', 'resumeAll'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
+  ['mia:jobs:resume', 'resume'], ['mia:jobs:resume-all', 'resumeAll'], ['mia:jobs:latest-all', 'latestAll'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
   ['mia:jobs:summary', 'summary'], ['mia:jobs:cancel', 'cancel'], ['mia:jobs:clear', 'clear'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
@@ -206,6 +238,15 @@ for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:res
 }
 
 void app.whenReady().then(async () => {
+  electronLog().info('app_ready', {
+    app_version: app.getVersion(),
+    electron_version: process.versions.electron,
+    node_version: process.versions.node,
+    packaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    user_data: app.getPath('userData'),
+  });
   const { autoUpdater } = require('electron-updater');
   releaseUpdater = createReleaseUpdater({ isPackaged: app.isPackaged, autoUpdater });
   offlineRuntime = new OfflineRuntimeManager({
@@ -213,13 +254,16 @@ void app.whenReady().then(async () => {
     resourcesPath: process.resourcesPath,
     dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
     env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
+    logger: electronLog(),
   });
   await offlineRuntime.start();
+  electronLog().info('offline_runtime_ready');
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-}).catch(() => {
+}).catch((error) => {
+  electronLog().error('app_start_failed', { name: error?.name, code: error?.code, message: error?.message, stack: error?.stack });
   dialog.showErrorBox('MIA WT', 'Không thể khởi động bộ xử lý dữ liệu cục bộ. Vui lòng mở lại ứng dụng hoặc cài đặt lại.');
   app.quit();
 });
@@ -228,6 +272,7 @@ app.on('before-quit', (event) => {
   if (!offlineRuntime || runtimeShutdownStarted) return;
   event.preventDefault();
   runtimeShutdownStarted = true;
+  electronLog().info('app_shutdown_started');
   void offlineRuntime.stop().finally(() => app.quit());
 });
 

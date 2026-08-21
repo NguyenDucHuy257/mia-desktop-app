@@ -7,6 +7,7 @@ import {
   normalizeDateText,
   parseDateText,
   persistSyncDateRange,
+  type DatePart,
 } from './date-input-utils';
 
 interface DateRangePickerProps {
@@ -16,6 +17,40 @@ interface DateRangePickerProps {
   className?: string;
   fromLabel?: string;
   toLabel?: string;
+}
+
+function datePartAtPointer(input: HTMLInputElement, clientX: number): DatePart {
+  const value = input.value;
+  const firstSlash = value.indexOf('/');
+  const secondSlash = value.indexOf('/', firstSlash + 1);
+  if (firstSlash < 0 || secondSlash < 0) return datePartAtCaret(value, input.selectionStart ?? value.length);
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return datePartAtCaret(value, input.selectionStart ?? value.length);
+  const style = window.getComputedStyle(input);
+  context.font = style.font;
+  const rect = input.getBoundingClientRect();
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const x = Math.max(0, clientX - rect.left - paddingLeft);
+  const dayBoundary = context.measureText(value.slice(0, firstSlash + 1)).width;
+  const monthBoundary = context.measureText(value.slice(0, secondSlash + 1)).width;
+  if (x <= dayBoundary) return 'day';
+  if (x <= monthBoundary) return 'month';
+  return 'year';
+}
+
+function selectDatePart(input: HTMLInputElement, part: DatePart) {
+  const value = input.value;
+  const firstSlash = value.indexOf('/');
+  const secondSlash = value.indexOf('/', firstSlash + 1);
+  if (firstSlash < 0 || secondSlash < 0) return;
+  const range = part === 'day'
+    ? [0, firstSlash]
+    : part === 'month'
+      ? [firstSlash + 1, secondSlash]
+      : [secondSlash + 1, value.length];
+  input.setSelectionRange(range[0], range[1]);
 }
 
 export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fromLabel = 'Từ ngày', toLabel = 'Đến ngày' }: DateRangePickerProps) {
@@ -54,22 +89,20 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
     setOpen(false);
   }
 
-  function adjustInput(event: WheelEvent<HTMLInputElement> | KeyboardEvent<HTMLInputElement>, setter: (value: string) => void, delta: number) {
+  function adjustInput(event: WheelEvent<HTMLInputElement> | KeyboardEvent<HTMLInputElement>, setter: (value: string) => void, delta: number, forcedPart?: DatePart) {
     const input = event.currentTarget;
-    const part = datePartAtCaret(input.value, input.selectionStart ?? input.value.length);
+    const part = forcedPart ?? datePartAtCaret(input.value, input.selectionStart ?? input.value.length);
     const next = adjustDateText(input.value, part, delta);
     if (!next) return;
     event.preventDefault();
     setter(next);
-    const firstSlash = next.indexOf('/');
-    const secondSlash = next.indexOf('/', firstSlash + 1);
-    const position = part === 'day' ? 1 : part === 'month' ? firstSlash + 2 : secondSlash + 3;
-    requestAnimationFrame(() => input.setSelectionRange(position, position));
+    requestAnimationFrame(() => selectDatePart(input, part));
   }
 
   function onWheel(event: WheelEvent<HTMLInputElement>, setter: (value: string) => void) {
     if (event.deltaY === 0) return;
-    adjustInput(event, setter, event.deltaY < 0 ? 1 : -1);
+    const part = datePartAtPointer(event.currentTarget, event.clientX);
+    adjustInput(event, setter, event.deltaY < 0 ? 1 : -1, part);
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>, setter: (value: string) => void) {

@@ -1,0 +1,14 @@
+{
+  "source_repository": "https://github.com/hvsoftware26/mia-crawl-service",
+  "source_commit": "63acf111c64b47ac964608141b2c83bbb6e2f688",
+  "source_files": {
+    "app/external_api/models.py": "94175cb4615cf7b994ec7caf6365f45b1b10501a",
+    "app/external_api/service.py": "16450929c9e3fa4ade5b82925733a6e2b898ed4b"
+  },
+  "transport_overrides": {
+    "app/external_api/__init__.py": {
+      "desktop_git_blob": "2a6bff5ac464bef972ad0d2f81ad037737abbbef",
+      "reason": "Desktop imports source service/models/results in-process and intentionally does not expose or import the FastAPI HTTP application."
+    }
+  }
+}
