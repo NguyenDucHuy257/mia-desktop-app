@@ -1,44 +1,69 @@
-const { randomUUID } = require('node:crypto');
 const { runBrokerCommand, validateConnectionId, validateCredentials } = require('./account-connection-broker.cjs');
 
-function createLocalAccountBroker(getRuntime, protector, now = () => new Date().toISOString(), createId = randomUUID) {
-  if (typeof getRuntime !== 'function' || !protector?.encrypt) throw new TypeError('Invalid local account dependencies.');
-  const encodePassword = (password) => protector.encrypt(password).toString('base64');
+function createLocalAccountBroker(getRuntime, protector) {
+  if (typeof getRuntime !== 'function' || !protector?.decrypt) throw new TypeError('Invalid local account dependencies.');
+
+  async function sourceAccountsWithLegacyNames() {
+    const runtime = getRuntime();
+    let legacy = [];
+    try {
+      legacy = await runtime.invoke('accounts.list');
+    } catch {
+      legacy = [];
+    }
+    const legacyByUsername = new Map(legacy.map((item) => [item.username, item]));
+    let source = await runtime.invoke('source.accounts.list');
+    const sourceUsernames = new Set(source.map((item) => item.username));
+
+    // One-way compatibility migration. Password decryption stays in Electron;
+    // Python receives plaintext only for the source account-connection create
+    // call and the source SessionCipher immediately persists its own envelope.
+    for (const oldAccount of legacy) {
+      if (sourceUsernames.has(oldAccount.username)) continue;
+      try {
+        const secret = await runtime.invoke('accounts.secret', { account_id: oldAccount.connection_id });
+        const password = protector.decrypt(Buffer.from(secret.encrypted_password, 'base64'));
+        const migrated = await runtime.invoke('source.accounts.create', {
+          username: secret.username,
+          password,
+        }, { timeoutMs: 30000 });
+        source.push(migrated);
+        sourceUsernames.add(migrated.username);
+      } catch {
+        // Keep migration best-effort. The old row stays on disk until the user
+        // explicitly purges it; source accounts remain the only rows returned.
+      }
+    }
+
+    return source.map((item) => ({
+      ...item,
+      company_name: item.company_name ?? legacyByUsername.get(item.username)?.company_name ?? null,
+    }));
+  }
+
   return Object.freeze({
     create: (credentials) => runBrokerCommand(async () => {
       const valid = validateCredentials(credentials);
-      const runtime = getRuntime();
-      const verified = await runtime.invoke('crawler.verify_account', valid, { timeoutMs: 90000 });
-      let account = await runtime.invoke('accounts.create', {
-        account_id: createId(), tax_code: valid.username,
-        encrypted_password: encodePassword(valid.password), timestamp: now(),
-      });
-      if (account.reused) {
-        account = await runtime.invoke('accounts.update', {
-          account_id: account.connection_id, tax_code: valid.username,
-          encrypted_password: encodePassword(valid.password), timestamp: now(),
-        });
-      }
-      return runtime.invoke('accounts.update_company', {
-        account_id: account.connection_id, company_name: verified.company_name, timestamp: now(),
-      });
+      return getRuntime().invoke('source.accounts.create', valid, { timeoutMs: 30000 });
     }),
-    list: () => runBrokerCommand(() => getRuntime().invoke('accounts.list')),
-    get: (accountId) => runBrokerCommand(() => getRuntime().invoke('accounts.get', { account_id: validateConnectionId(accountId) })),
-    reconnect: (accountId, credentials) => runBrokerCommand(async () => {
+    list: () => runBrokerCommand(sourceAccountsWithLegacyNames),
+    get: (connectionId) => runBrokerCommand(() => getRuntime().invoke(
+      'source.accounts.get',
+      { connection_id: validateConnectionId(connectionId) },
+    )),
+    reconnect: (connectionId, credentials) => runBrokerCommand(async () => {
       const valid = validateCredentials(credentials);
-      const runtime = getRuntime();
-      const verified = await runtime.invoke('crawler.verify_account', valid, { timeoutMs: 90000 });
-      const account = await runtime.invoke('accounts.update', {
-        account_id: validateConnectionId(accountId), tax_code: valid.username,
-        encrypted_password: encodePassword(valid.password), timestamp: now(),
-      });
-      return runtime.invoke('accounts.update_company', {
-        account_id: account.connection_id, company_name: verified.company_name, timestamp: now(),
-      });
+      return getRuntime().invoke('source.accounts.reconnect', {
+        connection_id: validateConnectionId(connectionId),
+        ...valid,
+      }, { timeoutMs: 30000 });
     }),
-    revoke: (accountId) => runBrokerCommand(async () => {
-      await getRuntime().invoke('accounts.purge', { account_id: validateConnectionId(accountId) }, { timeoutMs: 30000 });
+    revoke: (connectionId) => runBrokerCommand(async () => {
+      await getRuntime().invoke(
+        'source.accounts.purge',
+        { connection_id: validateConnectionId(connectionId) },
+        { timeoutMs: 300000 },
+      );
       return null;
     }),
   });
