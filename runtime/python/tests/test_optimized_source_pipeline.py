@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
+from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
 
@@ -81,12 +82,17 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         )
         job = SimpleNamespace(company_tax_code="0100000000")
         parameters = self._parameters()
+        original_lookup = InvoiceDetailRepository.get_detail_by_invoice_key
 
         # Stable overview: the pre-auth source scan is necessary, but it should
         # become the single cached plan used by all later month/stage passes.
         self.assertEqual(
             len(list(pipeline._iter_detail_plan(job, parameters, coverage))),
             3,
+        )
+        self.assertIs(
+            InvoiceDetailRepository.get_detail_by_invoice_key,
+            original_lookup,
         )
         pipeline._desktop_overview_complete = True
 
