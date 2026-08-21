@@ -184,7 +184,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
-          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu ({selectedAccountIds.length})</button>
+          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu</button>
           {primaryStatus ? <div className="job-progress-panel" role="status">
             <strong>{primaryStatus.status}</strong><span>{primaryStatus.overall_percent}% tổng thể</span>
             <div className="progress-track"><span style={{ width: `${primaryStatus.overall_percent}%` }} /></div>
