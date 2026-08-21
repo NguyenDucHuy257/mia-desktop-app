@@ -136,19 +136,36 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
 
   async function exportAccounts(connectionIds: string[]) {
     if (!window.miaRuntime?.artifacts?.export) { setSelectionError('Tính năng xuất file chỉ có trong ứng dụng desktop.'); return; }
+    if (connectionIds.length !== 1) { setSelectionError('Chỉ tải Excel cho một tài khoản tại một thời điểm.'); return; }
     let destination = exportFolder;
     if (!destination) {
       destination = await window.miaRuntime.artifacts.selectDirectory() ?? '';
       if (!destination) return;
       onExportFolder(destination);
     }
-    diagnosticLog('account_excel_export_requested', { account_count: connectionIds.length });
+    const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
+    const resultDirection = directions.length === 1 ? directions[0] : null;
+    diagnosticLog('account_excel_export_requested', {
+      date_from: dateFrom,
+      date_to: dateTo,
+      scopes: resultScopes,
+      direction: resultDirection,
+    });
     try {
-      const result = await window.miaRuntime.artifacts.export({ destination, connection_ids: connectionIds, kinds: ['excel'] });
-      diagnosticLog('account_excel_export_completed', { account_count: connectionIds.length, file_count: result.count });
+      const result = await window.miaRuntime.artifacts.export({
+        destination,
+        connection_ids: connectionIds,
+        kinds: ['excel'],
+        result_scopes: resultScopes,
+        date_from: dateFrom,
+        date_to: dateTo,
+        direction: resultDirection,
+        search: '',
+      });
+      diagnosticLog('account_excel_export_completed', { file_count: result.count });
       setSelectionError(`Đã xuất ${result.count} file Excel.`);
     } catch (error) {
-      diagnosticLog('account_excel_export_failed', { account_count: connectionIds.length, code: (error as { code?: string })?.code }, 'error');
+      diagnosticLog('account_excel_export_failed', { code: (error as { code?: string })?.code }, 'error');
       setSelectionError('Không thể xuất Excel. Vui lòng kiểm tra thư mục lưu và thử lại.');
     }
   }
