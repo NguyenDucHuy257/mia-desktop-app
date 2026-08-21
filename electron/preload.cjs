@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   jobs: Object.freeze({
     resume: () => invokeResult('mia:jobs:resume'),
     resumeAll: () => invokeResult('mia:jobs:resume-all'),
+    latestAll: () => invokeResult('mia:jobs:latest-all'),
     start: (intent) => invokeResult('mia:jobs:start', intent),
     status: (jobId) => invokeResult('mia:jobs:status', jobId),
     summary: (jobId) => invokeResult('mia:jobs:summary', jobId),
@@ -49,7 +50,10 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     get: () => ipcRenderer.invoke('mia:preferences:get'),
     set: (value) => ipcRenderer.invoke('mia:preferences:set', value),
   }),
-  logs: Object.freeze({ list: () => ipcRenderer.invoke('mia:logs:list') }),
+  logs: Object.freeze({
+    list: () => ipcRenderer.invoke('mia:logs:list'),
+    write: (level, event, fields = {}) => ipcRenderer.invoke('mia:logs:write', { level, event, fields }),
+  }),
   updates: Object.freeze({
     status: () => ipcRenderer.invoke('mia:updates:status'),
     check: () => ipcRenderer.invoke('mia:updates:check'),
