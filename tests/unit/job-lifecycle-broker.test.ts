@@ -12,6 +12,8 @@ const intent = {
 describe('offline job lifecycle IPC broker', () => {
   it('normalizes allowlisted options and rejects empty, extra or unsafe input', () => {
     expect(validateIntent(intent)).toEqual(intent);
+    expect(validateIntent({ ...intent, force_refresh: true })).toEqual({ ...intent, force_refresh: true });
+    expect(() => validateIntent({ ...intent, force_refresh: 'yes' })).toThrow();
     expect(() => validateIntent({ ...intent, detail_limit: 1 })).toThrow();
     expect(() => validateIntent({ ...intent, date_from: '2026-02-01' })).toThrow();
     expect(() => validateIntent({ ...intent, directions: [] })).toThrow();
@@ -23,16 +25,18 @@ describe('offline job lifecycle IPC broker', () => {
     const reordered = { ...intent, directions: ['sold', 'purchase'], scopes: ['detail', 'overview'] };
     const canonical = validateIntent(reordered);
     expect(idempotencyKey(canonical)).toBe(idempotencyKey(validateIntent({ ...reordered, directions: ['purchase', 'sold'], scopes: ['overview', 'detail'] })));
+    expect(idempotencyKey(validateIntent({ ...intent, force_refresh: true }))).not.toBe(idempotencyKey(validateIntent({ ...intent, force_refresh: false })));
   });
 
   it('sends only validated data to the offline runtime', async () => {
     const invoke = vi.fn(async (method: string) => method === 'accounts.secret'
       ? { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') }
       : { job_id: 'job_1', status: 'queued', stage: 'queued' });
-    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(intent);
+    const freshIntent = { ...intent, force_refresh: true };
+    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(freshIntent);
     expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_1' }, accepted: { status: 'queued' } } });
     expect(invoke).toHaveBeenCalledWith('source.jobs.start', expect.objectContaining({
-        intent, idempotency_key: expect.stringMatching(/^desktop-v2-[a-f0-9]{64}$/),
+        intent: freshIntent, idempotency_key: expect.stringMatching(/^desktop-v3-[a-f0-9]{64}$/),
     }), { timeoutMs: 15000 });
   });
 
