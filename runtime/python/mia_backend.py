@@ -55,9 +55,14 @@ worker_shim = types.ModuleType("app.job_engine.worker")
 worker_shim.WorkerLoop = LocalWorkerLoop
 sys.modules["app.job_engine.worker"] = worker_shim
 
+from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
 import mia_source_backend as source_backend_module
 
 source_backend_module.WORKER_ID = "desktop-local-worker"
+# Keep the vendored source pipeline authoritative while replacing only its
+# redundant desktop-host orchestration: no post-commit reread verification and
+# one materialized detail plan per sequential job.
+source_backend_module.InvoiceCrawlPipeline = OptimizedInvoiceCrawlPipeline
 SourceBackend = source_backend_module.SourceBackend
 
 
