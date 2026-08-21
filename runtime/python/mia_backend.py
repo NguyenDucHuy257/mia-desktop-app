@@ -31,6 +31,19 @@ from mia_local_worker import LocalWorkerLoop
 # the local execution graph.
 install_source_model_shim()
 
+# mia_source_backend predates the local-only refactor and still contains a dead
+# import of ``mia_crawler.verify_account``. ProductionBackend overrides both
+# account methods that used it. In a clean desktop process, satisfy that import
+# with a disabled shim so the legacy threaded crawler is not imported at all.
+if "mia_crawler" not in sys.modules:
+    legacy_crawler_shim = types.ModuleType("mia_crawler")
+
+    def _legacy_verify_account_disabled(*_args, **_kwargs):
+        raise RuntimeError("legacy_crawler_disabled")
+
+    legacy_crawler_shim.verify_account = _legacy_verify_account_disabled
+    sys.modules["mia_crawler"] = legacy_crawler_shim
+
 # mia_source_backend was originally written against two source server-host
 # modules. Pre-seed those import names with local-only adapters so importing the
 # backend never imports worker-slot admission or the multi-slot worker CLI.
