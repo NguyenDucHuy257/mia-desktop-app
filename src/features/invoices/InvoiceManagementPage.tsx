@@ -7,7 +7,7 @@ import searchIcon from '../../assets/figma/search.png';
 import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
-import { useBatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import { jobFailureMessage, useBatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
@@ -20,13 +20,14 @@ interface InvoiceRow {
   selected: boolean;
   progress: number;
   progressLabel: string;
+  failureHint?: string;
 }
 
 const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải 150/150 HĐ' },
-  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT' },
+  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT', failureHint: 'Vui lòng kiểm tra lại MST hoặc mật khẩu.' },
   { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Đang tải 45/120 HĐ...' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
@@ -45,6 +46,13 @@ const statusLabels: Record<RowStatus, string> = {
   pending: 'Chờ xử lý',
 };
 
+function jobFailureHint(code?: string) {
+  if (code === 'invalid_source_credentials') return 'Vui lòng kiểm tra lại MST hoặc mật khẩu.';
+  if (code === 'source_account_locked') return 'Vui lòng mở khóa tài khoản trên Cổng HĐĐT trước khi thử lại.';
+  if (code === 'source_rate_limited' || code?.startsWith('source_http_')) return 'Hãy chờ dịch vụ nguồn ổn định rồi thử lại.';
+  return 'Hãy thử lại hoặc xem Nhật ký để biết thêm chi tiết.';
+}
+
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
   return <span className="selection-box" data-checked={checked || indeterminate}>{indeterminate ? '−' : checked ? '✓' : ''}</span>;
 }
@@ -54,7 +62,7 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
     return (
       <div className="failure-message">
         <strong>{row.progressLabel}</strong>
-        <span>Vui lòng kiểm tra lại MST hoặc Mật khẩu.</span>
+        <span>{row.failureHint ?? 'Hãy thử lại hoặc xem Nhật ký.'}</span>
       </div>
     );
   }
@@ -157,14 +165,31 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const terminal = ['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned'];
   const activeJob = Object.values(batchItems).some((item) => Boolean(item.record && (!item.status || !terminal.includes(item.status.status))));
   const primaryStatus = Object.values(batchItems).find((item) => item.status)?.status;
-  const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => ({
-    taxCode: account.username,
-    company: account.company_name || '—',
-    status: account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending',
-    selected: selectedAccountIds.includes(account.connection_id),
-    progress: batchItems[account.connection_id]?.status?.overall_percent ?? 0,
-    progressLabel: batchItems[account.connection_id]?.status?.stage ?? (account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status),
-  }));
+  const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => {
+    const jobStatus = batchItems[account.connection_id]?.status;
+    const runtimeStatus = jobStatus?.status;
+    const status: RowStatus = runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
+      ? 'failed'
+      : runtimeStatus === 'running' || runtimeStatus === 'waiting_account' || runtimeStatus === 'cancelling'
+        ? 'processing'
+        : runtimeStatus === 'queued'
+          ? 'pending'
+          : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
+            ? 'completed'
+            : account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending';
+    const errorCode = jobStatus?.error?.code;
+    return {
+      taxCode: account.username,
+      company: account.company_name || '—',
+      status,
+      selected: selectedAccountIds.includes(account.connection_id),
+      progress: jobStatus?.overall_percent ?? 0,
+      progressLabel: status === 'failed'
+        ? jobFailureMessage(errorCode)
+        : jobStatus?.stage ?? (account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status),
+      failureHint: status === 'failed' ? jobFailureHint(errorCode) : undefined,
+    };
+  });
   const visibleRows = allRows.filter((row) => {
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
