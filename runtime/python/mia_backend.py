@@ -19,14 +19,19 @@ if str(VENDOR_ROOT) not in sys.path:
     sys.path.insert(0, str(VENDOR_ROOT))
 
 from mia_local_job_repository import create_local_job_repository
+from mia_local_worker import LocalWorkerLoop
 
 
-# mia_source_backend was originally written against the upstream server factory.
-# Pre-seed that module name with the local SQLite factory so importing the backend
-# never imports SafeImmediateAdmissionJobRepository/worker-slot capacity code.
+# mia_source_backend was originally written against two source server-host
+# modules. Pre-seed those import names with local-only adapters so importing the
+# backend never imports worker-slot admission or the multi-slot worker CLI.
 factory_shim = types.ModuleType("app.job_engine.factory")
 factory_shim.create_job_engine_repository = create_local_job_repository
 sys.modules["app.job_engine.factory"] = factory_shim
+
+worker_shim = types.ModuleType("app.job_engine.worker")
+worker_shim.WorkerLoop = LocalWorkerLoop
+sys.modules["app.job_engine.worker"] = worker_shim
 
 import mia_source_backend as source_backend_module
 
