@@ -49,7 +49,7 @@ async function atomicWrite(directory, filename, content) {
 
 function validateExportRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_request');
-  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'search']);
+  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'query_type', 'search']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_artifact_request');
   if (typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_artifact_directory');
   if (!Array.isArray(value.connection_ids) || value.connection_ids.length < 1 || value.connection_ids.length > 50 || new Set(value.connection_ids).size !== value.connection_ids.length || value.connection_ids.some((id) => typeof id !== 'string' || !CONNECTION_ID.test(id))) throw new TypeError('invalid_artifact_accounts');
@@ -62,11 +62,13 @@ function validateExportRequest(value) {
   if (typeof value.date_from !== 'string' || !DATE_PATTERN.test(value.date_from) || typeof value.date_to !== 'string' || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new TypeError('invalid_result_export_range');
   const direction = value.direction ?? null;
   if (direction !== null && !['purchase', 'sold'].includes(direction)) throw new TypeError('invalid_result_export_direction');
+  const queryType = value.query_type ?? null;
+  if (queryType !== null && !['query', 'sco-query'].includes(queryType)) throw new TypeError('invalid_result_export_query_type');
   const search = value.search ?? '';
   if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_export_search');
   return {
     ...base, result_scopes: [...value.result_scopes], date_from: value.date_from,
-    date_to: value.date_to, direction, search: search.trim(),
+    date_to: value.date_to, direction, query_type: queryType, search: search.trim(),
   };
 }
 
