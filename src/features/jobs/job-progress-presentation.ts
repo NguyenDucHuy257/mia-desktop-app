@@ -73,18 +73,16 @@ function monthProgress(job: JobProgressView) {
 
   const label = MONTH_STAGE_LABELS[stage];
   const monthLabel = formatMonthKey(month.key);
-  const position = month.total > 1 ? ` · tháng ${month.index}/${month.total}` : '';
-  const monthPercent = percentText(month.percent);
 
   if (month.planned > 0) {
-    return `${label} ${monthLabel} · ${month.processed}/${month.planned} hóa đơn${monthPercent ? ` · ${monthPercent}` : ''}${position}`;
+    return `${label} ${monthLabel} · ${month.processed}/${month.planned} hóa đơn`;
   }
 
   if (month.processed > 0) {
-    return `${label} ${monthLabel} · đã xử lý ${month.processed} hóa đơn${position}`;
+    return `${label} ${monthLabel} · đã xử lý ${month.processed} hóa đơn`;
   }
 
-  return `Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}${position}`;
+  return `Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}`;
 }
 
 /**
