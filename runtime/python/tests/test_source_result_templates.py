@@ -28,11 +28,12 @@ class SourceResultTemplateTests(unittest.TestCase):
         self.assertIn("nbdchi", [key for key, _ in purchase])
         self.assertIn("nmdchi", [key for key, _ in sold])
 
-    def test_detail_schema_is_read_through_source_exporter(self):
+    def test_detail_schema_matches_the_prepared_source_export_workbook(self):
         schema = _detail_template_schema()
-        self.assertGreaterEqual(len(schema), 20)
+        self.assertEqual(len(schema), 38)
         self.assertEqual(schema[0][0], "stt")
         self.assertEqual(schema[0][1].strip().upper(), "STT")
+        self.assertEqual(schema[1][1].strip(), "Mẫu số HD")
         self.assertTrue(all(title.strip() for _, title in schema))
         self.assertFalse(any(key.startswith("raw_") or key.endswith("_path") for key, _ in schema))
 
