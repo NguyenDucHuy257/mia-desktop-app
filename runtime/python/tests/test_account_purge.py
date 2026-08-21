@@ -2,6 +2,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 RUNTIME_DIR = Path(__file__).resolve().parents[1]
@@ -36,7 +37,10 @@ class AccountPurgeTests(unittest.TestCase):
             artifact = root / "artifacts" / "delete-me.xml"
             artifact.parent.mkdir(parents=True)
             artifact.write_text("payload", encoding="utf-8")
-            with sqlite3.connect(root / "mia.sqlite3") as connection:
+            # sqlite3.Connection's context manager only commits/rolls back; it
+            # does not close the native handle. Explicitly close it so Windows
+            # can delete TemporaryDirectory files after the test.
+            with closing(sqlite3.connect(root / "mia.sqlite3")) as connection:
                 connection.execute(
                     """INSERT INTO artifacts(
                         artifact_id, job_id, account_id, artifact_type,
@@ -49,46 +53,45 @@ class AccountPurgeTests(unittest.TestCase):
                 )
                 connection.commit()
 
-            control = sqlite3.connect(root / "source-control.sqlite3")
-            control.executescript("""
-                PRAGMA foreign_keys=ON;
-                CREATE TABLE source_accounts(
-                    account_id TEXT PRIMARY KEY, account_key TEXT UNIQUE,
-                    created_at TEXT, updated_at TEXT
-                );
-                CREATE TABLE internal_sessions(
-                    session_hash TEXT PRIMARY KEY,
-                    account_id TEXT REFERENCES source_accounts(account_id),
-                    owner_id TEXT
-                );
-                CREATE TABLE account_connections(
-                    connection_id TEXT PRIMARY KEY,
-                    owner_id TEXT, username TEXT, session_hash TEXT UNIQUE
-                        REFERENCES internal_sessions(session_hash)
-                );
-                CREATE TABLE crawl_jobs(
-                    job_id TEXT PRIMARY KEY,
-                    account_key TEXT, company_tax_code TEXT
-                );
-            """)
-            control.execute(
-                "INSERT INTO source_accounts VALUES (?,?,?,?)",
-                ("source-account", tax_code, "now", "now"),
-            )
-            control.execute(
-                "INSERT INTO internal_sessions VALUES (?,?,?)",
-                ("a" * 64, "source-account", "mia-desktop-local"),
-            )
-            control.execute(
-                "INSERT INTO account_connections VALUES (?,?,?,?)",
-                ("conn-production", "mia-desktop-local", tax_code, "a" * 64),
-            )
-            control.execute(
-                "INSERT INTO crawl_jobs VALUES (?,?,?)",
-                ("job-production-delete", account_id, tax_code),
-            )
-            control.commit()
-            control.close()
+            with closing(sqlite3.connect(root / "source-control.sqlite3")) as control:
+                control.executescript("""
+                    PRAGMA foreign_keys=ON;
+                    CREATE TABLE source_accounts(
+                        account_id TEXT PRIMARY KEY, account_key TEXT UNIQUE,
+                        created_at TEXT, updated_at TEXT
+                    );
+                    CREATE TABLE internal_sessions(
+                        session_hash TEXT PRIMARY KEY,
+                        account_id TEXT REFERENCES source_accounts(account_id),
+                        owner_id TEXT
+                    );
+                    CREATE TABLE account_connections(
+                        connection_id TEXT PRIMARY KEY,
+                        owner_id TEXT, username TEXT, session_hash TEXT UNIQUE
+                            REFERENCES internal_sessions(session_hash)
+                    );
+                    CREATE TABLE crawl_jobs(
+                        job_id TEXT PRIMARY KEY,
+                        account_key TEXT, company_tax_code TEXT
+                    );
+                """)
+                control.execute(
+                    "INSERT INTO source_accounts VALUES (?,?,?,?)",
+                    ("source-account", tax_code, "now", "now"),
+                )
+                control.execute(
+                    "INSERT INTO internal_sessions VALUES (?,?,?)",
+                    ("a" * 64, "source-account", "mia-desktop-local"),
+                )
+                control.execute(
+                    "INSERT INTO account_connections VALUES (?,?,?,?)",
+                    ("conn-production", "mia-desktop-local", tax_code, "a" * 64),
+                )
+                control.execute(
+                    "INSERT INTO crawl_jobs VALUES (?,?,?)",
+                    ("job-production-delete", account_id, tax_code),
+                )
+                control.commit()
 
             source_file = root / "source-data" / tax_code / "db" / "invoices.sqlite3"
             source_file.parent.mkdir(parents=True)
@@ -111,7 +114,7 @@ class AccountPurgeTests(unittest.TestCase):
                 storage.get_account(account_id)
             self.assertFalse(artifact.exists())
             self.assertFalse((root / "source-data" / tax_code).exists())
-            with sqlite3.connect(root / "source-control.sqlite3") as connection:
+            with closing(sqlite3.connect(root / "source-control.sqlite3")) as connection:
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM crawl_jobs").fetchone()[0], 0)
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM account_connections").fetchone()[0], 0)
                 self.assertEqual(connection.execute("SELECT COUNT(*) FROM internal_sessions").fetchone()[0], 0)
