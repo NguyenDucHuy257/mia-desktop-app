@@ -8,7 +8,7 @@ import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
-import { jobFailureMessage, type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
@@ -186,9 +186,17 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     });
     setSelectionError(null);
     startMany(selectedAccountIds.map((connection_id) => ({
-      connection_id, date_from: dateFrom, date_to: dateTo,
-      directions, query_types: ['query', 'sco-query'], scopes, data_types: ['invoice'],
+      connection_id,
+      date_from: dateFrom,
+      date_to: dateTo,
+      directions,
+      query_types: ['query', 'sco-query'],
+      scopes,
+      data_types: ['invoice'],
       force_refresh: forceRefresh,
+      // Use the original source API policy. The UI does not calculate which
+      // months are fresh/stale or need refresh.
+      refresh_latest_month: true,
     })));
   }
 
@@ -215,6 +223,8 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const runtimeStatus = job?.status;
     const currentMonth = job?.current_month;
     const errorCode = job?.error?.code ?? item?.errorCode;
+    const sourceError = job?.error?.message;
+    const sourceMessage = typeof job?.message === 'string' && job.message.trim() ? job.message.trim() : null;
     const inlineError = item?.error;
     const status: RowStatus = inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
       ? 'failed'
@@ -225,18 +235,22 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
             ? 'completed'
             : 'ready';
-    const progress = status === 'completed' ? 100 : Number(job?.overall_percent ?? 0);
+
+    // Source job progress is authoritative. The renderer only clamps for CSS.
+    const progress = Number(job?.overall_percent ?? 0);
     const progressLabel = status === 'failed'
-      ? inlineError ?? jobFailureMessage(errorCode)
-      : status === 'completed'
-        ? 'Đã tải xong'
-        : status === 'pending'
-          ? 'Chờ trong hàng đợi…'
-          : status === 'ready'
-            ? 'Chưa đồng bộ'
-            : currentMonth
-              ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned ?? '…'} HĐ`
-              : stageLabel(job?.stage);
+      ? inlineError ?? sourceError ?? errorCode ?? 'Job xử lý thất bại.'
+      : sourceMessage
+        ? sourceMessage
+        : status === 'completed'
+          ? 'Đã tải xong'
+          : status === 'pending'
+            ? 'Chờ trong hàng đợi…'
+            : status === 'ready'
+              ? 'Chưa đồng bộ'
+              : currentMonth
+                ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned ?? '…'} HĐ`
+                : stageLabel(job?.stage);
     return {
       taxCode: account.username,
       company: account.company_name || '—',
@@ -275,7 +289,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
-          <label className="refresh-data-toggle" title="Tích để tải mới toàn bộ khoảng đã chọn. Nếu không tích, dữ liệu lịch sử hợp lệ được dùng lại; tháng hiện tại và tháng trước luôn được tải mới.">
+          <label className="refresh-data-toggle" title="Tích để yêu cầu source API tải mới toàn bộ khoảng đã chọn. Nếu không tích, cache/freshness và tháng cần làm mới do CoveragePlanner của crawler gốc quyết định.">
             <input type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" />
             <span className="refresh-data-box" data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>
             <span>Tải mới dữ liệu</span>
