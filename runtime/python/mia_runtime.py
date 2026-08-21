@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,70 @@ def _production_backend() -> ProductionBackend:
     return production_backend
 
 
+def _crawler_logger() -> logging.Logger:
+    return logging.getLogger("mia_crawler")
+
+
+def _latest_jobs(backend: ProductionBackend) -> list[dict[str, Any]]:
+    latest: dict[str, Any] = {}
+    for job in backend.repository.list_jobs_for_reconciliation():
+        connection_id = str(job.parameters.get("connection_id") or job.account_key)
+        current = latest.get(connection_id)
+        if current is None or (job.created_at, job.job_id) > (current.created_at, current.job_id):
+            latest[connection_id] = job
+    return [backend.public_job(job) for job in latest.values()]
+
+
+def _log_coverage(backend: ProductionBackend, job_id: str) -> None:
+    crawl_log = _crawler_logger()
+    try:
+        job = backend.repository.get_job(job_id)
+        parameters = job.parameters
+        plan = backend.pipeline.planner.plan(
+            company_tax_code=job.company_tax_code,
+            date_from=date.fromisoformat(parameters["date_from"]),
+            date_to=date.fromisoformat(parameters["date_to"]),
+            directions=list(parameters["directions"]),
+            query_types=list(parameters["query_types"]),
+            business_now=backend.pipeline.clock(),
+            force_refresh=bool(parameters.get("force_refresh")),
+            force_slices=backend.pipeline._latest_month_force_slices(parameters),
+        )
+        for decision in plan.decisions:
+            crawl_log.info(
+                "coverage_decision job_id=%s direction=%s query_type=%s status_filter=%s from=%s to=%s classification=%s planned=%s",
+                job_id,
+                decision.direction,
+                decision.query_type,
+                decision.status_filter,
+                decision.from_date.isoformat(),
+                decision.to_date.isoformat(),
+                decision.classification,
+                decision.planned_items,
+            )
+    except Exception:
+        crawl_log.exception("coverage_diagnostic_failed job_id=%s", job_id)
+
+
+def _log_job_status(value: dict[str, Any]) -> None:
+    current = value.get("current_month") or {}
+    error = value.get("error") or {}
+    _crawler_logger().info(
+        "job_status job_id=%s status=%s stage=%s overall=%s month=%s month_index=%s month_total=%s processed=%s planned=%s month_percent=%s error_code=%s",
+        value.get("job_id"),
+        value.get("status"),
+        value.get("stage"),
+        value.get("overall_percent"),
+        current.get("key"),
+        current.get("index"),
+        current.get("total"),
+        current.get("processed"),
+        current.get("planned"),
+        current.get("percent"),
+        error.get("code"),
+    )
+
+
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
     if method == "system.health":
@@ -117,22 +182,40 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         try:
             backend = _production_backend()
             if method == "source.jobs.start":
-                return backend.start(dict(params)), False
+                intent = dict(params).get("intent") or {}
+                _crawler_logger().info(
+                    "job_start_requested connection_id=%s from=%s to=%s force_refresh=%s directions=%s scopes=%s",
+                    intent.get("connection_id"), intent.get("date_from"), intent.get("date_to"),
+                    bool(intent.get("force_refresh")), ",".join(intent.get("directions") or ()),
+                    ",".join(intent.get("scopes") or ()),
+                )
+                result = backend.start(dict(params))
+                _crawler_logger().info("job_created job_id=%s status=%s", result.get("job_id"), result.get("status"))
+                if result.get("job_id"):
+                    _log_coverage(backend, result["job_id"])
+                return result, False
             if method == "source.jobs.status":
-                return backend.get(params["job_id"]), False
+                result = backend.get(params["job_id"])
+                _log_job_status(result)
+                return result, False
             if method == "source.jobs.summary":
                 return backend.summary(params["job_id"]), False
             if method == "source.jobs.resume_all":
                 return backend.resume_all(), False
+            if method == "source.jobs.latest":
+                return _latest_jobs(backend), False
             if method == "source.jobs.cancel":
-                return backend.cancel(params["job_id"]), False
+                result = backend.cancel(params["job_id"])
+                _crawler_logger().warning("job_cancel_requested job_id=%s status=%s", params["job_id"], result.get("status"))
+                return result, False
         except RpcError:
             raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
         except Exception as error:
             if logger is not None:
-                logger.error("production_backend_failed method=%s error_type=%s", method, type(error).__name__)
+                logger.exception("production_backend_failed method=%s error_type=%s", method, type(error).__name__)
+            _crawler_logger().exception("production_backend_failed method=%s error_type=%s", method, type(error).__name__)
             raise RpcError(-32070, "production_backend_failed") from None
     if method == "storage.status":
         if storage is None:
@@ -232,6 +315,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except Exception:
             if logger is not None:
                 logger.warning("portal_account_verification_failed")
+            _crawler_logger().warning("portal_account_verification_failed")
             raise RpcError(-32051, "authentication_failed") from None
     if method == "artifacts.pdf_health":
         try:
@@ -276,7 +360,14 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         try:
             if method in {"results.overview", "results.details"}:
                 kind = "overview" if method == "results.overview" else "details"
-                return _production_backend().results(kind, dict(params)), False
+                result = _production_backend().results(kind, dict(params))
+                if logger is not None:
+                    logger.info(
+                        "results_read kind=%s from=%s to=%s direction=%s rows=%s has_more=%s",
+                        kind, params.get("date_from"), params.get("date_to"), params.get("direction"),
+                        len(result.get("items") or ()), bool((result.get("pagination") or {}).get("has_more")),
+                    )
+                return result, False
             if method == "results.import_overviews":
                 return storage.import_overviews(params), False
             if method == "results.import_details":
@@ -305,18 +396,28 @@ def serve() -> int:
             return 64
 
         request_id: str | int | None = None
+        method: str | None = None
+        started = time.perf_counter()
         try:
             decoded = json.loads(raw.decode("utf-8"))
             request_id, method, params = validate_request(decoded)
+            if logger is not None:
+                logger.info("rpc_start request_id=%s method=%s", request_id, method)
             result, should_stop = dispatch(method, params)
             write_message({"jsonrpc": "2.0", "id": request_id, "result": result})
+            if logger is not None:
+                logger.info("rpc_end request_id=%s method=%s outcome=ok duration_ms=%.1f", request_id, method, (time.perf_counter() - started) * 1000)
         except UnicodeDecodeError:
             write_message({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse_error"}})
         except json.JSONDecodeError:
             write_message({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse_error"}})
         except RpcError as error:
+            if logger is not None:
+                logger.warning("rpc_end request_id=%s method=%s outcome=rpc_error code=%s duration_ms=%.1f", request_id, method, error.code, (time.perf_counter() - started) * 1000)
             write_message({"jsonrpc": "2.0", "id": request_id, "error": {"code": error.code, "message": error.message}})
         except Exception:
+            if logger is not None:
+                logger.exception("rpc_end request_id=%s method=%s outcome=internal_error duration_ms=%.1f", request_id, method, (time.perf_counter() - started) * 1000)
             write_message({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": "internal_error"}})
     return 0
 
