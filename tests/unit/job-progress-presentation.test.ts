@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatSourceJobProgress } from '../../src/features/jobs/job-progress-presentation';
 
 describe('source job progress presentation', () => {
-  it('does not leak running:overview and reports monthly source counters', () => {
+  it('does not leak running:overview and reports concise monthly source counters', () => {
     expect(formatSourceJobProgress({
       status: 'running',
       stage: 'overview',
@@ -11,7 +11,7 @@ describe('source job progress presentation', () => {
         key: '2025-05', index: 1, total: 3,
         processed: 45, planned: 120, percent: 37.5,
       },
-    })).toBe('Tổng quan 05/2025 · 45/120 hóa đơn · 38% · tháng 1/3');
+    })).toBe('Tổng quan 05/2025 · 45/120 hóa đơn');
   });
 
   it('translates granular source authentication milestones', () => {
