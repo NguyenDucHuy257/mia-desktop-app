@@ -85,7 +85,7 @@ class LocalSequentialJobRepository:
                     last_error_message = ?
                 WHERE pipeline_version = 2
                   AND status IN ('waiting_account', 'queued', 'running', 'cancelling')
-                  AND account_key NOT LIKE 'conn\_%' ESCAPE '\\'
+                  AND account_key NOT GLOB 'conn_*'
                 """,
                 (
                     timestamp,
