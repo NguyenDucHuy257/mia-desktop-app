@@ -172,7 +172,22 @@ export function useBatchJobLifecycle() {
         return;
       }
 
-      diagnosticLog('job_started', { job_id: record.job_id, connection_id: intent.connection_id, status: record.status });
+      const jobId = record.job_id;
+      if (!jobId) {
+        diagnosticLog('job_start_missing_id', { connection_id: intent.connection_id }, 'error');
+        updateItems((current) => ({
+          ...current,
+          [intent.connection_id]: {
+            connectionId: intent.connection_id,
+            error: 'Bộ xử lý không trả về mã tác vụ đồng bộ.',
+            errorCode: 'missing_job_id',
+          },
+        }));
+        void launchNext(token);
+        return;
+      }
+
+      diagnosticLog('job_started', { job_id: jobId, connection_id: intent.connection_id, status: record.status });
       updateItems((current) => ({
         ...current,
         [intent.connection_id]: {
@@ -180,7 +195,7 @@ export function useBatchJobLifecycle() {
           record,
         },
       }));
-      void poll(record.job_id, intent.connection_id, 0, token);
+      void poll(jobId, intent.connection_id, 0, token);
     } catch (error) {
       if (startingConnectionId.current === intent.connection_id) startingConnectionId.current = null;
       if (token !== generation.current || stoppingRef.current) {
