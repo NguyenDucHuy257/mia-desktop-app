@@ -35,6 +35,69 @@ class LocalDesktopArchitectureTests(unittest.TestCase):
             self.assertNotIn("account_execution_fences", tables)
             self.assertNotIn("api_request_audit", tables)
 
+    def test_migrate_retires_legacy_uuid_jobs_without_touching_source_jobs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "source-control.sqlite3"
+            repository = LocalSequentialJobRepository(database)
+            repository.migrate()
+            timestamp = "2026-08-21T12:00:00.000000+00:00"
+
+            with closing(sqlite3.connect(database)) as connection:
+                for job_id, account_key, status, worker_id, lease_token in (
+                    ("legacy-job", "d965453c-1ceb-44d0-9157-3707fc6d9571", "running", "desktop-local-worker", "legacy-lease"),
+                    ("source-job", "conn_e9c844dd097a438e8b0974819e84c092", "queued", None, None),
+                ):
+                    connection.execute(
+                        """
+                        INSERT INTO crawl_jobs (
+                            job_id, account_key, company_tax_code, job_type,
+                            queue_order, parameters_json, status, current_stage,
+                            worker_id, lease_token, lease_started_at,
+                            lease_expires_at, available_at, created_at, updated_at,
+                            pipeline_version, progress_state, progress_updated_at
+                        ) VALUES (?, ?, '0100000000', 'invoice_crawl', 1, '{}', ?,
+                                  'detail', ?, ?, ?, ?, ?, ?, ?, 2, '{}', ?)
+                        """,
+                        (
+                            job_id,
+                            account_key,
+                            status,
+                            worker_id,
+                            lease_token,
+                            timestamp if worker_id else None,
+                            timestamp if worker_id else None,
+                            timestamp,
+                            timestamp,
+                            timestamp,
+                            timestamp,
+                        ),
+                    )
+                connection.commit()
+
+            repository.migrate()
+
+            with closing(sqlite3.connect(database)) as connection:
+                connection.row_factory = sqlite3.Row
+                legacy = connection.execute(
+                    "SELECT status, worker_id, lease_token, last_error_code FROM crawl_jobs WHERE job_id = 'legacy-job'"
+                ).fetchone()
+                source = connection.execute(
+                    "SELECT status, worker_id, lease_token, last_error_code FROM crawl_jobs WHERE job_id = 'source-job'"
+                ).fetchone()
+
+            self.assertEqual(legacy["status"], "cancelled")
+            self.assertIsNone(legacy["worker_id"])
+            self.assertIsNone(legacy["lease_token"])
+            self.assertEqual(legacy["last_error_code"], "desktop_legacy_job_retired")
+            self.assertEqual(source["status"], "queued")
+            self.assertIsNone(source["last_error_code"])
+
+    def test_local_repository_rejects_new_legacy_account_jobs(self):
+        repository = LocalSequentialJobRepository(Path(tempfile.gettempdir()) / "mia-local-reject.sqlite3")
+        request = SimpleNamespace(account_key="legacy-account-id")
+        with self.assertRaisesRegex(ValueError, "source_connection_required"):
+            repository.create_admitted_job(request)
+
     def test_backend_injects_one_named_local_worker_and_local_dtos(self):
         import mia_backend
         import mia_source_backend
