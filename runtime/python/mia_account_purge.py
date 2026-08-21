@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
@@ -33,14 +34,19 @@ def _delete_file_if_safe(root: Path, relative: str) -> bool:
 
 
 def _finalize_secure_sqlite_delete(connection: sqlite3.Connection) -> None:
-    # secure_delete overwrites deleted cells instead of leaving their payload in
-    # freelist pages. Truncating WAL and VACUUMing makes the destructive account
-    # action match the user's expectation that local account data is removed.
     connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     connection.execute("VACUUM")
 
 
-def _purge_legacy_database(data_dir: Path, account_id: str) -> tuple[list[str], list[str], int]:
+def _purge_legacy_database(
+    data_dir: Path, account_id: str, tax_code: str
+) -> tuple[list[str], list[str], int]:
+    """Delete compatibility rows even when the new source conn_* ID differs.
+
+    Pre-refactor desktop accounts used random UUIDs. Source account-connections
+    use conn_* IDs, so cleanup resolves old rows by both ID and tax code and then
+    removes jobs/artifacts for every matching legacy account.
+    """
     database = data_dir / "mia.sqlite3"
     if not database.is_file():
         return [], [], 0
@@ -50,22 +56,35 @@ def _purge_legacy_database(data_dir: Path, account_id: str) -> tuple[list[str], 
     connection.execute("PRAGMA busy_timeout=30000")
     try:
         connection.execute("BEGIN IMMEDIATE")
+        legacy_ids = {account_id}
+        if _table_exists(connection, "accounts"):
+            rows = connection.execute(
+                "SELECT account_id FROM accounts WHERE account_id=? OR tax_code=?",
+                (account_id, tax_code),
+            ).fetchall()
+            legacy_ids.update(str(row[0]) for row in rows)
+        placeholders = ",".join("?" for _ in legacy_ids)
+        parameters = tuple(sorted(legacy_ids))
         job_ids = [
             str(row[0]) for row in connection.execute(
-                "SELECT job_id FROM jobs WHERE account_id=?", (account_id,)
+                f"SELECT job_id FROM jobs WHERE account_id IN ({placeholders})",
+                parameters,
             ).fetchall()
         ] if _table_exists(connection, "jobs") else []
         artifact_paths = [
             str(row[0]) for row in connection.execute(
-                "SELECT relative_path FROM artifacts WHERE account_id=?", (account_id,)
+                f"SELECT relative_path FROM artifacts WHERE account_id IN ({placeholders})",
+                parameters,
             ).fetchall()
         ] if _table_exists(connection, "artifacts") else []
         if _table_exists(connection, "jobs"):
-            connection.execute("DELETE FROM jobs WHERE account_id=?", (account_id,))
+            connection.execute(
+                f"DELETE FROM jobs WHERE account_id IN ({placeholders})", parameters
+            )
         deleted = 0
         if _table_exists(connection, "accounts"):
             deleted = connection.execute(
-                "DELETE FROM accounts WHERE account_id=?", (account_id,)
+                f"DELETE FROM accounts WHERE account_id IN ({placeholders})", parameters
             ).rowcount
         connection.commit()
         _finalize_secure_sqlite_delete(connection)
@@ -105,13 +124,15 @@ def _purge_production_control(data_dir: Path, account_id: str, tax_code: str) ->
         if _table_exists(connection, "account_connections"):
             session_hashes = [
                 str(row[0]) for row in connection.execute(
-                    "SELECT session_hash FROM account_connections WHERE owner_id=? AND username=?",
-                    (OWNER_ID, tax_code),
+                    "SELECT session_hash FROM account_connections "
+                    "WHERE connection_id=? OR (owner_id=? AND username=?)",
+                    (account_id, OWNER_ID, tax_code),
                 ).fetchall()
             ]
             connection.execute(
-                "DELETE FROM account_connections WHERE owner_id=? AND username=?",
-                (OWNER_ID, tax_code),
+                "DELETE FROM account_connections "
+                "WHERE connection_id=? OR (owner_id=? AND username=?)",
+                (account_id, OWNER_ID, tax_code),
             )
 
         source_account_ids: list[str] = []
@@ -153,11 +174,28 @@ def _purge_production_control(data_dir: Path, account_id: str, tax_code: str) ->
         connection.close()
 
 
+def _remove_display_metadata(data_dir: Path, account_id: str) -> bool:
+    filename = data_dir / "account-display.json"
+    if not filename.is_file():
+        return False
+    try:
+        value = json.loads(filename.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(value, dict) or value.pop(account_id, None) is None:
+        return False
+    temporary = filename.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+    os.replace(temporary, filename)
+    return True
+
+
 def purge_account_data(data_dir: Path, account_id: str, tax_code: str) -> dict[str, object]:
-    """Remove durable data owned by one desktop account from both storage stacks."""
     data_dir = data_dir.resolve()
     legacy_job_ids, artifact_paths, legacy_account_rows = _purge_legacy_database(
-        data_dir, account_id
+        data_dir, account_id, tax_code
     )
     production_job_ids = _purge_production_control(data_dir, account_id, tax_code)
 
@@ -170,6 +208,7 @@ def purge_account_data(data_dir: Path, account_id: str, tax_code: str) -> dict[s
         shutil.rmtree(source_directory)
         source_directory_removed = True
 
+    display_metadata_removed = _remove_display_metadata(data_dir, account_id)
     return {
         "account_id": account_id,
         "tax_code": tax_code,
@@ -177,11 +216,12 @@ def purge_account_data(data_dir: Path, account_id: str, tax_code: str) -> dict[s
         "legacy_account_rows": legacy_account_rows,
         "artifact_files_removed": artifact_files_removed,
         "source_directory_removed": source_directory_removed,
+        "display_metadata_removed": display_metadata_removed,
     }
 
 
 def scrub_account_log_lines(data_dir: Path, identifiers: Iterable[str]) -> int:
-    """Remove log lines that can be attributed to this account without touching others."""
+    """Remove log lines attributable to this account without touching others."""
     needles = tuple(sorted({str(value) for value in identifiers if len(str(value)) >= 6}))
     if not needles:
         return 0
@@ -204,7 +244,5 @@ def scrub_account_log_lines(data_dir: Path, identifiers: Iterable[str]) -> int:
                 os.replace(temporary, filename)
                 removed += difference
             except OSError:
-                # Purging account data must not corrupt global diagnostics if a
-                # concurrent writer briefly owns a Windows file handle.
                 continue
     return removed
