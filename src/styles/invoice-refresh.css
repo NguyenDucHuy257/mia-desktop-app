@@ -52,33 +52,50 @@
   outline-offset: 2px;
 }
 
-.table-grid {
-  grid-template-columns: 40px 118px minmax(150px, 1fr) 115px minmax(180px, 260px) 210px;
+/*
+ * Keep these selectors scoped to .invoice-page. global.css intentionally owns
+ * the legacy table/menu layout and is imported after App; without the extra
+ * specificity its 80px action column and 28px action buttons win the cascade.
+ */
+.invoice-page .table-grid {
+  grid-template-columns:
+    40px
+    112px
+    minmax(130px, 1fr)
+    110px
+    minmax(150px, 220px)
+    minmax(190px, 220px);
 }
 
-.progress-cell {
-  width: min(100%, 260px);
+.invoice-page .progress-cell {
+  width: min(100%, 220px);
+  min-width: 0;
 }
 
-.progress-copy span:first-child {
+.invoice-page .progress-copy span:first-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.row-action-group {
+.invoice-page .row-action-group {
   position: static;
+  min-width: 0;
+  width: 100%;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 5px;
-  min-width: 0;
+  gap: 6px;
 }
 
-.row-action-group button {
+.invoice-page .row-action-group button {
   width: auto;
+  min-width: 0;
   height: 30px;
+  flex: 0 0 auto;
+  padding: 0 8px;
   border: 1px solid var(--mia-border-cool);
   border-radius: 7px;
   background: #fff;
@@ -90,31 +107,29 @@
   white-space: nowrap;
 }
 
-.row-result-button {
-  padding: 0 8px;
+.invoice-page .row-result-button {
   color: var(--mia-green-700);
 }
 
-.row-excel-button {
-  padding: 0 8px;
+.invoice-page .row-excel-button {
   color: #2563eb;
 }
 
-.row-delete-button {
-  width: 28px !important;
+.invoice-page .row-action-group .row-delete-button {
+  width: 28px;
   flex: 0 0 28px;
-  padding: 0 !important;
+  padding: 0;
   color: #64748b;
-  font-size: 17px !important;
+  font-size: 17px;
 }
 
-.row-action-group button:hover,
-.row-action-group button:focus-visible {
+.invoice-page .row-action-group button:hover,
+.invoice-page .row-action-group button:focus-visible {
   background: #f8fafc;
   outline: none;
 }
 
-.row-action-placeholder {
+.invoice-page .row-action-placeholder {
   color: #94a3b8;
   font-size: 12px;
 }
