@@ -7,7 +7,9 @@ const crypto = require('node:crypto');
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const EXTENSIONS = new Set(['.xml', '.html', '.pdf', '.xlsx']);
 const KINDS = new Set(['xml', 'html', 'pdf', 'excel']);
+const RESULT_SCOPES = new Set(['overview', 'details']);
 const CONNECTION_ID = /^[A-Za-z0-9_-]{1,160}$/;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function validateArtifactName(value) {
   if (typeof value !== 'string' || value.length < 1 || value.length > 180) throw new TypeError('invalid_artifact_name');
@@ -47,11 +49,25 @@ async function atomicWrite(directory, filename, content) {
 
 function validateExportRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_request');
-  if (Object.keys(value).some((key) => !['destination', 'connection_ids', 'kinds'].includes(key))) throw new TypeError('invalid_artifact_request');
+  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'search']);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_artifact_request');
   if (typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_artifact_directory');
   if (!Array.isArray(value.connection_ids) || value.connection_ids.length < 1 || value.connection_ids.length > 50 || new Set(value.connection_ids).size !== value.connection_ids.length || value.connection_ids.some((id) => typeof id !== 'string' || !CONNECTION_ID.test(id))) throw new TypeError('invalid_artifact_accounts');
   if (!Array.isArray(value.kinds) || value.kinds.length < 1 || value.kinds.length > 4 || new Set(value.kinds).size !== value.kinds.length || value.kinds.some((kind) => !KINDS.has(kind))) throw new TypeError('invalid_artifact_kind');
-  return { destination: path.resolve(value.destination), connection_ids: [...value.connection_ids], kinds: [...value.kinds] };
+  const base = { destination: path.resolve(value.destination), connection_ids: [...value.connection_ids], kinds: [...value.kinds] };
+  if (value.result_scopes === undefined) return base;
+
+  if (!Array.isArray(value.result_scopes) || value.result_scopes.length < 1 || value.result_scopes.length > 2 || new Set(value.result_scopes).size !== value.result_scopes.length || value.result_scopes.some((scope) => !RESULT_SCOPES.has(scope))) throw new TypeError('invalid_result_export_scope');
+  if (value.connection_ids.length !== 1 || value.kinds.length !== 1 || value.kinds[0] !== 'excel') throw new TypeError('invalid_result_export_request');
+  if (typeof value.date_from !== 'string' || !DATE_PATTERN.test(value.date_from) || typeof value.date_to !== 'string' || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new TypeError('invalid_result_export_range');
+  const direction = value.direction ?? null;
+  if (direction !== null && !['purchase', 'sold'].includes(direction)) throw new TypeError('invalid_result_export_direction');
+  const search = value.search ?? '';
+  if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_export_search');
+  return {
+    ...base, result_scopes: [...value.result_scopes], date_from: value.date_from,
+    date_to: value.date_to, direction, search: search.trim(),
+  };
 }
 
 function validateListRequest(value) {
@@ -63,8 +79,7 @@ function validateListRequest(value) {
   if (value.cursor !== undefined && value.cursor !== null && (typeof value.cursor !== 'string' || value.cursor.length > 64)) throw new TypeError('invalid_artifact_query');
   const limit = value.limit ?? 50;
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new TypeError('invalid_artifact_query');
-  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-  if ((value.date_from !== undefined && !datePattern.test(value.date_from)) || (value.date_to !== undefined && !datePattern.test(value.date_to)) || value.date_from && value.date_to && value.date_from > value.date_to) throw new TypeError('invalid_artifact_query');
+  if ((value.date_from !== undefined && !DATE_PATTERN.test(value.date_from)) || (value.date_to !== undefined && !DATE_PATTERN.test(value.date_to)) || value.date_from && value.date_to && value.date_from > value.date_to) throw new TypeError('invalid_artifact_query');
   return { connection_ids: base.connection_ids, kind: value.kind, direction: value.direction ?? null, search: value.search ?? '', cursor: value.cursor ?? null, limit, date_from: value.date_from ?? null, date_to: value.date_to ?? null };
 }
 
