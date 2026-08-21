@@ -28,6 +28,7 @@ export interface MiaRuntimeBridge {
   jobs: {
     resume(): Promise<PersistedJob | null>;
     resumeAll(): Promise<PersistedJob[]>;
+    latestAll(): Promise<PersistedJob[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;
@@ -41,7 +42,10 @@ export interface MiaRuntimeBridge {
     openDirectory(directory: string): Promise<boolean>;
   };
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
-  logs: { list(): Promise<string[]> };
+  logs: {
+    list(): Promise<string[]>;
+    write(level: 'info' | 'warn' | 'error', event: string, fields?: Record<string, unknown>): Promise<boolean>;
+  };
   updates: {
     status(): Promise<UpdateStatus>;
     check(): Promise<UpdateStatus>;
