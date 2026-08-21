@@ -28,8 +28,9 @@ function uniqueEnum(value, allowed, max, allowEmpty = false) {
 
 function validateIntent(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new JobInputError();
-  const allowed = new Set(['connection_id', 'date_from', 'date_to', 'directions', 'query_types', 'scopes', 'data_types']);
+  const allowed = new Set(['connection_id', 'date_from', 'date_to', 'directions', 'query_types', 'scopes', 'data_types', 'force_refresh']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new JobInputError();
+  if (Object.hasOwn(value, 'force_refresh') && typeof value.force_refresh !== 'boolean') throw new JobInputError();
   const connectionId = validateConnectionId(value.connection_id);
   if (!DATE_PATTERN.test(value.date_from) || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new JobInputError();
   const intent = {
@@ -41,6 +42,7 @@ function validateIntent(value) {
     scopes: uniqueEnum(value.scopes, SCOPES, 2, true),
     data_types: uniqueEnum(value.data_types, DATA_TYPES, 4, true),
   };
+  if (Object.hasOwn(value, 'force_refresh')) intent.force_refresh = value.force_refresh;
   if (intent.directions.length === 0 || intent.scopes.length === 0 || intent.data_types.length === 0) {
     throw new JobInputError('empty_job_selection');
   }
@@ -53,10 +55,9 @@ function validateJobId(value) {
 }
 
 function idempotencyKey(intent) {
-  // Version the key namespace whenever the main-to-production request mapping
-  // changes. This preserves restart idempotency without conflicting with a
-  // durable job created by an older adapter fingerprint.
-  return `desktop-v2-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
+  // v3 adds the explicit force-refresh policy and the desktop recent-month
+  // refresh mapping. Keep old durable jobs from colliding with the new policy.
+  return `desktop-v3-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
 function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector, createAttemptId = crypto.randomUUID) {
