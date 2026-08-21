@@ -38,7 +38,7 @@ function createLocalAccountBroker(getRuntime, protector, now = () => new Date().
       });
     }),
     revoke: (accountId) => runBrokerCommand(async () => {
-      await getRuntime().invoke('accounts.delete', { account_id: validateConnectionId(accountId) });
+      await getRuntime().invoke('accounts.purge', { account_id: validateConnectionId(accountId) }, { timeoutMs: 30000 });
       return null;
     }),
   });
