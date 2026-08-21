@@ -13,7 +13,16 @@ a = Analysis(
         # Vendored modules are frozen as top-level ``app``; their unchanged
         # resource lookup therefore resolves from the bundle root.
         (str(vendor_root / "resources"), "resources"),
+        # The desktop result adapter passes the source detail template by its
+        # vendored path in development. Preserve that exact path in packaged
+        # builds too; the template is tiny and this avoids a packaging-only
+        # branch in the source exporter call.
+        (
+            str(vendor_root / "resources" / "templates" / "invoice_detail.xlsx"),
+            "vendor/mia_crawl_service/resources/templates",
+        ),
         (str(vendor_root / "VENDOR-MANIFEST.json"), "vendor/mia_crawl_service"),
+        (str(vendor_root / "VENDOR-TRANSPORT.json"), "vendor/mia_crawl_service"),
     ],
     hiddenimports=[],
     hookspath=[],
