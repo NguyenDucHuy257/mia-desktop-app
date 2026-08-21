@@ -43,7 +43,7 @@ const rows: InvoiceRow[] = [
 
 const statusLabels: Record<RowStatus, string> = {
   completed: 'Hoàn thành',
-  failed: 'ⓘ Thất bại',
+  failed: 'ⓘ Lỗi',
   processing: 'ϟ Đang xử lý',
   pending: 'Chờ xử lý',
   ready: 'Sẵn sàng',
@@ -115,7 +115,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
-  const { items: batchItems, startMany, cancelAll, message, dismissMessage } = jobLifecycle;
+  const { items: batchItems, startMany, cancelAll } = jobLifecycle;
   const figmaFixture = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('figma') === '1';
 
@@ -214,8 +214,9 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const job = item?.status ?? item?.record;
     const runtimeStatus = job?.status;
     const currentMonth = job?.current_month;
-    const errorCode = job?.error?.code;
-    const status: RowStatus = runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
+    const errorCode = job?.error?.code ?? item?.errorCode;
+    const inlineError = item?.error;
+    const status: RowStatus = inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
       ? 'failed'
       : runtimeStatus === 'running' || runtimeStatus === 'waiting_account' || runtimeStatus === 'cancelling'
         ? 'processing'
@@ -226,7 +227,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
             : 'ready';
     const progress = status === 'completed' ? 100 : Number(job?.overall_percent ?? 0);
     const progressLabel = status === 'failed'
-      ? jobFailureMessage(errorCode)
+      ? inlineError ?? jobFailureMessage(errorCode)
       : status === 'completed'
         ? 'Đã tải xong'
         : status === 'pending'
@@ -290,7 +291,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
               <img src={searchIcon} alt="" />
               <input aria-label="Tìm kiếm tài khoản" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
             </label>
-            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Thất bại</option><option value="pending">Chờ xử lý</option><option value="ready">Sẵn sàng</option></select>
+            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="ready">Sẵn sàng</option></select>
           </div>
           <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> Dừng tải</button>
         </div>
@@ -325,7 +326,6 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
         </footer>
       </section>
       {selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
-      {message ? <NoticeDialog kind={message.kind} message={message.text} onClose={dismissMessage} /> : null}
     </div>
   );
 }
