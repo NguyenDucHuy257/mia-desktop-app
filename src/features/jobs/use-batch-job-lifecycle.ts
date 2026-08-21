@@ -3,7 +3,7 @@ import type { CreateJobRequest, JobStatusResponse } from '../../lib/api/contract
 import type { PersistedJob } from '../../lib/runtime-bridge';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
-import { DEFAULT_BATCH_CONCURRENCY, normalizeBatch } from './batch-scheduler';
+import { normalizeBatch } from './batch-scheduler';
 
 const POLL_MS = 3_000;
 const MAX_RETRIES = 5;
@@ -80,8 +80,8 @@ export function useBatchJobLifecycle() {
           errorCode: code,
         },
       }));
-      // A failed account must not block a selected batch. Continue immediately
-      // with the next account and keep the failure inside that account's row.
+      // Desktop has one local worker. A failed account advances the same
+      // sequential queue instead of opening another worker lane.
       void launchNext(token);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,8 +116,6 @@ export function useBatchJobLifecycle() {
         }, status.status === 'failed' ? 'error' : 'info');
       }
       if (TERMINAL_JOB_STATUSES.has(status.status)) {
-        // Terminal state is rendered on the account row. No modal/popup here:
-        // multi-account batches must continue unattended after one account fails.
         void launchNext(token);
         return;
       }
@@ -174,6 +172,7 @@ export function useBatchJobLifecycle() {
     const normalized = normalizeBatch(intents);
     diagnosticLog('job_batch_started', {
       count: normalized.length,
+      execution_mode: 'local-sequential',
       date_from: normalized[0]?.date_from,
       date_to: normalized[0]?.date_to,
       force_refresh: normalized.some((intent) => Boolean(intent.force_refresh)),
@@ -187,9 +186,10 @@ export function useBatchJobLifecycle() {
     void (async () => {
       const preferences = await window.miaRuntime?.preferences?.get().catch(() => null);
       if (token !== generation.current) return;
-      const concurrency = preferences?.concurrency ?? DEFAULT_BATCH_CONCURRENCY;
       retryLimit.current = preferences?.retries ?? MAX_RETRIES;
-      for (let index = 0; index < Math.min(concurrency, normalized.length); index += 1) void launchNext(token);
+      // One desktop runtime owns one source worker. Start exactly one account;
+      // launchNext advances only after that account reaches a terminal state.
+      if (normalized.length > 0) void launchNext(token);
     })();
   }, [launchNext, stopTimers]);
 
