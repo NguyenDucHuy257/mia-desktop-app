@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import sqlite3
 import sys
 import time
@@ -25,7 +24,6 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mia_account_purge import purge_account_data, scrub_account_log_lines
-from mia_crawler import CrawlerCoordinator, verify_account
 from mia_logging import close_logging, configure_logging
 from mia_storage import Storage, StorageError
 
@@ -33,7 +31,9 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
 RUNTIME_VERSION = "0.5.0"
 storage: Storage | None = None
-crawler: CrawlerCoordinator | None = None
+# Compatibility marker for older tests/state only. The local runtime never
+# creates a legacy CrawlerCoordinator or a second crawl worker.
+crawler = None
 data_directory: Path | None = None
 logger = None
 production_backend: Any | None = None
@@ -141,7 +141,7 @@ def _log_job_status(value: dict[str, Any]) -> None:
 
 
 def _purge_source_account(connection_id: str) -> dict[str, Any]:
-    global crawler, logger, production_backend
+    global logger, production_backend
     if data_directory is None:
         raise RpcError(-32011, "storage_not_initialized")
     backend = _production_backend()
@@ -161,8 +161,6 @@ def _purge_source_account(connection_id: str) -> dict[str, Any]:
     logger = configure_logging(
         data_directory / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
     )
-    if storage is not None:
-        crawler = CrawlerCoordinator(storage, data_directory, logger)
     logger.info(
         "source_account_purge_completed jobs=%s artifact_files=%s "
         "source_directory=%s log_lines=%s",
@@ -218,7 +216,9 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             logger = configure_logging(
                 data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
             )
-            crawler = CrawlerCoordinator(storage, data_dir, logger)
+            # mia.sqlite3 remains migration/artifact compatibility storage only.
+            # No legacy crawler/thread is constructed from it.
+            crawler = None
             logger.info("storage_initialized schema_version=%s", result["schema_version"])
             return result, False
         except StorageError as error:
@@ -325,7 +325,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
 
-    # Legacy compatibility routes. Production UI does not use them.
+    # Legacy DB routes remain data-compatibility helpers only. None starts or
+    # controls a crawler. Production React/Electron does not call these routes.
     if method.startswith("accounts."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -376,10 +377,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 return storage.job_summary(params["job_id"]), False
             if method == "jobs.cancel":
                 timestamp = params.get("timestamp") or datetime.now(timezone.utc).isoformat()
-                result = storage.cancel_job(params["job_id"], timestamp)
-                if crawler is not None:
-                    crawler.cancel(params["job_id"])
-                return result, False
+                return storage.cancel_job(params["job_id"], timestamp), False
             if method == "jobs.transition":
                 return storage.transition_job(params), False
             if method == "jobs.clear":
@@ -390,47 +388,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except StorageError as error:
             raise RpcError(-32030, error.code) from None
 
-    if method == "crawler.start":
-        if storage is None or crawler is None:
-            raise RpcError(-32011, "storage_not_initialized")
-        try:
-            required = ("job_id", "connection_id", "username", "password", "intent")
-            if not isinstance(params, dict) or any(key not in params for key in required):
-                raise RpcError(-32602, "invalid_params")
-            return crawler.start(dict(params)), False
-        except RpcError:
-            raise
-        except (KeyError, TypeError, ValueError):
-            raise RpcError(-32602, "invalid_params") from None
-
-    if method == "crawler.health":
-        if crawler is None:
-            raise RpcError(-32011, "storage_not_initialized")
-        try:
-            return crawler.health(), False
-        except Exception:
-            if logger is not None:
-                logger.exception("crawler_health_failed")
-            raise RpcError(-32050, "crawler_runtime_unavailable") from None
-
-    if method == "crawler.verify_account":
-        if (
-            not isinstance(params, dict)
-            or not isinstance(params.get("username"), str)
-            or re.fullmatch(r"\d{10}(?:-\d{3})?", params["username"]) is None
-            or not isinstance(params.get("password"), str)
-            or not 1 <= len(params["password"]) <= 256
-        ):
-            raise RpcError(-32602, "invalid_params")
-        try:
-            return verify_account(params["username"], params["password"]), False
-        except Exception as error:
-            code = _source_error_name(error)
-            if logger is not None:
-                logger.warning(
-                    "portal_account_verification_failed error_code=%s", code
-                )
-            raise RpcError(-32051, code or "authentication_failed") from None
+    # The pre-refactor crawler.* RPC surface is intentionally absent. There is
+    # exactly one source-owned sequential worker behind source.jobs.*.
 
     if method == "artifacts.pdf_health":
         try:
