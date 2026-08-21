@@ -33,6 +33,7 @@ describe('artifact filesystem boundary', () => {
       date_from: '2026-08-01',
       date_to: '2026-08-31',
       direction: 'purchase',
+      query_type: 'query',
       search: '000123',
     })).toMatchObject({
       destination,
@@ -42,8 +43,10 @@ describe('artifact filesystem boundary', () => {
       date_from: '2026-08-01',
       date_to: '2026-08-31',
       direction: 'purchase',
+      query_type: 'query',
       search: '000123',
     });
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-08-01', date_to: '2026-08-31', query_type: 'bad' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
   });
