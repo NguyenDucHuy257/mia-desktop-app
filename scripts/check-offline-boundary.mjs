@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve('runtime/python');
@@ -44,6 +44,21 @@ const requirements = await readFile(path.resolve('runtime/requirements-crawler.t
 for (const packageName of ['fastapi', 'uvicorn', 'httpx']) {
   if (new RegExp(`^${packageName}(?:[=<>~!]|$)`, 'im').test(requirements)) {
     failures.push(`runtime/requirements-crawler.txt: server-only dependency ${packageName}`);
+  }
+}
+
+// These were remote-control clients from the web/server architecture. Their
+// reappearance would silently reintroduce a second production execution path.
+for (const relative of [
+  'electron/mia-api-client.cjs',
+  'src/lib/api/client.ts',
+  'scripts/account-connections-smoke.mjs',
+]) {
+  try {
+    await access(path.resolve(relative));
+    failures.push(`${relative}: remote API client/entrypoint is forbidden in local desktop`);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
   }
 }
 
