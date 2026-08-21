@@ -8,7 +8,20 @@ import { normalizeBatch } from './batch-scheduler';
 const POLL_MS = 3_000;
 const MAX_RETRIES = 5;
 
-export interface BatchItem { connectionId: string; record?: PersistedJob; status?: JobStatusResponse; error?: string; errorCode?: string }
+export type BatchPhase = 'queued' | 'starting' | 'stopping' | 'stopped';
+
+export interface BatchItem {
+  connectionId: string;
+  record?: PersistedJob;
+  status?: JobStatusResponse;
+  error?: string;
+  errorCode?: string;
+  phase?: BatchPhase;
+}
+
+function isTerminalStatus(status?: string | null) {
+  return Boolean(status && TERMINAL_JOB_STATUSES.has(status as JobStatusResponse['status']));
+}
 
 export function jobFailureMessage(code?: string) {
   if (code === 'invalid_source_credentials') return 'Tên đăng nhập hoặc mật khẩu không đúng.';
@@ -40,11 +53,27 @@ function jobStartFailureMessage(code?: string) {
 export function useBatchJobLifecycle() {
   const [items, setItems] = useState<Record<string, BatchItem>>({});
   const [message, setMessage] = useState<{ kind: 'notice' | 'error' | 'success'; text: string } | null>(null);
+  const [active, setActive] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const itemsRef = useRef<Record<string, BatchItem>>({});
+  const activeRef = useRef(false);
+  const stoppingRef = useRef(false);
   const generation = useRef(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const pending = useRef<CreateJobRequest[]>([]);
+  const batchConnectionIds = useRef(new Set<string>());
+  const startingConnectionId = useRef<string | null>(null);
+  const cancellingJobs = useRef(new Set<string>());
   const retryLimit = useRef(MAX_RETRIES);
   const lastLoggedStatus = useRef(new Map<string, string>());
+
+  const updateItems = useCallback((updater: (current: Record<string, BatchItem>) => Record<string, BatchItem>) => {
+    setItems((current) => {
+      const next = updater(current);
+      itemsRef.current = next;
+      return next;
+    });
+  }, []);
 
   const stopTimers = useCallback(() => {
     generation.current += 1;
@@ -52,10 +81,37 @@ export function useBatchJobLifecycle() {
     timers.current.clear();
   }, []);
 
+  const finishStoppingIfDone = useCallback(() => {
+    if (!stoppingRef.current) return;
+    if (startingConnectionId.current !== null || cancellingJobs.current.size > 0) return;
+    stoppingRef.current = false;
+    activeRef.current = false;
+    setStopping(false);
+    setActive(false);
+    setMessage({ kind: 'notice', text: 'Đã dừng phiên đồng bộ.' });
+  }, []);
+
   const launchNext = useCallback(async (token: number) => {
-    if (token !== generation.current || !window.miaRuntime?.jobs) return;
+    const jobs = window.miaRuntime?.jobs;
+    if (token !== generation.current || !jobs || stoppingRef.current) return;
     const intent = pending.current.shift();
-    if (!intent) return;
+    if (!intent) {
+      activeRef.current = false;
+      setActive(false);
+      return;
+    }
+
+    startingConnectionId.current = intent.connection_id;
+    updateItems((current) => ({
+      ...current,
+      [intent.connection_id]: {
+        ...current[intent.connection_id],
+        connectionId: intent.connection_id,
+        phase: 'starting',
+        error: undefined,
+        errorCode: undefined,
+      },
+    }));
     diagnosticLog('job_start_requested', {
       date_from: intent.date_from,
       date_to: intent.date_to,
@@ -63,16 +119,77 @@ export function useBatchJobLifecycle() {
       directions: intent.directions,
       scopes: intent.scopes,
     });
+
     try {
-      const { record } = await window.miaRuntime.jobs.start(intent);
-      if (token !== generation.current || !record.job_id) return;
+      const { record } = await jobs.start(intent);
+      if (startingConnectionId.current === intent.connection_id) startingConnectionId.current = null;
+
+      // Stop may be pressed while jobs.start() is still in flight. If that
+      // happens, never leave the newly-created source job orphaned: cancel it
+      // as soon as the RPC returns and keep the batch locked until cancellation
+      // reaches a terminal state.
+      if (token !== generation.current || stoppingRef.current) {
+        if (!record.job_id) {
+          finishStoppingIfDone();
+          return;
+        }
+        cancellingJobs.current.add(record.job_id);
+        updateItems((current) => ({
+          ...current,
+          [intent.connection_id]: {
+            ...current[intent.connection_id],
+            connectionId: intent.connection_id,
+            record,
+            phase: 'stopping',
+          },
+        }));
+        try {
+          const status = await jobs.cancel(record.job_id);
+          updateItems((current) => ({
+            ...current,
+            [intent.connection_id]: {
+              ...current[intent.connection_id],
+              connectionId: intent.connection_id,
+              record,
+              status,
+              phase: isTerminalStatus(status.status) ? 'stopped' : 'stopping',
+            },
+          }));
+          if (isTerminalStatus(status.status)) {
+            cancellingJobs.current.delete(record.job_id);
+            finishStoppingIfDone();
+          } else {
+            void poll(record.job_id, intent.connection_id, 0, generation.current);
+          }
+        } catch (error) {
+          diagnosticLog('job_cancel_after_start_failed', {
+            job_id: record.job_id,
+            connection_id: intent.connection_id,
+            code: (error as { code?: string })?.code,
+          }, 'warn');
+          void poll(record.job_id, intent.connection_id, 0, generation.current);
+        }
+        return;
+      }
+
       diagnosticLog('job_started', { job_id: record.job_id, connection_id: intent.connection_id, status: record.status });
-      setItems((current) => ({ ...current, [intent.connection_id]: { connectionId: intent.connection_id, record } }));
+      updateItems((current) => ({
+        ...current,
+        [intent.connection_id]: {
+          connectionId: intent.connection_id,
+          record,
+        },
+      }));
       void poll(record.job_id, intent.connection_id, 0, token);
     } catch (error) {
+      if (startingConnectionId.current === intent.connection_id) startingConnectionId.current = null;
+      if (token !== generation.current || stoppingRef.current) {
+        finishStoppingIfDone();
+        return;
+      }
       const code = (error as { code?: string })?.code;
       diagnosticLog('job_start_failed', { connection_id: intent.connection_id, code, name: (error as Error)?.name }, 'error');
-      setItems((current) => ({
+      updateItems((current) => ({
         ...current,
         [intent.connection_id]: {
           connectionId: intent.connection_id,
@@ -80,22 +197,39 @@ export function useBatchJobLifecycle() {
           errorCode: code,
         },
       }));
-      // Desktop has one local worker. A failed account advances the same
-      // sequential queue instead of opening another worker lane.
+      // One local worker, one sequential batch. Only advance after this account
+      // has definitively failed to start.
       void launchNext(token);
     }
+  // poll is intentionally resolved from the current render, as in the previous
+  // implementation; launchNext is only invoked after hook initialization.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [finishStoppingIfDone, updateItems]);
 
   const poll = useCallback(async (jobId: string, connectionId: string, attempt: number, token: number) => {
     if (token !== generation.current || !window.miaRuntime?.jobs) return;
     try {
       const status = await window.miaRuntime.jobs.status(jobId);
       if (token !== generation.current) return;
-      setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, status, error: undefined, errorCode: undefined } }));
+      updateItems((current) => ({
+        ...current,
+        [connectionId]: {
+          ...current[connectionId],
+          connectionId,
+          status,
+          phase: stoppingRef.current && !isTerminalStatus(status.status)
+            ? 'stopping'
+            : status.status === 'cancelled'
+              ? 'stopped'
+              : undefined,
+          error: undefined,
+          errorCode: undefined,
+        },
+      }));
       const fingerprint = JSON.stringify([
         status.status,
         status.stage,
+        status.message,
         status.overall_percent,
         status.current_month?.key,
         status.current_month?.processed,
@@ -115,7 +249,12 @@ export function useBatchJobLifecycle() {
           error_code: status.error?.code,
         }, status.status === 'failed' ? 'error' : 'info');
       }
-      if (TERMINAL_JOB_STATUSES.has(status.status)) {
+      if (isTerminalStatus(status.status)) {
+        cancellingJobs.current.delete(jobId);
+        if (stoppingRef.current) {
+          finishStoppingIfDone();
+          return;
+        }
         void launchNext(token);
         return;
       }
@@ -125,22 +264,26 @@ export function useBatchJobLifecycle() {
       const code = (error as { code?: string })?.code;
       diagnosticLog('job_poll_failed', { job_id: jobId, connection_id: connectionId, attempt, code }, 'warn');
       if (attempt >= retryLimit.current) {
-        setItems((current) => ({
+        updateItems((current) => ({
           ...current,
           [connectionId]: {
             ...current[connectionId],
             connectionId,
-            error: 'Mất kết nối khi cập nhật tiến trình.',
+            error: stoppingRef.current
+              ? 'Không thể xác nhận tác vụ đã dừng. Đồng bộ mới vẫn được khóa để tránh chạy chồng job.'
+              : 'Mất kết nối khi cập nhật tiến trình. Đồng bộ mới được khóa để tránh chạy chồng job.',
             errorCode: code,
           },
         }));
-        void launchNext(token);
+        // Never start the next account merely because polling failed. The
+        // current source job may still be running, so advancing would violate
+        // the single-worker desktop invariant.
         return;
       }
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, attempt + 1, token); }, backoffDelay(attempt + 1));
       timers.current.add(timer);
     }
-  }, [launchNext]);
+  }, [finishStoppingIfDone, launchNext, updateItems]);
 
   useEffect(() => {
     const token = generation.current;
@@ -154,22 +297,44 @@ export function useBatchJobLifecycle() {
     void hydrate.then((records) => {
       if (token !== generation.current) return;
       const restored: Record<string, BatchItem> = {};
+      const activeRecords = records.filter((record) => record.status && !isTerminalStatus(record.status));
       for (const record of records) {
         restored[record.connection_id] = { connectionId: record.connection_id, record };
-        if (record.job_id && record.status && !TERMINAL_JOB_STATUSES.has(record.status as JobStatusResponse['status'])) {
+        if (record.job_id && record.status && !isTerminalStatus(record.status)) {
           void poll(record.job_id, record.connection_id, 0, token);
         }
       }
-      setItems((current) => ({ ...restored, ...current }));
-      diagnosticLog('job_state_hydrated', { account_count: records.length, active_count: records.filter((record) => record.status && !TERMINAL_JOB_STATUSES.has(record.status as JobStatusResponse['status'])).length });
+      updateItems((current) => ({ ...restored, ...current }));
+      if (activeRecords.length > 0) {
+        activeRef.current = true;
+        setActive(true);
+        batchConnectionIds.current = new Set(activeRecords.map((record) => record.connection_id));
+      }
+      diagnosticLog('job_state_hydrated', { account_count: records.length, active_count: activeRecords.length });
     }).catch((error) => diagnosticLog('job_state_hydrate_failed', { code: (error as { code?: string })?.code }, 'warn'));
     return stopTimers;
-  }, [poll, stopTimers]);
+  }, [poll, stopTimers, updateItems]);
 
   const startMany = useCallback((intents: CreateJobRequest[]) => {
+    // Lock in the hook itself, not only in the button. Two clicks can arrive in
+    // the same render frame before React has painted disabled=true.
+    if (activeRef.current) {
+      diagnosticLog('job_batch_start_ignored', { reason: 'batch_already_active' }, 'warn');
+      setMessage({ kind: 'notice', text: 'Đang có một phiên đồng bộ. Hãy dừng hoặc chờ phiên hiện tại hoàn tất.' });
+      return;
+    }
+
+    const normalized = normalizeBatch(intents);
+    if (normalized.length === 0) return;
     stopTimers();
     const token = generation.current;
-    const normalized = normalizeBatch(intents);
+    activeRef.current = true;
+    stoppingRef.current = false;
+    startingConnectionId.current = null;
+    cancellingJobs.current.clear();
+    batchConnectionIds.current = new Set(normalized.map((intent) => intent.connection_id));
+    setActive(true);
+    setStopping(false);
     diagnosticLog('job_batch_started', {
       count: normalized.length,
       execution_mode: 'local-sequential',
@@ -179,9 +344,12 @@ export function useBatchJobLifecycle() {
     });
     setMessage(null);
     pending.current = [...normalized];
-    setItems((current) => ({
+    updateItems((current) => ({
       ...current,
-      ...Object.fromEntries(normalized.map((intent) => [intent.connection_id, { connectionId: intent.connection_id }])),
+      ...Object.fromEntries(normalized.map((intent) => [intent.connection_id, {
+        connectionId: intent.connection_id,
+        phase: 'queued' as const,
+      }])),
     }));
     void (async () => {
       const preferences = await window.miaRuntime?.preferences?.get().catch(() => null);
@@ -189,22 +357,95 @@ export function useBatchJobLifecycle() {
       retryLimit.current = preferences?.retries ?? MAX_RETRIES;
       // One desktop runtime owns one source worker. Start exactly one account;
       // launchNext advances only after that account reaches a terminal state.
-      if (normalized.length > 0) void launchNext(token);
+      void launchNext(token);
     })();
-  }, [launchNext, stopTimers]);
+  }, [launchNext, stopTimers, updateItems]);
 
   const cancelAll = useCallback(async () => {
-    pending.current = [];
-    diagnosticLog('job_batch_cancel_requested', { active_count: Object.values(items).filter((item) => item.record?.job_id).length }, 'warn');
-    await Promise.all(Object.values(items).map(async (item) => {
-      if (!item.record?.job_id || !window.miaRuntime?.jobs) return;
-      const status = await window.miaRuntime.jobs.cancel(item.record.job_id);
-      setItems((current) => ({ ...current, [item.connectionId]: { ...current[item.connectionId], connectionId: item.connectionId, status } }));
-    }));
-    setMessage({ kind: 'notice', text: 'Đã yêu cầu dừng các tác vụ đang chạy.' });
-  }, [items]);
+    if (!activeRef.current || stoppingRef.current) return;
+    stoppingRef.current = true;
+    setStopping(true);
+    setMessage({ kind: 'notice', text: 'Đang dừng phiên đồng bộ…' });
 
-  return { items, startMany, cancelAll, message, dismissMessage: () => setMessage(null) };
+    const ids = new Set(batchConnectionIds.current);
+    const snapshot = itemsRef.current;
+    const cancellable = Object.values(snapshot).filter((item) => {
+      if (!ids.has(item.connectionId) || !item.record?.job_id) return false;
+      const status = item.status?.status ?? item.record.status;
+      return !isTerminalStatus(status);
+    });
+
+    diagnosticLog('job_batch_cancel_requested', {
+      active_count: cancellable.length,
+      queued_count: pending.current.length,
+      start_in_flight: Boolean(startingConnectionId.current),
+    }, 'warn');
+
+    // Invalidate all outstanding poll/start continuations and remove every
+    // not-yet-started account from the local sequential queue immediately.
+    pending.current = [];
+    stopTimers();
+    const stopToken = generation.current;
+
+    updateItems((current) => {
+      const next = { ...current };
+      for (const connectionId of ids) {
+        const item = next[connectionId];
+        if (!item) continue;
+        const status = item.status?.status ?? item.record?.status;
+        if (isTerminalStatus(status)) continue;
+        next[connectionId] = {
+          ...item,
+          phase: item.record?.job_id || item.phase === 'starting' ? 'stopping' : 'stopped',
+        };
+      }
+      return next;
+    });
+
+    await Promise.all(cancellable.map(async (item) => {
+      const jobId = item.record?.job_id;
+      if (!jobId || !window.miaRuntime?.jobs) return;
+      cancellingJobs.current.add(jobId);
+      try {
+        const status = await window.miaRuntime.jobs.cancel(jobId);
+        updateItems((current) => ({
+          ...current,
+          [item.connectionId]: {
+            ...current[item.connectionId],
+            connectionId: item.connectionId,
+            status,
+            phase: isTerminalStatus(status.status) ? 'stopped' : 'stopping',
+          },
+        }));
+        if (isTerminalStatus(status.status)) {
+          cancellingJobs.current.delete(jobId);
+        } else {
+          void poll(jobId, item.connectionId, 0, stopToken);
+        }
+      } catch (error) {
+        diagnosticLog('job_cancel_failed', {
+          job_id: jobId,
+          connection_id: item.connectionId,
+          code: (error as { code?: string })?.code,
+        }, 'warn');
+        // Keep the batch locked and poll the authoritative source status. This
+        // prevents a failed cancel RPC from opening a second sync on top.
+        void poll(jobId, item.connectionId, 0, stopToken);
+      }
+    }));
+
+    finishStoppingIfDone();
+  }, [finishStoppingIfDone, poll, stopTimers, updateItems]);
+
+  return {
+    items,
+    active,
+    stopping,
+    startMany,
+    cancelAll,
+    message,
+    dismissMessage: () => setMessage(null),
+  };
 }
 
 export type BatchJobLifecycle = ReturnType<typeof useBatchJobLifecycle>;
