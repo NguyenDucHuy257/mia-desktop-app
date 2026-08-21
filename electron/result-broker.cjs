@@ -7,24 +7,27 @@ const MAX_RESULT_PAGE_SIZE = 50;
 
 function validateQuery(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_result_query');
-  const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'date_from', 'date_to']);
+  const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'query_type', 'date_from', 'date_to']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_result_query');
   const limit = value.limit ?? MAX_RESULT_PAGE_SIZE;
   const cursor = value.cursor ?? null;
   const search = value.search ?? '';
   const direction = value.direction ?? null;
+  const queryType = value.query_type ?? null;
   const dateFrom = value.date_from ?? null;
   const dateTo = value.date_to ?? null;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RESULT_PAGE_SIZE) throw new TypeError('invalid_result_query');
   if (cursor !== null && (typeof cursor !== 'string' || cursor.length > 64)) throw new TypeError('invalid_result_query');
   if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_query');
   if (direction !== null && !['purchase', 'sold'].includes(direction)) throw new TypeError('invalid_result_query');
+  if (queryType !== null && !['query', 'sco-query'].includes(queryType)) throw new TypeError('invalid_result_query');
   if (dateFrom !== null && (typeof dateFrom !== 'string' || !DATE_PATTERN.test(dateFrom))) throw new TypeError('invalid_result_query');
   if (dateTo !== null && (typeof dateTo !== 'string' || !DATE_PATTERN.test(dateTo))) throw new TypeError('invalid_result_query');
   if ((dateFrom === null) !== (dateTo === null) || dateFrom && dateTo && dateFrom > dateTo) throw new TypeError('invalid_result_query');
   return {
     connection_id: validateConnectionId(value.connection_id), cursor, limit,
-    search: search.trim(), direction, date_from: dateFrom, date_to: dateTo,
+    search: search.trim(), direction, query_type: queryType,
+    date_from: dateFrom, date_to: dateTo,
   };
 }
 
