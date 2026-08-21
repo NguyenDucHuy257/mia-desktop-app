@@ -2,8 +2,8 @@
 
 Result paging comes from the vendored JobResultReader. Overview rows are
 flattened from the source database row plus invoice_overview_attributes and only
-filesystem/raw transport fields are removed. Detail Excel is rendered by the
-source InvoiceDetailExcelExporter against persisted source detail records.
+filesystem/raw transport fields are removed. Excel rendering is delegated to
+the vendored source exporters/templates so desktop output matches source files.
 """
 
 from __future__ import annotations
@@ -317,40 +317,58 @@ def _available_path(destination: Path, filename: str) -> Path:
     raise OSError("artifact_name_exhausted")
 
 
-def _excel_value(value: Any):
-    if value is None or isinstance(value, (int, float, bool)):
-        return value
-    if isinstance(value, (dict, list, tuple)):
-        text = json.dumps(value, ensure_ascii=False, default=str)
-    else:
-        text = str(value)
-    return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+def _source_template_dir() -> Path:
+    """Return the vendored source template directory in dev and packaged builds."""
+    return (
+        Path(__file__).resolve().parent
+        / "vendor" / "mia_crawl_service" / "resources" / "templates"
+    )
 
 
-def _write_overview_excel(
-    rows: list[dict[str, Any]], columns: list[str], target: Path
+def _write_overview_excel_from_source_template(
+    rows: list[dict[str, Any]],
+    *,
+    direction: str,
+    category: str,
+    date_from: str,
+    date_to: str,
+    target: Path,
 ) -> None:
-    from openpyxl import Workbook
+    """Render persisted overview rows with the exact source portal template.
 
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Tong quan"
-    sheet.append(columns)
-    for row in rows:
-        sheet.append([_excel_value(row.get(column)) for column in columns])
-    sheet.freeze_panes = "A2"
-    if columns and rows:
-        sheet.auto_filter.ref = f"A1:{sheet.cell(1, len(columns)).column_letter}{len(rows) + 1}"
+    mia-crawl-service builds its blank overview templates from real portal Excel
+    responses and its local fallback renderers clone the prototype row/style.
+    Reuse those renderers here rather than constructing a desktop workbook.
+    """
+    from app.services.overview_downloader import OverviewDownloader
+
+    renderer = OverviewDownloader(
+        crawler=None,
+        headers_provider=lambda: {},
+        template_dir=_source_template_dir(),
+    )
+    begin = date.fromisoformat(date_from)
+    end = date.fromisoformat(date_to)
+    if category == "electronic":
+        content = renderer._electronic_records_to_xlsx(
+            rows, direction, begin, end
+        )
+    elif category == "cash_register":
+        content = renderer._cash_records_to_xlsx(
+            rows, direction, begin, end
+        )
+    else:
+        raise ValueError("invalid_overview_export_category")
+
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.stem}-", suffix=".tmp", dir=target.parent
     )
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
-        workbook.save(temporary)
+        temporary.write_bytes(content)
         temporary.replace(target)
     finally:
-        workbook.close()
         temporary.unlink(missing_ok=True)
 
 
@@ -409,22 +427,23 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
                     continue
                 category = QUERY_TYPE_TO_CATEGORY.get(query_type)
                 source_name = OUTPUT_NAMES.get((direction, category))
-                if not source_name:
-                    source_name = f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
+                if not source_name or category not in {"electronic", "cash_register"}:
+                    raise ValueError("invalid_overview_export_category")
                 target = _available_path(destination, source_name)
-                scoped_context = {
-                    **context,
-                    "directions": [direction],
-                    "query_types": [query_type],
-                }
-                _write_overview_excel(rows, _overview_columns(scoped_context), target)
+                _write_overview_excel_from_source_template(
+                    rows,
+                    direction=direction,
+                    category=category,
+                    date_from=context["date_from"],
+                    date_to=context["date_to"],
+                    target=target,
+                )
                 files.append(str(target))
 
     if "details" in scopes:
         repository = InvoiceDetailQueryRepository(context["database_path"])
         exporter = InvoiceDetailExcelExporter(
-            Path(__file__).resolve().parent
-            / "vendor" / "mia_crawl_service" / "resources" / "templates" / "invoice_detail.xlsx"
+            _source_template_dir() / "invoice_detail.xlsx"
         )
         for direction in context["directions"]:
             for query_type in context["query_types"]:
