@@ -32,7 +32,7 @@ const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
   { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT', failureHint: 'Vui lòng kiểm tra lại MST hoặc mật khẩu.' },
-  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Chi tiết 08/2026 · 45/120 hóa đơn', monthProgress: 37.5 },
+  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Mua vào · Chi tiết 08/2026 · tổng tháng 45/120 hóa đơn', monthProgress: 37.5 },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
     company: `Công ty CP Đầu tư ${letter}`,
@@ -149,15 +149,15 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     };
   }, [menu]);
 
+  async function chooseExportFolder() {
+    const folder = await window.miaRuntime?.artifacts?.selectDirectory();
+    if (folder) onExportFolder(folder);
+  }
+
   async function exportAccounts(connectionIds: string[]) {
     if (!window.miaRuntime?.artifacts?.export) { setSelectionError('Tính năng xuất file chỉ có trong ứng dụng desktop.'); return; }
     if (connectionIds.length !== 1) { setSelectionError('Chỉ tải Excel cho một tài khoản tại một thời điểm.'); return; }
-    let destination = exportFolder;
-    if (!destination) {
-      destination = await window.miaRuntime.artifacts.selectDirectory() ?? '';
-      if (!destination) return;
-      onExportFolder(destination);
-    }
+    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải Excel.'); return; }
     const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
     const resultDirection = directions.length === 1 ? directions[0] : null;
     diagnosticLog('account_excel_export_requested', {
@@ -168,7 +168,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     });
     try {
       const result = await window.miaRuntime.artifacts.export({
-        destination,
+        destination: exportFolder,
         connection_ids: connectionIds,
         kinds: ['excel'],
         result_scopes: resultScopes,
@@ -322,6 +322,13 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" disabled={batchActive} aria-busy={batchActive} onClick={startJob}>
             <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
           </button>
+          <label className="invoice-export-folder">
+            <span>THƯ MỤC LƯU TRỮ</span>
+            <div>
+              <input aria-label="Thư mục lưu trữ hóa đơn" value={exportFolder} onChange={(event) => onExportFolder(event.target.value)} title={exportFolder} />
+              <button type="button" aria-label="Chọn thư mục lưu trữ hóa đơn" onClick={() => void chooseExportFolder()}>▱</button>
+            </div>
+          </label>
         </div>
       </section>
       <section className="invoice-content">
