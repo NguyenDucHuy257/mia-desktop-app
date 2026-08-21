@@ -63,6 +63,15 @@ def validate_request(value: Any) -> tuple[str | int, str, Any]:
     return request_id, method, params
 
 
+def _production_backend() -> ProductionBackend:
+    global production_backend
+    if data_directory is None:
+        raise RpcError(-32011, "storage_not_initialized")
+    if production_backend is None:
+        production_backend = ProductionBackend(data_directory, logger)
+    return production_backend
+
+
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
     if method == "system.health":
@@ -106,18 +115,19 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
-            if production_backend is None:
-                production_backend = ProductionBackend(data_directory, logger)
+            backend = _production_backend()
             if method == "source.jobs.start":
-                return production_backend.start(dict(params)), False
+                return backend.start(dict(params)), False
             if method == "source.jobs.status":
-                return production_backend.get(params["job_id"]), False
+                return backend.get(params["job_id"]), False
             if method == "source.jobs.summary":
-                return production_backend.summary(params["job_id"]), False
+                return backend.summary(params["job_id"]), False
             if method == "source.jobs.resume_all":
-                return production_backend.resume_all(), False
+                return backend.resume_all(), False
             if method == "source.jobs.cancel":
-                return production_backend.cancel(params["job_id"]), False
+                return backend.cancel(params["job_id"]), False
+        except RpcError:
+            raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
         except Exception as error:
@@ -230,7 +240,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 browser = playwright.chromium.launch(headless=True)
                 version = browser.version
                 browser.close()
-            return {"ready": True, "browser": "chromium", "version": version}, False
+            return {"ready": True, "browser": version}, False
         except Exception:
             if logger is not None:
                 logger.exception("pdf_runtime_unavailable")
@@ -239,10 +249,15 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         if storage is None or data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
+            value = dict(params)
+            if value.get("result_scopes"):
+                return _production_backend().export_results(value), False
             from mia_artifacts import ArtifactExporter
             if production_backend is not None:
-                production_backend.prepare_artifacts(dict(params))
-            return ArtifactExporter(storage, data_directory).export(dict(params)), False
+                production_backend.prepare_artifacts(value)
+            return ArtifactExporter(storage, data_directory).export(value), False
+        except RpcError:
+            raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
         except OSError:
@@ -256,19 +271,18 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
     if method.startswith("results."):
-        if storage is None:
+        if storage is None or data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
-            if method in {"results.overview", "results.details"} and production_backend is not None:
-                return production_backend.results("overview" if method == "results.overview" else "details", dict(params)), False
+            if method in {"results.overview", "results.details"}:
+                kind = "overview" if method == "results.overview" else "details"
+                return _production_backend().results(kind, dict(params)), False
             if method == "results.import_overviews":
                 return storage.import_overviews(params), False
-            if method == "results.overview":
-                return storage.query_overviews(params), False
             if method == "results.import_details":
                 return storage.import_details(params), False
-            if method == "results.details":
-                return storage.query_details(params), False
+        except RpcError:
+            raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
