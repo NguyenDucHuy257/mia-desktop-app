@@ -5,6 +5,8 @@ export interface JobProgressView {
   stage?: string | null;
   overall_percent?: number | null;
   stage_percent?: number | null;
+  current_direction?: JobStatusResponse['current_direction'];
+  current_query_type?: JobStatusResponse['current_query_type'];
   message?: string | null;
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];
@@ -66,6 +68,12 @@ function withStagePercent(label: string, stagePercent?: number | null) {
   return percent ? `${label} · ${percent} giai đoạn` : label;
 }
 
+function directionLabel(direction?: string | null) {
+  if (direction === 'purchase') return 'Mua vào';
+  if (direction === 'sold') return 'Bán ra';
+  return '';
+}
+
 function monthProgress(job: JobProgressView) {
   const month = job.current_month;
   const stage = job.stage ?? '';
@@ -73,16 +81,23 @@ function monthProgress(job: JobProgressView) {
 
   const label = MONTH_STAGE_LABELS[stage];
   const monthLabel = formatMonthKey(month.key);
+  const activeDirection = directionLabel(job.current_direction);
+  const prefix = activeDirection ? `${activeDirection} · ` : '';
 
+  // current_month.processed/planned are source-wide month counters. They cover
+  // every selected direction/query type, so label them as the month total while
+  // separately showing the exact source direction currently being executed.
   if (month.planned > 0) {
-    return `${label} ${monthLabel} · ${month.processed}/${month.planned} hóa đơn`;
+    return `${prefix}${label} ${monthLabel} · tổng tháng ${month.processed}/${month.planned} hóa đơn`;
   }
 
   if (month.processed > 0) {
-    return `${label} ${monthLabel} · đã xử lý ${month.processed} hóa đơn`;
+    return `${prefix}${label} ${monthLabel} · tổng tháng đã xử lý ${month.processed} hóa đơn`;
   }
 
-  return `Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}`;
+  return activeDirection
+    ? `${activeDirection} · Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}`
+    : `Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}`;
 }
 
 /**
@@ -124,7 +139,11 @@ export function formatSourceJobProgress(job?: JobProgressView | null) {
   if (month) return month;
 
   if (job.stage && STAGE_MESSAGES[job.stage]) {
-    return withStagePercent(STAGE_MESSAGES[job.stage], job.stage_percent);
+    const activeDirection = directionLabel(job.current_direction);
+    const label = activeDirection
+      ? `${activeDirection} · ${STAGE_MESSAGES[job.stage]}`
+      : STAGE_MESSAGES[job.stage];
+    return withStagePercent(label, job.stage_percent);
   }
 
   // Source may add a future internal token before desktop has a translation.
