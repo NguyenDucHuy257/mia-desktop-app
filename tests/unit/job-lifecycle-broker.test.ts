@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createJobLifecycleBroker, idempotencyKey, validateIntent, validateJobId } = require('../../electron/job-lifecycle-broker.cjs');
+const { JOB_POLICY_NAMESPACE, createJobLifecycleBroker, idempotencyKey, validateIntent, validateJobId } = require('../../electron/job-lifecycle-broker.cjs');
 
 const intent = {
   connection_id: 'conn_123456', date_from: '2026-01-01', date_to: '2026-01-31',
@@ -24,6 +24,7 @@ describe('offline job lifecycle IPC broker', () => {
   it('derives the same idempotency key for equivalent normalized intents', () => {
     const reordered = { ...intent, directions: ['sold', 'purchase'], scopes: ['detail', 'overview'] };
     const canonical = validateIntent(reordered);
+    expect(JOB_POLICY_NAMESPACE).toBe('desktop-v4');
     expect(idempotencyKey(canonical)).toBe(idempotencyKey(validateIntent({ ...reordered, directions: ['purchase', 'sold'], scopes: ['overview', 'detail'] })));
     expect(idempotencyKey(validateIntent({ ...intent, force_refresh: true }))).not.toBe(idempotencyKey(validateIntent({ ...intent, force_refresh: false })));
   });
@@ -36,7 +37,7 @@ describe('offline job lifecycle IPC broker', () => {
     const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(freshIntent);
     expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_1' }, accepted: { status: 'queued' } } });
     expect(invoke).toHaveBeenCalledWith('source.jobs.start', expect.objectContaining({
-        intent: freshIntent, idempotency_key: expect.stringMatching(/^desktop-v3-[a-f0-9]{64}$/),
+        intent: freshIntent, idempotency_key: expect.stringMatching(/^desktop-v4-[a-f0-9]{64}$/),
     }), { timeoutMs: 15000 });
   });
 
