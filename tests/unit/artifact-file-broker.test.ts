@@ -23,6 +23,31 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
   });
 
+  it('validates filtered result workbook export separately from normal artifacts', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    expect(validateExportRequest({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview', 'details'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+      direction: 'purchase',
+      search: '000123',
+    })).toMatchObject({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview', 'details'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+      direction: 'purchase',
+      search: '000123',
+    });
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+  });
+
   it('sanitizes artifact list filters and date bounds', () => {
     const query = validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31', limit: 50 });
     expect(query).toMatchObject({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31' });
