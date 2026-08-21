@@ -71,6 +71,56 @@ class ProductionBackend(SourceBackend):
         # changing source crawler/session/job behavior.
         self._metadata_lock = threading.RLock()
 
+    def _source_company_name(self, connection) -> str:
+        """Read the company profile through the source-managed durable session.
+
+        Account creation/reconnect and the crawler now share exactly the same
+        encrypted session/token lifecycle. Desktop does not perform a second
+        standalone portal login merely to discover the company display name.
+        """
+        _, session_hash = self.accounts.session_hash(
+            connection.connection_id,
+            owner_id=source_backend_module.OWNER_ID,
+        )
+        portal = self.sessions.build_worker_portal_session(
+            session_hash,
+            worker_id=source_backend_module.WORKER_ID,
+        )
+        company = portal.get_company_info()
+        company_name = str(company.get("name") or "").strip()
+        if not company_name:
+            raise ValueError("missing_company_name")
+        return company_name[:300]
+
+    def create_connection(self, username: str, password: str):
+        connection, reused = self.service.create_account_connection(
+            source_backend_module.CreateAccountConnectionBody(
+                username=username,
+                password=password,
+            ),
+            owner_id=source_backend_module.OWNER_ID,
+        )
+        self._save_company_name(
+            connection.connection_id,
+            self._source_company_name(connection),
+        )
+        return self.public_connection(connection, reused=reused)
+
+    def reconnect_connection(self, connection_id: str, username: str, password: str):
+        connection = self.service.reconnect_account_connection(
+            connection_id,
+            source_backend_module.ReconnectAccountConnectionBody(
+                username=username,
+                password=password,
+            ),
+            owner_id=source_backend_module.OWNER_ID,
+        )
+        self._save_company_name(
+            connection.connection_id,
+            self._source_company_name(connection),
+        )
+        return self.public_connection(connection)
+
     @staticmethod
     def public_job(job):
         # Upstream JobRecord timestamps are strings. Keep the source record
