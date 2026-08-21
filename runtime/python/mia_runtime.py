@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -66,17 +66,67 @@ def validate_request(value: Any) -> tuple[str | int, str, Any]:
     return request_id, method, params
 
 
+def _crawler_logger() -> logging.Logger:
+    return logging.getLogger("mia_crawler")
+
+
+def _install_coverage_logging(backend: ProductionBackend) -> None:
+    """Log the real worker coverage plan without planning twice on the RPC path."""
+    planner = backend.pipeline.planner
+    original_plan = planner.plan
+    if getattr(original_plan, "_mia_diagnostic_wrapper", False):
+        return
+
+    def logged_plan(*args, **kwargs):
+        started = time.perf_counter()
+        plan = original_plan(*args, **kwargs)
+        crawl_log = _crawler_logger()
+        for decision in plan.decisions:
+            crawl_log.info(
+                "coverage_decision direction=%s query_type=%s status_filter=%s from=%s to=%s classification=%s planned=%s",
+                decision.direction,
+                decision.query_type,
+                decision.status_filter,
+                decision.from_date.isoformat(),
+                decision.to_date.isoformat(),
+                decision.classification,
+                decision.planned_items,
+            )
+        crawl_log.info(
+            "coverage_plan_complete from=%s to=%s decisions=%s duration_ms=%.1f",
+            kwargs.get("date_from"),
+            kwargs.get("date_to"),
+            len(plan.decisions),
+            (time.perf_counter() - started) * 1000,
+        )
+        return plan
+
+    setattr(logged_plan, "_mia_diagnostic_wrapper", True)
+    planner.plan = logged_plan
+
+
 def _production_backend() -> ProductionBackend:
     global production_backend
     if data_directory is None:
         raise RpcError(-32011, "storage_not_initialized")
     if production_backend is None:
-        production_backend = ProductionBackend(data_directory, logger)
+        # Recover expired durable leases before the worker is allowed to claim
+        # queued work. Without this, a job left in `running` by a prior process
+        # can block every later job for the same account indefinitely.
+        backend = ProductionBackend(data_directory, logger, start_worker=False)
+        _install_coverage_logging(backend)
+        recovery = backend.repository.recover_expired_leases()
+        _crawler_logger().info(
+            "startup_lease_recovery recovered_jobs=%s recovered_tasks=%s failed_tasks=%s cancelled_jobs=%s promoted_jobs=%s",
+            recovery.recovered_jobs,
+            recovery.recovered_tasks,
+            recovery.failed_tasks,
+            recovery.cancelled_jobs,
+            recovery.promoted_jobs,
+        )
+        backend.worker.start()
+        production_backend = backend
     return production_backend
-
-
-def _crawler_logger() -> logging.Logger:
-    return logging.getLogger("mia_crawler")
 
 
 def _latest_jobs(backend: ProductionBackend) -> list[dict[str, Any]]:
@@ -89,43 +139,13 @@ def _latest_jobs(backend: ProductionBackend) -> list[dict[str, Any]]:
     return [backend.public_job(job) for job in latest.values()]
 
 
-def _log_coverage(backend: ProductionBackend, job_id: str) -> None:
-    crawl_log = _crawler_logger()
-    try:
-        job = backend.repository.get_job(job_id)
-        parameters = job.parameters
-        plan = backend.pipeline.planner.plan(
-            company_tax_code=job.company_tax_code,
-            date_from=date.fromisoformat(parameters["date_from"]),
-            date_to=date.fromisoformat(parameters["date_to"]),
-            directions=list(parameters["directions"]),
-            query_types=list(parameters["query_types"]),
-            business_now=backend.pipeline.clock(),
-            force_refresh=bool(parameters.get("force_refresh")),
-            force_slices=backend.pipeline._latest_month_force_slices(parameters),
-        )
-        for decision in plan.decisions:
-            crawl_log.info(
-                "coverage_decision job_id=%s direction=%s query_type=%s status_filter=%s from=%s to=%s classification=%s planned=%s",
-                job_id,
-                decision.direction,
-                decision.query_type,
-                decision.status_filter,
-                decision.from_date.isoformat(),
-                decision.to_date.isoformat(),
-                decision.classification,
-                decision.planned_items,
-            )
-    except Exception:
-        crawl_log.exception("coverage_diagnostic_failed job_id=%s", job_id)
-
-
 def _log_job_status(value: dict[str, Any]) -> None:
     current = value.get("current_month") or {}
     error = value.get("error") or {}
     _crawler_logger().info(
-        "job_status job_id=%s status=%s stage=%s overall=%s month=%s month_index=%s month_total=%s processed=%s planned=%s month_percent=%s error_code=%s",
+        "job_status job_id=%s connection_id=%s status=%s stage=%s overall=%s month=%s month_index=%s month_total=%s processed=%s planned=%s month_percent=%s error_code=%s",
         value.get("job_id"),
+        value.get("connection_id"),
         value.get("status"),
         value.get("stage"),
         value.get("overall_percent"),
@@ -232,9 +252,10 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                     ",".join(intent.get("scopes") or ()),
                 )
                 result = backend.start(dict(params))
-                _crawler_logger().info("job_created job_id=%s status=%s", result.get("job_id"), result.get("status"))
-                if result.get("job_id"):
-                    _log_coverage(backend, result["job_id"])
+                _crawler_logger().info(
+                    "job_created job_id=%s connection_id=%s status=%s",
+                    result.get("job_id"), result.get("connection_id"), result.get("status"),
+                )
                 return result, False
             if method == "source.jobs.status":
                 result = backend.get(params["job_id"])
@@ -406,9 +427,10 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 result = _production_backend().results(kind, dict(params))
                 if logger is not None:
                     logger.info(
-                        "results_read kind=%s from=%s to=%s direction=%s rows=%s has_more=%s",
-                        kind, params.get("date_from"), params.get("date_to"), params.get("direction"),
-                        len(result.get("items") or ()), bool((result.get("pagination") or {}).get("has_more")),
+                        "results_read connection_id=%s kind=%s from=%s to=%s direction=%s rows=%s has_more=%s",
+                        params.get("connection_id"), kind, params.get("date_from"), params.get("date_to"),
+                        params.get("direction"), len(result.get("items") or ()),
+                        bool((result.get("pagination") or {}).get("has_more")),
                     )
                 return result, False
             if method == "results.import_overviews":
