@@ -28,7 +28,6 @@ a = Analysis(
         "app.job_engine.factory",
         "app.job_engine.admission",
         "app.job_engine.admission_safe",
-        "app.job_engine.postgres_repository",
     ],
     noarchive=False,
     optimize=1,
