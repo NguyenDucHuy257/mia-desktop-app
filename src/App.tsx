@@ -3,6 +3,7 @@ import { AppShell, type NavigationKey } from './components/AppShell';
 import { AddAccountPage } from './features/accounts/AddAccountPage';
 import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage';
 import { createAccountConnectionGateway } from './features/accounts/account-gateway';
+import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
 import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
@@ -24,6 +25,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const [exportFolder, setExportFolder] = useState('C:\\MIACrawl\\Export\\PDF\\T10_2023');
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
+  const invoiceJobs = useBatchJobLifecycle();
 
   async function refreshAccounts() {
     try {
@@ -58,7 +60,7 @@ export default function App() {
       ) : view === 'results' ? (
         <ResultsPage connectionId={connectionId} onBack={() => setView('navigation')} />
       ) : active === 'invoices' ? (
-        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} exportFolder={exportFolder} onExportFolder={setExportFolder} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
+        <InvoiceManagementPage jobLifecycle={invoiceJobs} accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} exportFolder={exportFolder} onExportFolder={setExportFolder} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
       ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
         : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
           : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
