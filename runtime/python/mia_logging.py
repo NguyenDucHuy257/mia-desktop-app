@@ -11,6 +11,7 @@ LOGGER_NAMES = (
     "mia_crawler",
     "app",
     "mia.worker_runtime",
+    "mia.job_engine",
 )
 
 PATTERNS = (
@@ -91,11 +92,12 @@ def configure_logging(log_directory: Path, level: str = "INFO") -> logging.Logge
     crawler_handler = _file_handler(log_directory / "crawler.log")
     _reset_logger("mia_crawler", resolved_level, crawler_handler)
 
-    # Production source uses both module-name loggers (app.*) and explicit
-    # mia.worker_runtime* loggers. Attach one redacted sink at their namespace
-    # roots so every upstream diagnostic reaches crawler.log without modifying
-    # the vendored source tree.
+    # Production source uses module-name loggers (app.*), explicit worker
+    # runtime loggers, and the durable job-engine logger. Attach the same
+    # redacted sink at those namespace roots so auth/crawl/lease/recovery events
+    # all reach crawler.log without modifying the vendored source tree.
     _reset_logger("app", resolved_level, crawler_handler)
     _reset_logger("mia.worker_runtime", resolved_level, crawler_handler)
+    _reset_logger("mia.job_engine", resolved_level, crawler_handler)
 
     return runtime
