@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
+import downloadIcon from '../../assets/figma/artifact-download.svg';
+import backIcon from '../../assets/figma/back.png';
 import type { DetailResult, LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
 import '../../styles/results-enhancements.css';
 
@@ -114,14 +116,14 @@ export function ResultsPage({ connectionId, onBack }: { connectionId: string; on
   }
 
   return <section className="results-page results-page--figma" aria-label="Kết quả hóa đơn">
-    <button className="results-back" type="button" onClick={onBack}>← Quay lại Quản lý HDDT</button>
+    <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại Quản lý HDDT</button>
     <header className="results-header results-header--figma">
       <div>
         <h1>Kết quả hóa đơn</h1>
         <p>Dữ liệu đã đồng bộ được đọc trực tiếp từ bộ lưu trữ cục bộ.</p>
       </div>
       <div className="results-export" ref={exportRoot}>
-        <button className="results-export-trigger" type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}>⇩ Tải xuống kết quả</button>
+        <button className="results-export-trigger" type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}><img src={downloadIcon} alt="" /> Tải xuống kết quả</button>
         {exportOpen ? <div className="results-export-popover" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
           <label><input type="checkbox" checked={exportScopes.includes('overview')} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
