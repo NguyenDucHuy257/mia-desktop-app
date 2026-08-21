@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
+import { readLastSyncDateRange } from '../../components/date-input-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
 import stopIcon from '../../assets/figma/stop.png';
@@ -19,6 +20,8 @@ interface InvoiceRow {
   progress: number;
   progressLabel: string;
 }
+
+const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải 150/150 HĐ' },
@@ -74,6 +77,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   onSelectAccounts(ids: string[]): void;
   onViewResults(id: string): void;
 }) {
+  const initialRange = useRef(readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
@@ -81,8 +85,8 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [actionAccountId, setActionAccountId] = useState<string | null>(null);
-  const [dateFrom, setDateFrom] = useState('2023-10-01');
-  const [dateTo, setDateTo] = useState('2023-10-31');
+  const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
+  const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
   const { items: batchItems, startMany, cancelAll, message, dismissMessage } = useBatchJobLifecycle();
   const figmaFixture = typeof window !== 'undefined'
