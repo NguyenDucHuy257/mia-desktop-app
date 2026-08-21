@@ -9,6 +9,20 @@ const MAX_RETRIES = 5;
 
 export interface BatchItem { connectionId: string; record?: PersistedJob; status?: JobStatusResponse; error?: string }
 
+export function jobFailureMessage(code?: string) {
+  if (code === 'invalid_source_credentials') return 'Tên đăng nhập hoặc mật khẩu không đúng.';
+  if (code === 'source_account_locked') return 'Tài khoản đã bị khóa vì nhập sai thông tin quá số lần quy định.';
+  if (code === 'source_login_rejected') return 'Cổng hóa đơn từ chối đăng nhập.';
+  if (code === 'source_token_missing') return 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.';
+  if (code === 'source_rate_limited') return 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.';
+  if (code?.startsWith('source_http_')) return 'Dịch vụ cổng hóa đơn đang tạm thời không khả dụng.';
+  if (code === 'portal_auth_failed') return 'Không thể xác thực lại tài khoản.';
+  if (code === 'overview_failed') return 'Không thể tải dữ liệu tổng quan.';
+  if (code === 'detail_failed') return 'Không thể tải dữ liệu chi tiết.';
+  if (code === 'crawler_runtime_unavailable') return 'Bộ xử lý crawler không thể khởi tạo.';
+  return 'Crawler không thể hoàn thành yêu cầu.';
+}
+
 export function useBatchJobLifecycle() {
   const [items, setItems] = useState<Record<string, BatchItem>>({});
   const [message, setMessage] = useState<{ kind: 'notice' | 'error' | 'success'; text: string } | null>(null);
@@ -51,13 +65,7 @@ export function useBatchJobLifecycle() {
         if (status.status === 'completed' || status.status === 'completed_with_warning') {
           setMessage({ kind: 'success', text: status.status === 'completed' ? 'Đồng bộ dữ liệu thành công.' : 'Đồng bộ hoàn tất và có cảnh báo.' });
         } else if (status.status === 'failed') {
-          const code = status.error?.code;
-          const detail = code === 'portal_auth_failed' ? 'Không thể xác thực lại tài khoản.'
-            : code === 'overview_failed' ? 'Không thể tải dữ liệu tổng quan.'
-              : code === 'detail_failed' ? 'Không thể tải dữ liệu chi tiết.'
-                : code === 'crawler_runtime_unavailable' ? 'Bộ xử lý crawler không thể khởi tạo.'
-                : 'Crawler không thể hoàn thành yêu cầu.';
-          setMessage({ kind: 'error', text: `${detail} Hãy thử lại hoặc xem Nhật ký.` });
+          setMessage({ kind: 'error', text: `${jobFailureMessage(status.error?.code)} Hãy thử lại hoặc xem Nhật ký.` });
         } else if (status.status === 'cancelled') setMessage({ kind: 'notice', text: 'Đã dừng đồng bộ.' });
         void launchNext(token);
         return;
