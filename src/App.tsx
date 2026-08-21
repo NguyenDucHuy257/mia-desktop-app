@@ -8,6 +8,7 @@ import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
 import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
 import './styles/delete-progress.css';
+import './styles/invoice-storage-polish.css';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
@@ -95,8 +96,6 @@ export default function App() {
     } finally {
       deleteWorkerActive.current = false;
       setDeleteProgress((current) => ({ ...current, active: false }));
-      // A delete may have been queued between the last loop check and the final
-      // state update. Start another drain rather than leaving it stranded.
       if (deleteQueue.current.length > 0) void drainDeleteQueue();
     }
   }
@@ -105,9 +104,6 @@ export default function App() {
     if (deletingIds.current.has(id)) return;
     deletingIds.current.add(id);
     deleteQueue.current.push(id);
-
-    // Optimistic presentation: remove the row before destructive filesystem/DB
-    // cleanup starts. The runtime remains the authority for the actual purge.
     setAccounts((current) => current?.filter((item) => item.connection_id !== id) ?? current);
     setSelectedAccountIds((current) => current.filter((value) => value !== id));
     setConnectionId((current) => current === id ? '' : current);
