@@ -113,6 +113,20 @@
   white-space: nowrap;
 }
 
+.invoice-page .status-badge[data-status='stopped'] {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.invoice-page .progress-cell[data-status='stopped'] .progress-copy {
+  color: #64748b;
+}
+
+.invoice-page .progress-cell[data-status='stopped'] .progress-track > span {
+  opacity: .45;
+}
+
 .invoice-page .failure-message {
   min-width: 0;
   overflow: hidden;
@@ -214,15 +228,23 @@
   box-shadow: 0 4px 10px rgb(22 101 52 / 18%);
 }
 
-.invoice-page .sync-button:hover {
+.invoice-page .sync-button:not(:disabled):hover {
   background: #14532d;
   box-shadow: 0 7px 18px rgb(22 101 52 / 28%);
   transform: translateY(-1px);
 }
 
-.invoice-page .sync-button:active {
+.invoice-page .sync-button:not(:disabled):active {
   transform: translateY(0) scale(.97);
   box-shadow: 0 2px 7px rgb(22 101 52 / 22%);
+}
+
+.invoice-page .sync-button:disabled,
+.invoice-page .stop-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+  box-shadow: none;
+  transform: none;
 }
 
 .invoice-page .compact-select:hover,
