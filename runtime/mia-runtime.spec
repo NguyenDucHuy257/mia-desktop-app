@@ -22,13 +22,15 @@ a = Analysis(
         "setuptools",
         "distutils",
         "pkg_resources",
-        # Server admission and multi-slot worker-host modules are intentionally
-        # absent from the local desktop execution graph. mia_backend supplies
-        # local shims before mia_source_backend is imported.
+        # Server admission, multi-slot worker-host and HTTP schema modules are
+        # intentionally absent from the local desktop execution graph. Local
+        # shims are installed before mia_source_backend is imported.
         "app.job_engine.factory",
         "app.job_engine.admission",
         "app.job_engine.admission_safe",
         "app.job_engine.worker",
+        "app.external_api.models",
+        "pydantic",
     ],
     noarchive=False,
     optimize=1,
