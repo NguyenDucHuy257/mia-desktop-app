@@ -9,7 +9,7 @@ import tempfile
 import threading
 import sys
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +30,7 @@ from app.session_manager.crypto import SessionCipher
 from app.session_manager.portal_authenticator import PortalAuthenticator
 from app.session_manager.repository import SQLiteSessionRepository
 from app.session_manager.service import SessionTokenManager
-from app.utils.date_utils import BUSINESS_TIMEZONE
+from app.utils.date_utils import BUSINESS_TIMEZONE, split_by_calendar_month
 from app.worker_runtime.coverage_planner import CoveragePlanner
 from app.worker_runtime.handler import InvoiceCrawlTaskHandler
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
@@ -42,6 +42,18 @@ from app.services.invoice_pdf_export_service import InvoicePdfExportService
 
 OWNER_ID = "mia-desktop-local"
 WORKER_ID = "desktop-direct"
+
+
+def previous_calendar_month_start(value: date) -> date:
+    """Return the first day of the calendar month immediately before value."""
+    return (value.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+
+def current_calendar_month_end(value: date) -> date:
+    """Return the last day of value's calendar month."""
+    current = value.replace(day=1)
+    next_month = (current.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return next_month - timedelta(days=1)
 
 
 class DesktopInvoiceCrawlTaskHandler(InvoiceCrawlTaskHandler):
@@ -59,6 +71,39 @@ class DesktopInvoiceCrawlTaskHandler(InvoiceCrawlTaskHandler):
         }
         return super().run_xml_unit(
             job, translated, progress_callback=progress_callback,
+        )
+
+
+class DesktopInvoiceCrawlPipeline(InvoiceCrawlPipeline):
+    """Keep production behavior while forcing the two newest calendar months."""
+
+    def _recent_refresh_range(self, parameters):
+        # force_refresh is handled by the production planner and refreshes every
+        # selected slice. Do not add a narrower detail force range in that case.
+        if parameters.get("force_refresh") or not parameters.get("refresh_recent_months"):
+            return None
+        now = self.clock().astimezone(BUSINESS_TIMEZONE).date()
+        request_from = date.fromisoformat(parameters["date_from"])
+        request_to = date.fromisoformat(parameters["date_to"])
+        begin = max(request_from, previous_calendar_month_start(now))
+        end = min(request_to, current_calendar_month_end(now))
+        return (begin, end) if begin <= end else None
+
+    def _latest_month_range(self, parameters):
+        # Vendor pipeline uses this hook to force detail decisions. Desktop
+        # broadens it from one latest month to previous+current calendar month.
+        return self._recent_refresh_range(parameters)
+
+    def _latest_month_force_slices(self, parameters):
+        forced = self._recent_refresh_range(parameters)
+        if forced is None:
+            return frozenset()
+        begin, end = forced
+        return frozenset(
+            (direction, query_type, month_from, month_to)
+            for month_from, month_to in split_by_calendar_month(begin, end)
+            for direction in parameters["directions"]
+            for query_type in parameters["query_types"]
         )
 
 
@@ -87,7 +132,7 @@ class ProductionBackend:
             data_root=self.data_root, crawl_config=config,
             proxy_registry=ProxyRegistry(direct_capacity=1),
         )
-        self.pipeline = InvoiceCrawlPipeline(
+        self.pipeline = DesktopInvoiceCrawlPipeline(
             self.repository, self.handler, CoveragePlanner(self.data_root),
             clock=lambda: datetime.now(BUSINESS_TIMEZONE),
         )
@@ -133,11 +178,21 @@ class ProductionBackend:
             "date_from": intent["date_from"], "date_to": intent["date_to"],
             "directions": sorted(intent["directions"]),
             "query_types": sorted(intent["query_types"]),
-            "force_refresh": False, "refresh_latest_month": False,
+            # User checkbox refreshes all selected historical slices. Even when
+            # unchecked, the desktop pipeline always refreshes previous+current
+            # calendar month through refresh_recent_months.
+            "force_refresh": bool(intent.get("force_refresh")),
+            "refresh_recent_months": True,
+            "refresh_latest_month": False,
             "result_scope": result_scope, "include_xml": include_xml,
             "include_mvt": False, "data_types": sorted(data_types),
             "pipeline_plan": pipeline_plan,
         }
+        if self.logger is not None:
+            self.logger.info(
+                "source_job_refresh_policy force_refresh=%s recent_months=2 range=%s..%s",
+                parameters["force_refresh"], parameters["date_from"], parameters["date_to"],
+            )
         fingerprint = hashlib.sha256(json.dumps(
             parameters, sort_keys=True, separators=(",", ":"),
         ).encode()).hexdigest()
@@ -432,6 +487,7 @@ class ProductionBackend:
                 "data_types": list(job.parameters.get("data_types") or (
                     ["invoice", "xml"] if job.parameters.get("include_xml") else ["invoice"]
                 )),
+                "force_refresh": bool(job.parameters.get("force_refresh")),
             },
             "idempotency_key": "managed-by-production-engine",
             "status": job.status, "stage": job.current_stage,
