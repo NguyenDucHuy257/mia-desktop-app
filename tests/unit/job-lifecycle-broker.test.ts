@@ -9,7 +9,7 @@ const intent = {
   directions: ['purchase'], query_types: ['query'], scopes: ['overview'], data_types: ['invoice'],
 };
 
-describe('source job lifecycle IPC broker', () => {
+describe('local source job lifecycle IPC broker', () => {
   it('normalizes allowlisted source options and rejects empty, extra or unsafe input', () => {
     expect(validateIntent(intent)).toEqual(intent);
     expect(validateIntent({ ...intent, force_refresh: true })).toEqual({ ...intent, force_refresh: true });
@@ -71,7 +71,7 @@ describe('source job lifecycle IPC broker', () => {
     expect(invoke.mock.calls.filter(([method, params]) => method === 'source.jobs.start' && params.idempotency_key?.endsWith('-attempt-2'))).toHaveLength(2);
   });
 
-  it.each(['resume', 'resumeAll', 'latestAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the source runtime allowlist', async (method) => {
+  it.each(['resume', 'resumeAll', 'latestAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the local source runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }));
     await broker[method](...(method === 'resume' || method === 'resumeAll' || method === 'latestAll' || method === 'clear' ? [] : ['job_1']));
@@ -94,7 +94,7 @@ describe('source job lifecycle IPC broker', () => {
   it('sanitizes runtime failures without returning intent data', async () => {
     const broker = createJobLifecycleBroker(() => ({ invoke: vi.fn().mockRejectedValue(new Error('secret runtime payload')) }));
     const result = await broker.start(intent);
-    expect(result).toEqual({ ok: false, error: { code: 'internal_error', message: 'MIA API request could not be processed.' } });
+    expect(result).toEqual({ ok: false, error: { code: 'internal_error', message: 'Local runtime request could not be processed.' } });
     expect(JSON.stringify(result)).not.toContain('conn_123456');
   });
 
