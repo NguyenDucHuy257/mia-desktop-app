@@ -132,6 +132,8 @@
 }
 
 .results-filters--figma {
+  position: relative;
+  z-index: 20;
   min-height: 60px;
   margin-bottom: 12px;
   padding: 9px 12px;
@@ -139,11 +141,119 @@
   border-radius: 10px;
   background: #f8f8f6;
   align-items: center;
+  overflow: visible;
 }
 
 .results-filters--figma .date-range-control {
+  position: relative;
+  z-index: 40;
   width: 250px;
-  flex-basis: 250px;
+  flex: 0 0 250px;
+}
+
+/* Results owns a wider, bounded date editor. This overrides the legacy
+ * popover geometry from global.css that lets the footer/button overflow. */
+.results-page--figma .results-filters--figma .date-range-popover {
+  position: absolute;
+  z-index: 300;
+  top: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  width: 390px;
+  max-width: min(390px, calc(100vw - 300px));
+  min-height: 0;
+  padding: 14px 16px 16px;
+  border: 1px solid #e5e5e0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 42px rgb(15 23 42 / 18%);
+  overflow: visible;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > label {
+  width: 100%;
+  margin: 0 0 10px;
+  display: block;
+  color: #1a1c1b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > label > span {
+  width: 100%;
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+  align-items: center;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > label > span > input:first-child {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 11px;
+  border: 1px solid #d6d6cf;
+  border-radius: 9px;
+  outline: none;
+  background: #fff;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > label > span > input:first-child:focus {
+  border-color: #16a34a;
+  box-shadow: 0 0 0 3px rgb(22 163 74 / 10%);
+}
+
+.results-page--figma .results-filters--figma .date-range-popover input[type='date'] {
+  width: 42px;
+  min-width: 42px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid #d6d6cf;
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > p {
+  width: 100%;
+  margin: 2px 0 8px;
+  color: #dc2626;
+  font-size: 11px;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > div:last-child {
+  position: static;
+  width: 100%;
+  margin: 2px 0 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > div:last-child > button {
+  position: static;
+  width: auto;
+  min-width: 72px;
+  height: 36px;
+  margin: 0;
+  padding: 0 14px;
+  border: 1px solid #166534;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > div:last-child > button:first-child {
+  background: #fff;
+  color: #166534;
+}
+
+.results-page--figma .results-filters--figma .date-range-popover > div:last-child > button:last-child {
+  background: #166534;
+  color: #fff;
 }
 
 .results-filters--figma > select {
@@ -217,6 +327,8 @@
 }
 
 .results-table--figma {
+  position: relative;
+  z-index: 1;
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
@@ -249,6 +361,37 @@
   cursor: pointer;
 }
 
+.results-page--figma button,
+.results-page--figma select,
+.results-page--figma .date-range-trigger {
+  transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 100ms ease;
+}
+
+.results-page--figma .results-back:hover,
+.results-page--figma .results-tabs--figma button:hover,
+.results-page--figma .results-more:hover,
+.results-page--figma .results-state button:hover {
+  color: #14532d;
+  background: #f0fdf4;
+}
+
+.results-page--figma .results-export-trigger:hover {
+  background: #14532d;
+  box-shadow: 0 6px 16px rgb(22 101 52 / 24%);
+  transform: translateY(-1px);
+}
+
+.results-page--figma .date-range-trigger:hover,
+.results-page--figma .results-filters--figma > select:hover {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.results-page--figma button:not(:disabled):active,
+.results-page--figma .date-range-trigger:active {
+  transform: scale(.97);
+}
+
 .results-more:disabled {
   opacity: .5;
 }
@@ -259,5 +402,8 @@
   }
   .results-search-wrap {
     width: min(320px, 100%);
+  }
+  .results-page--figma .results-filters--figma .date-range-popover {
+    max-width: min(390px, calc(100vw - 260px));
   }
 }
