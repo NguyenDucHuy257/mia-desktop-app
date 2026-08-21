@@ -1,4 +1,10 @@
+import sys
 import unittest
+from pathlib import Path
+
+VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor" / "mia_crawl_service"
+if str(VENDOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(VENDOR_ROOT))
 
 from mia_source_results import (
     _detail_template_schema,
