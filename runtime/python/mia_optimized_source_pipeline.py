@@ -11,7 +11,10 @@ host-side orchestration that is unnecessary for the local desktop runtime:
   whole invoice range for every count/process pass;
 * while that one source planner pass is running, cache the company's existing
   detail rows in memory so the source planner does not open SQLite once per
-  invoice key.
+  invoice key;
+* expose the exact direction/query unit currently being executed so desktop can
+  present whether the source worker is on purchase or sold data without
+  inventing progress counters.
 
 No request, pagination, normalization, persistence, fetch/refresh/skip decision,
 or artifact operation is reimplemented here.
@@ -45,16 +48,59 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
 
     def run(self, job, worker_id: str, lease_token: str):
         # The pipeline object is reused by the single local supervisor, so all
-        # cached planning state is explicitly job-scoped.
+        # cached planning/presentation state is explicitly job-scoped.
         self._desktop_overview_complete = False
         self._desktop_detail_plan = None
         self._desktop_detail_plan_by_month = None
+        self._desktop_current_unit = None
+        originals = self._install_unit_progress_wrappers()
         try:
             return super().run(job, worker_id, lease_token)
         finally:
+            for name, original in originals.items():
+                setattr(self.core, name, original)
             self._desktop_overview_complete = False
             self._desktop_detail_plan = None
             self._desktop_detail_plan_by_month = None
+            self._desktop_current_unit = None
+
+    def _install_unit_progress_wrappers(self):
+        originals = {}
+        for name, stage in (
+            ("prepare_overview_unit", "overview"),
+            ("run_overview_unit", "overview"),
+            ("run_detail_unit", "detail"),
+            ("run_xml_unit", "ensure_xml"),
+            ("run_mvt_scope", "mvt"),
+        ):
+            original = getattr(self.core, name, None)
+            if original is None:
+                continue
+            originals[name] = original
+
+            def wrapped(job, payload, *args, _original=original, _stage=stage, **kwargs):
+                self._set_current_source_unit(_stage, payload)
+                return _original(job, payload, *args, **kwargs)
+
+            setattr(self.core, name, wrapped)
+        return originals
+
+    def _set_current_source_unit(self, stage, payload):
+        if not isinstance(payload, dict) or not hasattr(self, "_state"):
+            return
+        direction = payload.get("direction")
+        query_type = payload.get("query_type")
+        if direction not in {"purchase", "sold"}:
+            return
+        unit = (stage, str(direction), str(query_type or ""))
+        if unit == self._desktop_current_unit:
+            return
+        self._desktop_current_unit = unit
+        self._state["current_direction"] = str(direction)
+        self._state["current_query_type"] = str(query_type) if query_type else None
+        # Persist only when the source changes logical unit. Item/month progress
+        # continues to use the source pipeline's own persistence throttle.
+        self._persist(force=True)
 
     @staticmethod
     def _cached_detail_lookup(original_lookup):
