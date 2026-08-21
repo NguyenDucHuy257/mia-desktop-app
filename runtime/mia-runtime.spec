@@ -18,7 +18,18 @@ a = Analysis(
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[str(runtime_root / "torch_runtime_hook.py")],
-    excludes=["setuptools", "distutils", "pkg_resources"],
+    excludes=[
+        "setuptools",
+        "distutils",
+        "pkg_resources",
+        # Server B admission/worker-pool modules are intentionally absent from
+        # the local desktop execution graph. mia_backend supplies a local
+        # app.job_engine.factory shim before mia_source_backend is imported.
+        "app.job_engine.factory",
+        "app.job_engine.admission",
+        "app.job_engine.admission_safe",
+        "app.job_engine.postgres_repository",
+    ],
     noarchive=False,
     optimize=1,
 )
