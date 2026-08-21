@@ -1,0 +1,207 @@
+/* Final Results polish. Kept separate so it wins over the legacy/global table
+ * rules without weakening the shared Figma-derived styles. */
+
+.results-page.results-page--figma .results-filters--figma {
+  gap: 10px;
+}
+
+.results-page.results-page--figma .results-filters--figma > select {
+  width: 158px;
+  flex: 0 0 158px;
+}
+
+.results-page.results-page--figma .results-search-wrap {
+  width: min(330px, 28vw);
+}
+
+/* Metallic-gold primary action. The icon is inline SVG/currentColor so it
+ * cannot disappear like the old white-only Figma bitmap/SVG asset. */
+.results-page.results-page--figma .results-export-trigger--gold {
+  position: relative;
+  isolation: isolate;
+  min-width: 190px;
+  height: 42px;
+  padding: 0 18px;
+  overflow: hidden;
+  border: 1px solid #8d6615;
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, #75500d 0%, #b67d16 20%, #e0b542 43%, #f6dd8b 58%, #c6901f 78%, #74500f 100%);
+  color: #fff9e8;
+  text-shadow: 0 1px 0 rgb(79 52 5 / 45%);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 42%),
+    inset 0 -1px 0 rgb(94 59 5 / 28%),
+    0 7px 18px rgb(116 80 15 / 24%);
+}
+
+.results-page.results-page--figma .results-export-trigger--gold::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: -70%;
+  left: -32%;
+  width: 28%;
+  height: 240%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 58%), transparent);
+  transform: rotate(18deg);
+  transition: left 320ms ease;
+}
+
+.results-page.results-page--figma .results-export-trigger--gold:hover {
+  border-color: #67460b;
+  background:
+    linear-gradient(135deg, #5f3f08 0%, #986512 20%, #ca9927 44%, #ebc960 58%, #ab7413 79%, #5b3c08 100%);
+  color: #fffdf4;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 34%),
+    0 10px 24px rgb(98 63 8 / 32%);
+  transform: translateY(-1px);
+}
+
+.results-page.results-page--figma .results-export-trigger--gold:hover::after {
+  left: 112%;
+}
+
+.results-page.results-page--figma .results-export-trigger--gold:active {
+  background: linear-gradient(135deg, #503505, #9c6a12 45%, #c9992d 68%, #5b3b06);
+  transform: translateY(0) scale(.985);
+  box-shadow: inset 0 2px 5px rgb(70 43 3 / 30%), 0 3px 9px rgb(98 63 8 / 22%);
+}
+
+.results-page.results-page--figma .results-export-trigger--gold:focus-visible {
+  outline: 0;
+  border-color: #654507;
+  box-shadow: 0 0 0 3px rgb(218 169 54 / 28%), 0 8px 20px rgb(98 63 8 / 25%);
+}
+
+.results-export-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 0 rgb(70 43 3 / 28%));
+}
+
+.results-page.results-page--figma .results-export-popover--gold {
+  border-color: #e4cf91;
+  box-shadow: 0 18px 44px rgb(78 54 10 / 18%);
+}
+
+.results-page.results-page--figma .results-export-popover--gold input {
+  accent-color: #b9871d;
+}
+
+.results-page.results-page--figma .results-export-popover--gold > button {
+  border-color: #997019;
+  background: linear-gradient(135deg, #a87316, #d7ab3b 52%, #a97013);
+  color: #fffaf0;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%), 0 4px 10px rgb(110 73 10 / 18%);
+}
+
+.results-page.results-page--figma .results-export-popover--gold > button:hover {
+  border-color: #704b0c;
+  background: linear-gradient(135deg, #86580e, #bf8d25 52%, #80530b);
+}
+
+/* Force a bounded scrolling viewport. width:max-content on each grid row makes
+ * the horizontal axis real; height:0 + flex grows only into available space so
+ * the vertical axis cannot expand the page instead of scrolling. */
+.results-page.results-page--figma .results-table--excel-schema {
+  width: 100%;
+  height: 0;
+  min-height: 220px;
+  flex: 1 1 0;
+  overflow-x: scroll !important;
+  overflow-y: scroll !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: auto;
+  scrollbar-color: #b8861b #edf2f7;
+  border: 1px solid #dce3ea;
+  border-radius: 8px;
+  outline: 0;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 75%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema:focus-visible {
+  border-color: #d0a83e;
+  box-shadow: 0 0 0 3px rgb(222 180 70 / 14%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar {
+  width: 13px;
+  height: 13px;
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar-track {
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f8fafc 0%, #e8eef5 100%);
+  box-shadow: inset 0 0 3px rgb(51 65 85 / 12%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar-thumb {
+  min-height: 42px;
+  min-width: 42px;
+  border: 2px solid #f8fafc;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f2cf69 0%, #c89427 48%, #966713 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar-thumb:horizontal {
+  background: linear-gradient(90deg, #f2cf69 0%, #c89427 48%, #966713 100%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #e3b947 0%, #aa7416 52%, #74500e 100%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar-thumb:horizontal:hover {
+  background: linear-gradient(90deg, #e3b947 0%, #aa7416 52%, #74500e 100%);
+}
+
+.results-page.results-page--figma .results-table--excel-schema::-webkit-scrollbar-corner {
+  border-radius: 4px;
+  background: linear-gradient(135deg, #eef2f7, #dbe4ee);
+}
+
+.results-page.results-page--figma .results-table--excel-schema .results-row {
+  width: max-content;
+  min-width: 100%;
+}
+
+.results-page.results-page--figma .results-table--excel-schema .results-row--header {
+  z-index: 6;
+  min-height: 48px;
+  background: linear-gradient(180deg, #f8fafc 0%, #e8eef5 100%);
+  box-shadow: 0 1px 0 #cfd8e3;
+}
+
+.results-page.results-page--figma .results-table--excel-schema .results-row--header > span {
+  color: #263142;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 15px;
+  white-space: normal;
+}
+
+.results-page.results-page--figma .results-table--excel-schema .results-row:not(.results-row--header):hover {
+  background: #fffdf6;
+}
+
+@media (max-width: 1280px) {
+  .results-page.results-page--figma .results-filters--figma > select {
+    width: 145px;
+    flex-basis: 145px;
+  }
+
+  .results-page.results-page--figma .results-search-wrap {
+    width: min(280px, 24vw);
+  }
+}
