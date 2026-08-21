@@ -9,9 +9,12 @@ source InvoiceDetailExcelExporter against persisted source detail records.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import sqlite3
 import tempfile
+from contextlib import closing
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -25,6 +28,21 @@ BLOCKED_RESULT_FIELDS = {
     "detail_path",
 }
 
+OVERVIEW_BASE_COLUMNS = (
+    "id", "company_tax_code", "direction", "query_type", "invoice_category",
+    "nbmst", "khhdon", "shdon", "khmshdon", "nlap", "nlap_date",
+    "detail_fetched", "created_at", "updated_at",
+)
+
+
+def _public_field_name(name: str) -> bool:
+    key = str(name).casefold()
+    return (
+        key not in BLOCKED_RESULT_FIELDS
+        and not key.startswith("raw_")
+        and not key.endswith("_path")
+    )
+
 
 def _safe_fields(item: dict[str, Any]) -> dict[str, Any]:
     value = dict(item)
@@ -35,9 +53,7 @@ def _safe_fields(item: dict[str, Any]) -> dict[str, Any]:
     return {
         str(key): field_value
         for key, field_value in value.items()
-        if str(key).casefold() not in BLOCKED_RESULT_FIELDS
-        and not str(key).casefold().startswith("raw_")
-        and not str(key).casefold().endswith("_path")
+        if _public_field_name(str(key))
     }
 
 
@@ -66,7 +82,7 @@ def _decode_page_cursor(value: str | None) -> tuple[int, str | None]:
         not isinstance(decoded, list) or len(decoded) != 3
         or decoded[0] != 1 or not isinstance(decoded[1], int)
         or decoded[1] < 0
-        or decoded[2] is not None and not isinstance(decoded[2], str)
+        or (decoded[2] is not None and not isinstance(decoded[2], str))
     ):
         raise ValueError("invalid_result_cursor")
     return decoded[1], decoded[2]
@@ -122,6 +138,58 @@ def _job_for(context, direction: str, *, query_types: list[str] | None = None):
     )
 
 
+def _overview_columns(context) -> list[str]:
+    columns = [name for name in OVERVIEW_BASE_COLUMNS if _public_field_name(name)]
+    database_path = context["database_path"]
+    if not database_path.is_file():
+        return columns
+    directions = list(context["directions"])
+    query_types = list(context["query_types"])
+    if not directions or not query_types:
+        return columns
+    direction_marks = ",".join("?" for _ in directions)
+    query_marks = ",".join("?" for _ in query_types)
+    params = [
+        context["base_job"].company_tax_code,
+        context["date_from"], context["date_to"],
+        *directions, *query_types,
+    ]
+    try:
+        with closing(sqlite3.connect(database_path)) as connection:
+            table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='invoice_overview_attributes'"
+            ).fetchone()
+            if not table:
+                return columns
+            rows = connection.execute(f"""
+                SELECT DISTINCT a.field_name
+                FROM invoice_overview_attributes a
+                JOIN invoice_overview_items i ON i.id=a.invoice_item_id
+                WHERE i.company_tax_code=? AND i.nlap_date BETWEEN ? AND ?
+                  AND i.direction IN ({direction_marks})
+                  AND i.query_type IN ({query_marks})
+                ORDER BY a.field_name
+            """, params).fetchall()
+    except sqlite3.Error:
+        return columns
+    seen = set(columns)
+    for row in rows:
+        name = str(row[0])
+        if _public_field_name(name) and name not in seen:
+            seen.add(name)
+            columns.append(name)
+    return columns
+
+
+def _detail_columns() -> list[str]:
+    from app.repositories.invoice_detail_repository import DETAIL_LINE_FIELDS
+
+    return ["direction", "stt", *[
+        name for name in DETAIL_LINE_FIELDS if _public_field_name(name)
+    ]]
+
+
 def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     """Page public source DB records, preserving exact source values."""
     if kind not in {"overview", "details"}:
@@ -132,16 +200,17 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     context = _result_context(backend, query)
     if context is None:
         return {
-            "items": [],
+            "items": [], "columns": [],
             "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
     search = str(query.get("search") or "").strip().casefold()
     direction_index, source_cursor = _decode_page_cursor(query.get("cursor"))
     directions = context["directions"]
+    columns = _overview_columns(context) if kind == "overview" else _detail_columns()
     if direction_index >= len(directions):
         return {
-            "items": [],
+            "items": [], "columns": columns,
             "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
@@ -169,12 +238,13 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
             if not _search_matches(fields, search):
                 continue
             raw_id = fields.get("id")
-            row_id = int(raw_id) if isinstance(raw_id, int) else None
-            if row_id is None:
-                # Detail line rows intentionally do not expose a DB row id. A
-                # deterministic UI-only key is sufficient and is not persisted.
-                fingerprint = json.dumps(fields, ensure_ascii=False, default=str, sort_keys=True)
-                row_id = int.from_bytes(fingerprint.encode("utf-8")[:8].ljust(8, b"\0"), "big")
+            if isinstance(raw_id, int):
+                row_id: int | str = raw_id
+            else:
+                fingerprint = json.dumps(
+                    fields, ensure_ascii=False, default=str, sort_keys=True
+                ).encode("utf-8")
+                row_id = hashlib.sha256(fingerprint).hexdigest()[:20]
             output.append({"row_id": row_id, "direction": direction, "fields": fields})
 
         page_more = bool((page.get("pagination") or {}).get("has_more"))
@@ -192,6 +262,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
 
     response: dict[str, Any] = {
         "items": output[:limit],
+        "columns": columns,
         "pagination": {
             "limit": limit,
             "has_more": bool(has_more),
@@ -256,19 +327,14 @@ def _excel_value(value: Any):
     return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
 
 
-def _write_overview_excel(rows: list[dict[str, Any]], target: Path) -> None:
+def _write_overview_excel(
+    rows: list[dict[str, Any]], columns: list[str], target: Path
+) -> None:
     from openpyxl import Workbook
 
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Tong quan"
-    columns: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        for key in row:
-            if key not in seen:
-                seen.add(key)
-                columns.append(key)
     sheet.append(columns)
     for row in rows:
         sheet.append([_excel_value(row.get(column)) for column in columns])
@@ -346,7 +412,12 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
                 if not source_name:
                     source_name = f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
                 target = _available_path(destination, source_name)
-                _write_overview_excel(rows, target)
+                scoped_context = {
+                    **context,
+                    "directions": [direction],
+                    "query_types": [query_type],
+                }
+                _write_overview_excel(rows, _overview_columns(scoped_context), target)
                 files.append(str(target))
 
     if "details" in scopes:
