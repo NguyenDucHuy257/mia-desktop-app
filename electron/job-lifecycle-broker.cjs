@@ -10,7 +10,9 @@ const QUERY_TYPES = new Set(['query', 'sco-query']);
 const SCOPES = new Set(['overview', 'detail']);
 const DATA_TYPES = new Set(['invoice', 'xml', 'html', 'pdf']);
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
-const JOB_POLICY_NAMESPACE = 'desktop-v4';
+// The job contract now uses the source repository's conn_* account/session state
+// directly. Keep it isolated from durable jobs created by older desktop adapters.
+const JOB_POLICY_NAMESPACE = 'desktop-source-v1';
 
 class JobInputError extends Error {
   constructor(code = 'invalid_job_input') {
@@ -29,10 +31,12 @@ function uniqueEnum(value, allowed, max, allowEmpty = false) {
 
 function validateIntent(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new JobInputError();
-  const allowed = new Set(['connection_id', 'date_from', 'date_to', 'directions', 'query_types', 'scopes', 'data_types', 'force_refresh']);
+  const allowed = new Set(['connection_id', 'date_from', 'date_to', 'directions', 'query_types', 'scopes', 'data_types', 'force_refresh', 'refresh_latest_month']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new JobInputError();
   if (Object.hasOwn(value, 'force_refresh') && typeof value.force_refresh !== 'boolean') throw new JobInputError();
+  if (Object.hasOwn(value, 'refresh_latest_month') && typeof value.refresh_latest_month !== 'boolean') throw new JobInputError();
   const connectionId = validateConnectionId(value.connection_id);
+  if (!connectionId.startsWith('conn_')) throw new JobInputError('invalid_connection_id');
   if (!DATE_PATTERN.test(value.date_from) || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new JobInputError();
   const intent = {
     connection_id: connectionId,
@@ -44,6 +48,7 @@ function validateIntent(value) {
     data_types: uniqueEnum(value.data_types, DATA_TYPES, 4, true),
   };
   if (Object.hasOwn(value, 'force_refresh')) intent.force_refresh = value.force_refresh;
+  if (Object.hasOwn(value, 'refresh_latest_month')) intent.refresh_latest_month = value.refresh_latest_month;
   if (intent.directions.length === 0 || intent.scopes.length === 0 || intent.data_types.length === 0) {
     throw new JobInputError('empty_job_selection');
   }
@@ -59,22 +64,16 @@ function idempotencyKey(intent) {
   return `${JOB_POLICY_NAMESPACE}-${crypto.createHash('sha256').update(JSON.stringify(intent)).digest('hex')}`;
 }
 
-function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), protector, createAttemptId = crypto.randomUUID) {
+function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString(), createAttemptId = crypto.randomUUID) {
   if (typeof getRuntime !== 'function') throw new TypeError('Invalid offline runtime dependency.');
   const attemptKeys = new Map();
-  const startProductionJob = async (intent, key) => {
-    if (!protector?.decrypt) throw new TypeError('Secure credential protector is required.');
-    const runtime = getRuntime();
-    const secret = await runtime.invoke('accounts.secret', { account_id: intent.connection_id });
-    const password = protector.decrypt(Buffer.from(secret.encrypted_password, 'base64'));
-    try {
-      return await runtime.invoke('source.jobs.start', {
-        intent, username: secret.username, password, idempotency_key: key,
-      }, { timeoutMs: 15000 });
-    } finally {
-      // The plaintext reference is released immediately after the local call.
-    }
-  };
+  const startSourceJob = async (intent, key) => getRuntime().invoke(
+    'source.jobs.start',
+    { intent, idempotency_key: key },
+    // Source ExternalApiService performs its own coverage-plan read before
+    // durable admission. That is source-owned work, not a desktop timeout bug.
+    { timeoutMs: 90000 },
+  );
   return Object.freeze({
     resume: () => runBrokerCommand(async () => {
       const records = await getRuntime().invoke('source.jobs.resume_all');
@@ -86,11 +85,11 @@ function createJobLifecycleBroker(getRuntime, now = () => new Date().toISOString
       const intent = validateIntent(rawIntent);
       const baseKey = idempotencyKey(intent);
       const currentKey = attemptKeys.get(baseKey) || baseKey;
-      let record = await startProductionJob(intent, currentKey);
+      let record = await startSourceJob(intent, currentKey);
       if (TERMINAL_STATUSES.has(record.status)) {
         const nextKey = `${baseKey}-${createAttemptId()}`;
         attemptKeys.set(baseKey, nextKey);
-        record = await startProductionJob(intent, nextKey);
+        record = await startSourceJob(intent, nextKey);
       }
       return { record, accepted: { job_id: record.job_id, status: record.status, current_stage: record.stage, worker_slot_id: null } };
     }),
