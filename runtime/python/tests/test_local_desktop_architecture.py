@@ -1,12 +1,16 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from mia_local_job_repository import LocalSequentialJobRepository
+from mia_local_worker import LocalWorkerLoop
 
 
 class LocalDesktopArchitectureTests(unittest.TestCase):
@@ -39,6 +43,27 @@ class LocalDesktopArchitectureTests(unittest.TestCase):
             sqlite_path=Path(tempfile.gettempdir()) / "mia-local-shape.sqlite3"
         )
         self.assertIsInstance(repository, LocalSequentialJobRepository)
+        self.assertIs(mia_source_backend.WorkerLoop, LocalWorkerLoop)
+
+    def test_local_worker_loop_drives_only_one_supervisor(self):
+        stop_event = threading.Event()
+        repository = Mock()
+        supervisor = Mock()
+        supervisor.worker_id = "desktop-local-worker"
+        supervisor.repository = repository
+        supervisor.run_once.return_value = SimpleNamespace(job=None)
+
+        iterations = LocalWorkerLoop(
+            supervisor,
+            idle_backoff_seconds=0.001,
+            error_backoff_seconds=0.001,
+            orphan_scan_seconds=0.001,
+        ).run(stop_event, max_iterations=1)
+
+        self.assertEqual(iterations, 1)
+        supervisor.set_stop_event.assert_called_once_with(stop_event)
+        supervisor.run_once.assert_called_once_with()
+        repository.recover_expired_leases.assert_called_once_with()
 
 
 if __name__ == "__main__":
