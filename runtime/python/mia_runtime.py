@@ -1,4 +1,11 @@
-"""Minimal offline runtime used to validate the Electron/Python boundary."""
+"""Offline JSON-RPC transport for the vendored mia-crawl-service runtime.
+
+Electron owns process transport and local file dialogs.  Crawl behavior,
+accounts/sessions, job admission, recovery, cache/coverage, persistence and
+progress are delegated to the source repository through ProductionBackend.
+Legacy desktop storage routes remain only for backward-compatible artifacts and
+tests; the production UI no longer uses them for account/job state.
+"""
 
 from __future__ import annotations
 
@@ -16,15 +23,15 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from mia_account_purge import purge_account_data, scrub_account_log_lines
+from mia_backend import ProductionBackend
+from mia_crawler import CrawlerCoordinator, verify_account
 from mia_logging import close_logging, configure_logging
 from mia_storage import Storage, StorageError
-from mia_crawler import CrawlerCoordinator, verify_account
-from mia_backend import ProductionBackend
-from mia_account_purge import purge_account_data, scrub_account_log_lines
 
 MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
-RUNTIME_VERSION = "0.4.1"
+RUNTIME_VERSION = "0.5.0"
 storage: Storage | None = None
 crawler: CrawlerCoordinator | None = None
 data_directory: Path | None = None
@@ -42,11 +49,14 @@ class RpcError(Exception):
 def write_message(payload: dict[str, Any]) -> None:
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(encoded) > MAX_MESSAGE_BYTES:
-        encoded = json.dumps({
-            "jsonrpc": "2.0",
-            "id": payload.get("id"),
-            "error": {"code": -32603, "message": "response_too_large"},
-        }, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": payload.get("id"),
+                "error": {"code": -32603, "message": "response_too_large"},
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
     sys.stdout.buffer.write(encoded + b"\n")
     sys.stdout.buffer.flush()
 
@@ -70,85 +80,46 @@ def _crawler_logger() -> logging.Logger:
     return logging.getLogger("mia_crawler")
 
 
-def _install_coverage_logging(backend: ProductionBackend) -> None:
-    """Log the real worker coverage plan without planning twice on the RPC path."""
-    planner = backend.pipeline.planner
-    original_plan = planner.plan
-    if getattr(original_plan, "_mia_diagnostic_wrapper", False):
-        return
-
-    def logged_plan(*args, **kwargs):
-        started = time.perf_counter()
-        plan = original_plan(*args, **kwargs)
-        crawl_log = _crawler_logger()
-        for decision in plan.decisions:
-            crawl_log.info(
-                "coverage_decision direction=%s query_type=%s status_filter=%s from=%s to=%s classification=%s planned=%s",
-                decision.direction,
-                decision.query_type,
-                decision.status_filter,
-                decision.from_date.isoformat(),
-                decision.to_date.isoformat(),
-                decision.classification,
-                decision.planned_items,
-            )
-        crawl_log.info(
-            "coverage_plan_complete from=%s to=%s decisions=%s duration_ms=%.1f",
-            kwargs.get("date_from"),
-            kwargs.get("date_to"),
-            len(plan.decisions),
-            (time.perf_counter() - started) * 1000,
-        )
-        return plan
-
-    setattr(logged_plan, "_mia_diagnostic_wrapper", True)
-    planner.plan = logged_plan
-
-
 def _production_backend() -> ProductionBackend:
     global production_backend
     if data_directory is None:
         raise RpcError(-32011, "storage_not_initialized")
     if production_backend is None:
-        # Recover expired durable leases before the worker is allowed to claim
-        # queued work. Without this, a job left in `running` by a prior process
-        # can block every later job for the same account indefinitely.
-        backend = ProductionBackend(data_directory, logger, start_worker=False)
-        _install_coverage_logging(backend)
-        recovery = backend.repository.recover_expired_leases()
-        _crawler_logger().info(
-            "startup_lease_recovery recovered_jobs=%s recovered_tasks=%s failed_tasks=%s cancelled_jobs=%s promoted_jobs=%s",
-            recovery.recovered_jobs,
-            recovery.recovered_tasks,
-            recovery.failed_tasks,
-            recovery.cancelled_jobs,
-            recovery.promoted_jobs,
-        )
-        backend.worker.start()
-        production_backend = backend
+        # WorkerLoop, lease recovery, pipeline and progress are source-owned.
+        production_backend = ProductionBackend(data_directory, logger)
+        _crawler_logger().info("source_backend_ready runtime_version=%s", RUNTIME_VERSION)
     return production_backend
 
 
-def _latest_jobs(backend: ProductionBackend) -> list[dict[str, Any]]:
-    latest: dict[str, Any] = {}
-    for job in backend.repository.list_jobs_for_reconciliation():
-        connection_id = str(job.parameters.get("connection_id") or job.account_key)
-        current = latest.get(connection_id)
-        if current is None or (job.created_at, job.job_id) > (current.created_at, current.job_id):
-            latest[connection_id] = job
-    return [backend.public_job(job) for job in latest.values()]
+def _source_error_name(error: BaseException) -> str | None:
+    for name in ("error_code", "code"):
+        value = getattr(error, name, None)
+        if isinstance(value, str) and value:
+            return value
+    mapping = {
+        "AccountBusyError": "account_busy",
+        "CapacityExhaustedError": "capacity_exhausted",
+        "IdempotencyConflictError": "idempotency_conflict",
+        "AccountConnectionNotFoundError": "connection_not_found",
+        "ResourceOwnershipError": "resource_not_found",
+        "JobNotFoundError": "job_not_found",
+    }
+    return mapping.get(type(error).__name__)
 
 
 def _log_job_status(value: dict[str, Any]) -> None:
     current = value.get("current_month") or {}
     error = value.get("error") or {}
     _crawler_logger().info(
-        "job_status job_id=%s connection_id=%s status=%s stage=%s overall=%s month=%s month_index=%s month_total=%s processed=%s planned=%s month_percent=%s error_code=%s",
+        "job_status job_id=%s connection_id=%s status=%s stage=%s overall=%s "
+        "message=%s month=%s month_index=%s month_total=%s processed=%s planned=%s "
+        "month_percent=%s error_code=%s",
         value.get("job_id"),
         value.get("connection_id"),
         value.get("status"),
         value.get("stage"),
         value.get("overall_percent"),
+        value.get("message"),
         current.get("key"),
         current.get("index"),
         current.get("total"),
@@ -159,32 +130,35 @@ def _log_job_status(value: dict[str, Any]) -> None:
     )
 
 
-def _purge_account(account_id: str) -> dict[str, Any]:
+def _purge_source_account(connection_id: str) -> dict[str, Any]:
     global crawler, logger, production_backend
-    if storage is None or data_directory is None:
+    if data_directory is None:
         raise RpcError(-32011, "storage_not_initialized")
-    secret = storage.get_account_secret(account_id)
-    tax_code = str(secret["username"])
+    backend = _production_backend()
+    try:
+        tax_code = backend.connection_tax_code(connection_id)
+    except AttributeError:
+        tax_code = backend.connection_username(connection_id)
 
-    # Stop the production worker before removing control rows or source-data so
-    # no in-flight lease can write back into a job that has just been deleted.
-    if production_backend is not None:
-        production_backend.close()
-        production_backend = None
+    # Stop the source worker before deleting its durable rows/files.  Deletion
+    # itself is a desktop filesystem concern; job/session semantics remain those
+    # of the source repository up to this boundary.
+    backend.close()
+    production_backend = None
 
-    result = purge_account_data(data_directory, account_id, tax_code)
-    identifiers = [account_id, tax_code, *list(result.get("job_ids") or ())]
+    result = purge_account_data(data_directory, connection_id, tax_code)
+    identifiers = [connection_id, tax_code, *list(result.get("job_ids") or ())]
 
-    # Python RotatingFileHandler keeps Windows file handles open. Close them
-    # before scrubbing account-attributable lines, then restore diagnostics.
     close_logging()
     removed_log_lines = scrub_account_log_lines(data_directory, identifiers)
     logger = configure_logging(
         data_directory / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
     )
-    crawler = CrawlerCoordinator(storage, data_directory, logger)
+    if storage is not None:
+        crawler = CrawlerCoordinator(storage, data_directory, logger)
     logger.info(
-        "account_purge_completed jobs=%s artifact_files=%s source_directory=%s log_lines=%s",
+        "source_account_purge_completed jobs=%s artifact_files=%s "
+        "source_directory=%s log_lines=%s",
         len(result.get("job_ids") or ()),
         int(result.get("artifact_files_removed") or 0),
         bool(result.get("source_directory_removed")),
@@ -201,6 +175,7 @@ def _purge_account(account_id: str) -> dict[str, Any]:
 
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
+
     if method == "system.health":
         return {
             "protocol_version": PROTOCOL_VERSION,
@@ -222,22 +197,61 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             production_backend.close()
             production_backend = None
         return {"accepted": True}, True
+
     if method == "storage.initialize":
         if not isinstance(params, dict) or not isinstance(params.get("data_dir"), str):
             raise RpcError(-32602, "invalid_params")
         data_dir = Path(params["data_dir"])
         if not data_dir.is_absolute():
             raise RpcError(-32602, "data_dir_not_absolute")
+        # Keep the old DB initialized only for legacy artifacts/migration. New
+        # account and job state is created exclusively in source-control.sqlite3.
         storage = Storage(data_dir / "mia.sqlite3")
         try:
             result = storage.initialize()
             data_directory = data_dir
-            logger = configure_logging(data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO"))
+            logger = configure_logging(
+                data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
+            )
             crawler = CrawlerCoordinator(storage, data_dir, logger)
             logger.info("storage_initialized schema_version=%s", result["schema_version"])
             return result, False
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
+
+    # Source account/session contract. Production UI uses only these routes.
+    if method.startswith("source.accounts."):
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            backend = _production_backend()
+            if method == "source.accounts.create":
+                return backend.create_connection(params["username"], params["password"]), False
+            if method == "source.accounts.list":
+                return backend.list_connections(), False
+            if method == "source.accounts.get":
+                return backend.get_connection(params["connection_id"]), False
+            if method == "source.accounts.reconnect":
+                return backend.reconnect_connection(
+                    params["connection_id"], params["username"], params["password"]
+                ), False
+            if method == "source.accounts.purge":
+                return _purge_source_account(params["connection_id"]), False
+        except RpcError:
+            raise
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+        except Exception as error:
+            code = _source_error_name(error)
+            if logger is not None:
+                logger.warning(
+                    "source_account_failed method=%s error_type=%s error_code=%s",
+                    method, type(error).__name__, code,
+                )
+            raise RpcError(-32051, code or "source_account_failed") from None
+
+    # Source durable job contract. No desktop scheduler/progress calculation is
+    # executed here; this is a direct transport adapter to source service/worker.
     if method.startswith("source.jobs."):
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -246,9 +260,13 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if method == "source.jobs.start":
                 intent = dict(params).get("intent") or {}
                 _crawler_logger().info(
-                    "job_start_requested connection_id=%s from=%s to=%s force_refresh=%s directions=%s scopes=%s",
-                    intent.get("connection_id"), intent.get("date_from"), intent.get("date_to"),
-                    bool(intent.get("force_refresh")), ",".join(intent.get("directions") or ()),
+                    "job_start_requested connection_id=%s from=%s to=%s "
+                    "force_refresh=%s directions=%s scopes=%s",
+                    intent.get("connection_id"),
+                    intent.get("date_from"),
+                    intent.get("date_to"),
+                    bool(intent.get("force_refresh")),
+                    ",".join(intent.get("directions") or ()),
                     ",".join(intent.get("scopes") or ()),
                 )
                 result = backend.start(dict(params))
@@ -266,20 +284,37 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if method == "source.jobs.resume_all":
                 return backend.resume_all(), False
             if method == "source.jobs.latest":
-                return _latest_jobs(backend), False
+                if hasattr(backend, "latest_all"):
+                    return backend.latest_all(), False
+                latest: dict[str, Any] = {}
+                for job in backend.repository.list_jobs_for_reconciliation():
+                    connection_id = str(job.parameters.get("connection_id") or job.account_key)
+                    current = latest.get(connection_id)
+                    if current is None or (job.created_at, job.job_id) > (
+                        current.created_at, current.job_id
+                    ):
+                        latest[connection_id] = job
+                return [backend.public_job(job) for job in latest.values()], False
             if method == "source.jobs.cancel":
                 result = backend.cancel(params["job_id"])
-                _crawler_logger().warning("job_cancel_requested job_id=%s status=%s", params["job_id"], result.get("status"))
+                _crawler_logger().warning(
+                    "job_cancel_requested job_id=%s status=%s",
+                    params["job_id"], result.get("status"),
+                )
                 return result, False
         except RpcError:
             raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
         except Exception as error:
+            code = _source_error_name(error)
             if logger is not None:
-                logger.exception("production_backend_failed method=%s error_type=%s", method, type(error).__name__)
-            _crawler_logger().exception("production_backend_failed method=%s error_type=%s", method, type(error).__name__)
-            raise RpcError(-32070, "production_backend_failed") from None
+                logger.exception(
+                    "source_job_failed method=%s error_type=%s error_code=%s",
+                    method, type(error).__name__, code,
+                )
+            raise RpcError(-32070, code or "source_job_failed") from None
+
     if method == "storage.status":
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -287,6 +322,11 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             return storage.status(), False
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
+
+    # ------------------------------------------------------------------
+    # Legacy routes below are compatibility-only. Production React/Electron
+    # account and job brokers no longer call them.
+    # ------------------------------------------------------------------
     if method.startswith("accounts."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -302,16 +342,22 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if method == "accounts.update":
                 return storage.update_account(params), False
             if method == "accounts.update_company":
-                storage.update_account_company(params["account_id"], params["company_name"], params["timestamp"])
+                storage.update_account_company(
+                    params["account_id"], params["company_name"], params["timestamp"]
+                )
                 return storage.get_account(params["account_id"]), False
             if method in {"accounts.delete", "accounts.purge"}:
-                return _purge_account(params["account_id"]), False
+                account = storage.get_account(params["account_id"])
+                return purge_account_data(
+                    data_directory, params["account_id"], str(account["username"])
+                ), False
         except (KeyError, TypeError):
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32020, error.code) from None
         except (OSError, sqlite3.Error):
             raise RpcError(-32021, "account_purge_failed") from None
+
     if method.startswith("jobs."):
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -344,6 +390,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32030, error.code) from None
+
     if method == "crawler.start":
         if storage is None or crawler is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -356,6 +403,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
+
     if method == "crawler.health":
         if crawler is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -365,25 +413,30 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if logger is not None:
                 logger.exception("crawler_health_failed")
             raise RpcError(-32050, "crawler_runtime_unavailable") from None
+
     if method == "crawler.verify_account":
-        if (not isinstance(params, dict)
-                or not isinstance(params.get("username"), str)
-                or re.fullmatch(r"\d{10}(?:-\d{3})?", params["username"]) is None
-                or not isinstance(params.get("password"), str)
-                or not 1 <= len(params["password"]) <= 256):
+        if (
+            not isinstance(params, dict)
+            or not isinstance(params.get("username"), str)
+            or re.fullmatch(r"\d{10}(?:-\d{3})?", params["username"]) is None
+            or not isinstance(params.get("password"), str)
+            or not 1 <= len(params["password"]) <= 256
+        ):
             raise RpcError(-32602, "invalid_params")
-        if storage is None:
-            raise RpcError(-32011, "storage_not_initialized")
         try:
             return verify_account(params["username"], params["password"]), False
-        except Exception:
+        except Exception as error:
+            code = _source_error_name(error)
             if logger is not None:
-                logger.warning("portal_account_verification_failed")
-            _crawler_logger().warning("portal_account_verification_failed")
-            raise RpcError(-32051, "authentication_failed") from None
+                logger.warning(
+                    "portal_account_verification_failed error_code=%s", code
+                )
+            raise RpcError(-32051, code or "authentication_failed") from None
+
     if method == "artifacts.pdf_health":
         try:
             from playwright.sync_api import sync_playwright
+
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
                 version = browser.version
@@ -393,14 +446,18 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             if logger is not None:
                 logger.exception("pdf_runtime_unavailable")
             raise RpcError(-32061, "pdf_runtime_unavailable") from None
+
     if method == "artifacts.export":
-        if storage is None or data_directory is None:
+        if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             value = dict(params)
             if value.get("result_scopes"):
                 return _production_backend().export_results(value), False
             from mia_artifacts import ArtifactExporter
+
+            if storage is None:
+                raise RpcError(-32011, "storage_not_initialized")
             if production_backend is not None:
                 production_backend.prepare_artifacts(value)
             return ArtifactExporter(storage, data_directory).export(value), False
@@ -410,16 +467,19 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32602, "invalid_params") from None
         except OSError:
             raise RpcError(-32060, "artifact_write_failed") from None
+
     if method == "artifacts.list":
         if storage is None or data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             from mia_artifacts import ArtifactExporter
+
             return ArtifactExporter(storage, data_directory).list(dict(params)), False
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
+
     if method.startswith("results."):
-        if storage is None or data_directory is None:
+        if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             if method in {"results.overview", "results.details"}:
@@ -427,12 +487,19 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 result = _production_backend().results(kind, dict(params))
                 if logger is not None:
                     logger.info(
-                        "results_read connection_id=%s kind=%s from=%s to=%s direction=%s rows=%s has_more=%s",
-                        params.get("connection_id"), kind, params.get("date_from"), params.get("date_to"),
-                        params.get("direction"), len(result.get("items") or ()),
+                        "results_read connection_id=%s kind=%s from=%s to=%s "
+                        "direction=%s rows=%s has_more=%s",
+                        params.get("connection_id"),
+                        kind,
+                        params.get("date_from"),
+                        params.get("date_to"),
+                        params.get("direction"),
+                        len(result.get("items") or ()),
                         bool((result.get("pagination") or {}).get("has_more")),
                     )
                 return result, False
+            if storage is None:
+                raise RpcError(-32011, "storage_not_initialized")
             if method == "results.import_overviews":
                 return storage.import_overviews(params), False
             if method == "results.import_details":
@@ -443,6 +510,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32602, "invalid_params") from None
         except StorageError as error:
             raise RpcError(-32040, error.code) from None
+
     raise RpcError(-32601, "method_not_found")
 
 
@@ -453,11 +521,13 @@ def serve() -> int:
         if not raw:
             break
         if len(raw) > MAX_MESSAGE_BYTES + 1 or not raw.endswith(b"\n"):
-            write_message({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32600, "message": "request_too_large"},
-            })
+            write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32600, "message": "request_too_large"},
+                }
+            )
             return 64
 
         request_id: str | int | None = None
@@ -471,19 +541,58 @@ def serve() -> int:
             result, should_stop = dispatch(method, params)
             write_message({"jsonrpc": "2.0", "id": request_id, "result": result})
             if logger is not None:
-                logger.info("rpc_end request_id=%s method=%s outcome=ok duration_ms=%.1f", request_id, method, (time.perf_counter() - started) * 1000)
+                logger.info(
+                    "rpc_end request_id=%s method=%s outcome=ok duration_ms=%.1f",
+                    request_id, method, (time.perf_counter() - started) * 1000,
+                )
         except UnicodeDecodeError:
-            write_message({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse_error"}})
+            write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "parse_error"},
+                }
+            )
         except json.JSONDecodeError:
-            write_message({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse_error"}})
+            write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "parse_error"},
+                }
+            )
         except RpcError as error:
             if logger is not None:
-                logger.warning("rpc_end request_id=%s method=%s outcome=rpc_error code=%s duration_ms=%.1f", request_id, method, error.code, (time.perf_counter() - started) * 1000)
-            write_message({"jsonrpc": "2.0", "id": request_id, "error": {"code": error.code, "message": error.message}})
+                logger.warning(
+                    "rpc_end request_id=%s method=%s outcome=rpc_error code=%s "
+                    "duration_ms=%.1f",
+                    request_id,
+                    method,
+                    error.code,
+                    (time.perf_counter() - started) * 1000,
+                )
+            write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": error.code, "message": error.message},
+                }
+            )
         except Exception:
             if logger is not None:
-                logger.exception("rpc_end request_id=%s method=%s outcome=internal_error duration_ms=%.1f", request_id, method, (time.perf_counter() - started) * 1000)
-            write_message({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": "internal_error"}})
+                logger.exception(
+                    "rpc_end request_id=%s method=%s outcome=internal_error duration_ms=%.1f",
+                    request_id,
+                    method,
+                    (time.perf_counter() - started) * 1000,
+                )
+            write_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {"code": -32603, "message": "internal_error"},
+                }
+            )
     return 0
 
 
