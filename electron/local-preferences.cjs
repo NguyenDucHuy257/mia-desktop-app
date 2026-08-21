@@ -1,15 +1,18 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const DEFAULTS = Object.freeze({ concurrency: 2, retries: 5 });
+const LOCAL_CONCURRENCY = 1;
+const DEFAULTS = Object.freeze({ concurrency: LOCAL_CONCURRENCY, retries: 5 });
 
 function validatePreferences(value) {
   if (!value || typeof value !== 'object') throw new TypeError('invalid_preferences');
-  const concurrency = Number(value.concurrency);
+  // Keep accepting the legacy field so existing preferences.json files remain
+  // readable, but MIA Desktop always executes one account/job at a time.
+  const requestedConcurrency = Number(value.concurrency ?? LOCAL_CONCURRENCY);
   const retries = Number(value.retries);
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 4) throw new TypeError('invalid_concurrency');
+  if (!Number.isInteger(requestedConcurrency) || requestedConcurrency < 1 || requestedConcurrency > 4) throw new TypeError('invalid_concurrency');
   if (!Number.isInteger(retries) || retries < 0 || retries > 5) throw new TypeError('invalid_retries');
-  return { concurrency, retries };
+  return { concurrency: LOCAL_CONCURRENCY, retries };
 }
 
 async function readPreferences(userDataDirectory) {
@@ -73,4 +76,4 @@ async function readSanitizedLogs(userDataDirectory) {
   return entries.slice(-500).map((item) => item.line);
 }
 
-module.exports = { DEFAULTS, readPreferences, readSanitizedLogs, validatePreferences, writePreferences };
+module.exports = { DEFAULTS, LOCAL_CONCURRENCY, readPreferences, readSanitizedLogs, validatePreferences, writePreferences };
