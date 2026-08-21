@@ -22,12 +22,13 @@ a = Analysis(
         "setuptools",
         "distutils",
         "pkg_resources",
-        # Server B admission/worker-pool modules are intentionally absent from
-        # the local desktop execution graph. mia_backend supplies a local
-        # app.job_engine.factory shim before mia_source_backend is imported.
+        # Server admission and multi-slot worker-host modules are intentionally
+        # absent from the local desktop execution graph. mia_backend supplies
+        # local shims before mia_source_backend is imported.
         "app.job_engine.factory",
         "app.job_engine.admission",
         "app.job_engine.admission_safe",
+        "app.job_engine.worker",
     ],
     noarchive=False,
     optimize=1,
