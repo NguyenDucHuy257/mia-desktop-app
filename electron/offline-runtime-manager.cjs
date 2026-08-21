@@ -1,5 +1,7 @@
 const { PythonRuntimeClient, packagedRuntimeExecutable } = require('./python-runtime-client.cjs');
 
+const STARTUP_RPC_TIMEOUT_MS = 15_000;
+
 class OfflineRuntimeManager {
   constructor(options) {
     this.options = options;
@@ -9,6 +11,7 @@ class OfflineRuntimeManager {
     this.stopped = false;
     this.restartCount = 0;
     this.maxRestarts = options.maxRestarts ?? 2;
+    this.startupRpcTimeoutMs = options.startupRpcTimeoutMs ?? STARTUP_RPC_TIMEOUT_MS;
   }
 
   start() {
@@ -70,13 +73,18 @@ class OfflineRuntimeManager {
       : { pythonExecutable: this.options.pythonExecutable, runtimeScript: this.options.runtimeScript, env, logger: this.logger };
     const client = new PythonRuntimeClient(clientOptions);
     await client.start();
-    const health = await client.call('system.health');
+    // Windows process creation can legitimately take several seconds under
+    // antivirus/CI load. Keep the normal RPC timeout strict (5s) but give only
+    // the startup/recovery handshake a larger budget so a healthy runtime is
+    // not mistaken for a hung business request.
+    const startupOptions = { timeoutMs: this.startupRpcTimeoutMs };
+    const health = await client.call('system.health', {}, startupOptions);
     this.logger?.info('runtime_health', { protocol_version: health.protocol_version, runtime_version: health.runtime_version, pid: health.pid });
     if (health.protocol_version !== '1.0') {
       await client.stop();
       throw new Error('Unsupported offline runtime protocol.');
     }
-    await client.call('storage.initialize', { data_dir: this.options.dataDirectory });
+    await client.call('storage.initialize', { data_dir: this.options.dataDirectory }, startupOptions);
     this.client = client;
     return health;
   }
@@ -97,4 +105,4 @@ class OfflineRuntimeManager {
   }
 }
 
-module.exports = { OfflineRuntimeManager };
+module.exports = { OfflineRuntimeManager, STARTUP_RPC_TIMEOUT_MS };
