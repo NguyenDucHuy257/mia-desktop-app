@@ -10,13 +10,13 @@ const directories: string[] = [];
 afterEach(async () => Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))));
 
 describe('local preferences and logs', () => {
-  it('validates, persists atomically and restores defaults', async () => {
+  it('pins legacy concurrency preferences to one and persists retries atomically', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'mia-preferences-'));
     directories.push(directory);
-    await expect(readPreferences(directory)).resolves.toEqual({ concurrency: 2, retries: 5 });
-    await expect(writePreferences(directory, { concurrency: 4, retries: 1 })).resolves.toEqual({ concurrency: 4, retries: 1 });
-    await expect(readPreferences(directory)).resolves.toEqual({ concurrency: 4, retries: 1 });
-    expect(JSON.parse(await readFile(path.join(directory, 'preferences.json'), 'utf8'))).toEqual({ concurrency: 4, retries: 1 });
+    await expect(readPreferences(directory)).resolves.toEqual({ concurrency: 1, retries: 5 });
+    await expect(writePreferences(directory, { concurrency: 4, retries: 1 })).resolves.toEqual({ concurrency: 1, retries: 1 });
+    await expect(readPreferences(directory)).resolves.toEqual({ concurrency: 1, retries: 1 });
+    expect(JSON.parse(await readFile(path.join(directory, 'preferences.json'), 'utf8'))).toEqual({ concurrency: 1, retries: 1 });
     expect(() => validatePreferences({ concurrency: 0, retries: 9 })).toThrow('invalid_concurrency');
   });
 
