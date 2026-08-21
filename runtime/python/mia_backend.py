@@ -1,23 +1,35 @@
 """Local desktop host for the source-of-truth crawl runtime.
 
 MIA Desktop does not expose the source HTTP control API and does not run a
-worker pool.  Electron talks to one Python process over local JSON-RPC; that
+worker pool. Electron talks to one Python process over local JSON-RPC; that
 process hosts one sequential source worker backed by the source SQLite job
-repository.  Crawl/cache/session/result behavior stays in the vendored source.
+repository. Crawl/cache/session/result behavior stays in the vendored source.
 """
 
 from __future__ import annotations
 
+import sys
 import threading
+import types
+from pathlib import Path
 
-import mia_source_backend as source_backend_module
+
+VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
+if str(VENDOR_ROOT) not in sys.path:
+    sys.path.insert(0, str(VENDOR_ROOT))
+
 from mia_local_job_repository import create_local_job_repository
 
 
-# Inject the local host dependency before SourceBackend is instantiated.  The
-# upstream web host uses SafeImmediateAdmissionJobRepository, which adds worker
-# slots/capacity/proxy failover.  Desktop needs only the source SQLite queue.
-source_backend_module.create_job_engine_repository = create_local_job_repository
+# mia_source_backend was originally written against the upstream server factory.
+# Pre-seed that module name with the local SQLite factory so importing the backend
+# never imports SafeImmediateAdmissionJobRepository/worker-slot capacity code.
+factory_shim = types.ModuleType("app.job_engine.factory")
+factory_shim.create_job_engine_repository = create_local_job_repository
+sys.modules["app.job_engine.factory"] = factory_shim
+
+import mia_source_backend as source_backend_module
+
 source_backend_module.WORKER_ID = "desktop-local-worker"
 SourceBackend = source_backend_module.SourceBackend
 
