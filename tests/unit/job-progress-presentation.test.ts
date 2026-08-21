@@ -2,16 +2,30 @@ import { describe, expect, it } from 'vitest';
 import { formatSourceJobProgress } from '../../src/features/jobs/job-progress-presentation';
 
 describe('source job progress presentation', () => {
-  it('does not leak running:overview and reports concise monthly source counters', () => {
+  it('does not leak running:overview and reports the active source direction', () => {
     expect(formatSourceJobProgress({
       status: 'running',
       stage: 'overview',
+      current_direction: 'purchase',
       message: 'running:overview',
       current_month: {
         key: '2025-05', index: 1, total: 3,
         processed: 45, planned: 120, percent: 37.5,
       },
-    })).toBe('Tổng quan 05/2025 · 45/120 hóa đơn');
+    })).toBe('Mua vào · Tổng quan 05/2025 · tổng tháng 45/120 hóa đơn');
+  });
+
+  it('changes the presentation when source advances to sold data', () => {
+    expect(formatSourceJobProgress({
+      status: 'running',
+      stage: 'detail',
+      current_direction: 'sold',
+      message: 'running:detail',
+      current_month: {
+        key: '2025-07', index: 3, total: 3,
+        processed: 7843, planned: 9492, percent: 82.63,
+      },
+    })).toBe('Bán ra · Chi tiết 07/2025 · tổng tháng 7843/9492 hóa đơn');
   });
 
   it('translates granular source authentication milestones', () => {
