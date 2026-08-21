@@ -8,7 +8,7 @@ import { DEFAULT_BATCH_CONCURRENCY, normalizeBatch } from './batch-scheduler';
 const POLL_MS = 3_000;
 const MAX_RETRIES = 5;
 
-export interface BatchItem { connectionId: string; record?: PersistedJob; status?: JobStatusResponse; error?: string }
+export interface BatchItem { connectionId: string; record?: PersistedJob; status?: JobStatusResponse; error?: string; errorCode?: string }
 
 export function jobFailureMessage(code?: string) {
   if (code === 'invalid_source_credentials') return 'Tên đăng nhập hoặc mật khẩu không đúng.';
@@ -22,6 +22,19 @@ export function jobFailureMessage(code?: string) {
   if (code === 'detail_failed') return 'Không thể tải dữ liệu chi tiết.';
   if (code === 'crawler_runtime_unavailable') return 'Bộ xử lý crawler không thể khởi tạo.';
   return 'Crawler không thể hoàn thành yêu cầu.';
+}
+
+function jobStartFailureMessage(code?: string) {
+  if (code === 'empty_job_selection' || code === 'invalid_job_input' || code === 'invalid_params') {
+    return 'Yêu cầu đồng bộ không hợp lệ.';
+  }
+  if (code === 'runtime_restart_exhausted' || code === 'runtime_not_running' || code === 'crawler_runtime_unavailable') {
+    return 'Bộ xử lý đồng bộ chưa sẵn sàng.';
+  }
+  if (code && code !== 'internal_error' && code !== 'production_backend_failed') {
+    return `Không thể tạo tác vụ đồng bộ (${code}).`;
+  }
+  return 'Không thể tạo tác vụ đồng bộ. Xem Nhật ký để biết chi tiết.';
 }
 
 export function useBatchJobLifecycle() {
@@ -57,9 +70,18 @@ export function useBatchJobLifecycle() {
       setItems((current) => ({ ...current, [intent.connection_id]: { connectionId: intent.connection_id, record } }));
       void poll(record.job_id, intent.connection_id, 0, token);
     } catch (error) {
-      diagnosticLog('job_start_failed', { connection_id: intent.connection_id, code: (error as { code?: string })?.code, name: (error as Error)?.name }, 'error');
-      setItems((current) => ({ ...current, [intent.connection_id]: { connectionId: intent.connection_id, error: 'Không thể tạo job.' } }));
-      setMessage({ kind: 'error', text: 'Không thể tạo job. Vui lòng thử lại.' });
+      const code = (error as { code?: string })?.code;
+      diagnosticLog('job_start_failed', { connection_id: intent.connection_id, code, name: (error as Error)?.name }, 'error');
+      setItems((current) => ({
+        ...current,
+        [intent.connection_id]: {
+          connectionId: intent.connection_id,
+          error: jobStartFailureMessage(code),
+          errorCode: code,
+        },
+      }));
+      // A failed account must not block a selected batch. Continue immediately
+      // with the next account and keep the failure inside that account's row.
       void launchNext(token);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,8 +92,7 @@ export function useBatchJobLifecycle() {
     try {
       const status = await window.miaRuntime.jobs.status(jobId);
       if (token !== generation.current) return;
-      setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, status } }));
-      setMessage(null);
+      setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, status, error: undefined, errorCode: undefined } }));
       const fingerprint = JSON.stringify([
         status.status,
         status.stage,
@@ -95,23 +116,26 @@ export function useBatchJobLifecycle() {
         }, status.status === 'failed' ? 'error' : 'info');
       }
       if (TERMINAL_JOB_STATUSES.has(status.status)) {
-        if (status.status === 'completed' || status.status === 'completed_with_warning') {
-          setMessage({ kind: 'success', text: status.status === 'completed' ? 'Đồng bộ dữ liệu thành công.' : 'Đồng bộ hoàn tất và có cảnh báo.' });
-        } else if (status.status === 'failed') {
-          setMessage({ kind: 'error', text: `${jobFailureMessage(status.error?.code)} Hãy thử lại hoặc xem Nhật ký.` });
-        } else if (status.status === 'cancelled') setMessage({ kind: 'notice', text: 'Đã dừng đồng bộ.' });
+        // Terminal state is rendered on the account row. No modal/popup here:
+        // multi-account batches must continue unattended after one account fails.
         void launchNext(token);
         return;
       }
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, 0, token); }, POLL_MS);
       timers.current.add(timer);
     } catch (error) {
-      diagnosticLog('job_poll_failed', { job_id: jobId, connection_id: connectionId, attempt, code: (error as { code?: string })?.code }, 'warn');
-      setMessage(attempt >= retryLimit.current
-        ? { kind: 'error', text: 'Không thể cập nhật tiến trình. Vui lòng thử lại.' }
-        : { kind: 'notice', text: 'Mất kết nối tạm thời, đang thử lại…' });
+      const code = (error as { code?: string })?.code;
+      diagnosticLog('job_poll_failed', { job_id: jobId, connection_id: connectionId, attempt, code }, 'warn');
       if (attempt >= retryLimit.current) {
-        setItems((current) => ({ ...current, [connectionId]: { ...current[connectionId], connectionId, error: 'Mất kết nối khi cập nhật tiến trình.' } }));
+        setItems((current) => ({
+          ...current,
+          [connectionId]: {
+            ...current[connectionId],
+            connectionId,
+            error: 'Mất kết nối khi cập nhật tiến trình.',
+            errorCode: code,
+          },
+        }));
         void launchNext(token);
         return;
       }
@@ -177,6 +201,7 @@ export function useBatchJobLifecycle() {
       const status = await window.miaRuntime.jobs.cancel(item.record.job_id);
       setItems((current) => ({ ...current, [item.connectionId]: { ...current[item.connectionId], connectionId: item.connectionId, status } }));
     }));
+    setMessage({ kind: 'notice', text: 'Đã yêu cầu dừng các tác vụ đang chạy.' });
   }, [items]);
 
   return { items, startMany, cancelAll, message, dismissMessage: () => setMessage(null) };
