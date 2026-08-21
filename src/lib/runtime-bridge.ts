@@ -97,6 +97,7 @@ export interface PersistedJob {
   status?: string;
   stage?: string | null;
   overall_percent?: number;
+  message?: string | null;
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];
   event_sequence?: number;
