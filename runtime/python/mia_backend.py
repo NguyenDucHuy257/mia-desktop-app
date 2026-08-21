@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import threading
 import sys
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+
+from openpyxl import Workbook
 
 VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
 if str(VENDOR_ROOT) not in sys.path:
@@ -164,44 +167,219 @@ class ProductionBackend:
         return {"job_id": job.job_id, "status": job.status, "warning_count": job.warning_count,
                 "work": job.progress_state or {}}
 
+    def _result_job(self, connection_id: str):
+        candidates = [
+            job for job in self.repository.list_jobs_for_reconciliation()
+            if str(job.parameters.get("connection_id")) == connection_id
+        ]
+        return max(candidates, key=lambda item: (item.created_at, item.job_id)) if candidates else None
+
+    @staticmethod
+    def _empty_result_page(limit: int) -> dict[str, Any]:
+        return {
+            "items": [],
+            "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
+        }
+
     def results(self, kind: str, query: dict[str, Any]) -> dict[str, Any]:
-        candidates = [job for job in self.repository.list_jobs_for_reconciliation()
-                      if str(job.parameters.get("connection_id")) == query["connection_id"]]
-        if not candidates:
-            return {"items": [], "pagination": {"limit": int(query.get("limit", 50)), "has_more": False, "next_cursor": None}}
-        job = max(candidates, key=lambda item: (item.updated_at, item.job_id))
-        direction = query.get("direction")
-        if direction:
-            job = replace(job, parameters={**job.parameters, "directions": [direction]})
-        reader = JobResultReader(self.data_root / job.company_tax_code / "db" / "invoices.sqlite3")
+        if kind not in {"overview", "details"}:
+            raise ValueError("invalid_result_kind")
         limit = int(query.get("limit", 50))
+        if not 1 <= limit <= 200:
+            raise ValueError("invalid_result_limit")
+        base_job = self._result_job(str(query["connection_id"]))
+        if base_job is None:
+            return self._empty_result_page(limit)
+
+        date_from = str(query.get("date_from") or base_job.parameters["date_from"])
+        date_to = str(query.get("date_to") or base_job.parameters["date_to"])
+        if date.fromisoformat(date_from) > date.fromisoformat(date_to):
+            raise ValueError("invalid_result_range")
+        direction = query.get("direction")
+        if direction not in (None, "purchase", "sold"):
+            raise ValueError("invalid_result_direction")
+
+        # Results are a view over every durable invoice already synchronized for
+        # the account. The selected display range must not be constrained by
+        # whichever historical job happens to be the newest record.
+        job = replace(base_job, parameters={
+            **base_job.parameters,
+            "date_from": date_from,
+            "date_to": date_to,
+            "directions": [direction] if direction else ["purchase", "sold"],
+            "query_types": ["query", "sco-query"],
+        })
+        reader = JobResultReader(
+            self.data_root / job.company_tax_code / "db" / "invoices.sqlite3"
+        )
         cursor = query.get("cursor")
         search = str(query.get("search") or "").strip().casefold()
         output: list[dict[str, Any]] = []
         has_more = False
         while len(output) < limit:
-            page = (reader.overview_page(job, limit=max(1, limit - len(output)), cursor=cursor)
-                    if kind == "overview" else reader.detail_page(job, limit=max(1, limit - len(output)), cursor=cursor))
+            page = (
+                reader.overview_page(job, limit=max(1, limit - len(output)), cursor=cursor)
+                if kind == "overview"
+                else reader.detail_page(job, limit=max(1, limit - len(output)), cursor=cursor)
+            )
             for item in page["items"]:
                 serialized = json.dumps(item, ensure_ascii=False, default=str)
                 if search and search not in serialized.casefold():
                     continue
-                parts = [str(item.get(name, "")) for name in ("nbmst", "khhdon", "shdon", "khmshdon")]
+                parts = [
+                    str(item.get(name, ""))
+                    for name in ("nbmst", "khhdon", "shdon", "khmshdon")
+                ]
                 business_key = "|".join(parts)
                 raw_id = item.get("id")
-                identifier = int(raw_id) if raw_id is not None else int(hashlib.sha256(serialized.encode()).hexdigest()[:12], 16)
+                identifier = (
+                    int(raw_id)
+                    if raw_id is not None
+                    else int(hashlib.sha256(serialized.encode()).hexdigest()[:12], 16)
+                )
                 if kind == "overview":
-                    output.append({"overview_id": identifier, "direction": item.get("direction", "purchase"),
-                                   "business_key": business_key, "payload": item})
+                    output.append({
+                        "overview_id": identifier,
+                        "direction": item.get("direction", "purchase"),
+                        "business_key": business_key,
+                        "payload": item,
+                    })
                 else:
-                    output.append({"detail_id": identifier, "direction": item.get("direction", "purchase"),
-                                   "business_key": business_key, "line_key": str(item.get("stt", identifier)), "payload": item})
+                    output.append({
+                        "detail_id": identifier,
+                        "direction": item.get("direction", "purchase"),
+                        "business_key": business_key,
+                        "line_key": str(item.get("stt", identifier)),
+                        "payload": item,
+                    })
+                if len(output) >= limit:
+                    break
             cursor = page["pagination"]["next_cursor"]
             has_more = bool(page["pagination"]["has_more"])
             if not has_more or not cursor:
                 break
-        return {"items": output[:limit], "pagination": {"limit": limit, "has_more": has_more,
-                                                          "next_cursor": cursor if has_more else None}}
+        return {
+            "items": output[:limit],
+            "pagination": {
+                "limit": limit,
+                "has_more": has_more,
+                "next_cursor": cursor if has_more else None,
+            },
+        }
+
+    def export_results(self, value: dict[str, Any]) -> dict[str, Any]:
+        destination = Path(value["destination"])
+        if not destination.is_absolute():
+            raise ValueError("invalid_artifact_directory")
+        scopes = value.get("result_scopes") or []
+        if not isinstance(scopes, list) or not scopes or set(scopes) - {"overview", "details"}:
+            raise ValueError("invalid_result_export_scope")
+        connection_ids = value.get("connection_ids") or []
+        if len(connection_ids) != 1:
+            raise ValueError("invalid_result_export_account")
+        connection_id = str(connection_ids[0])
+        base_job = self._result_job(connection_id)
+        if base_job is None:
+            raise ValueError("result_job_not_found")
+
+        date_from = str(value["date_from"])
+        date_to = str(value["date_to"])
+        if date.fromisoformat(date_from) > date.fromisoformat(date_to):
+            raise ValueError("invalid_result_range")
+        query = {
+            "connection_id": connection_id,
+            "date_from": date_from,
+            "date_to": date_to,
+            "direction": value.get("direction"),
+            "search": str(value.get("search") or ""),
+        }
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        for scope in scopes:
+            rows = self._all_result_rows(scope, query)
+            sheet = workbook.create_sheet("Tong quan" if scope == "overview" else "Chi tiet")
+            self._write_result_sheet(sheet, rows, include_line=scope == "details")
+
+        destination.mkdir(parents=True, exist_ok=True)
+        filename = (
+            f"ket-qua-{self._safe_filename(base_job.company_tax_code)}-"
+            f"{date_from}_{date_to}.xlsx"
+        )
+        target = self._available_result_path(destination, filename)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{target.stem}-", suffix=".tmp", dir=destination
+        )
+        os.close(descriptor)
+        temporary = Path(temporary_name)
+        try:
+            workbook.save(temporary)
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return {"count": 1, "files": [str(target)]}
+
+    def _all_result_rows(self, scope: str, query: dict[str, Any]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        cursor = None
+        while True:
+            page = self.results(scope, {**query, "cursor": cursor, "limit": 200})
+            rows.extend(page["items"])
+            if not page["pagination"]["has_more"] or not page["pagination"]["next_cursor"]:
+                return rows
+            cursor = page["pagination"]["next_cursor"]
+
+    @staticmethod
+    def _excel_value(value: Any):
+        if value is None or isinstance(value, (int, float, bool)):
+            return value
+        if isinstance(value, (dict, list, tuple)):
+            text = json.dumps(value, ensure_ascii=False, default=str)
+        else:
+            text = str(value)
+        return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+
+    def _write_result_sheet(self, sheet, rows: list[dict[str, Any]], *, include_line: bool) -> None:
+        payload_keys: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            for key in row.get("payload", {}):
+                if key not in seen:
+                    seen.add(key)
+                    payload_keys.append(str(key))
+        headers = ["Hướng", "Mã hóa đơn"]
+        if include_line:
+            headers.append("Dòng")
+        headers.extend(payload_keys)
+        sheet.append(headers)
+        for row in rows:
+            output = [
+                "Mua vào" if row.get("direction") == "purchase" else "Bán ra",
+                self._excel_value(row.get("business_key", "")),
+            ]
+            if include_line:
+                output.append(self._excel_value(row.get("line_key", "")))
+            payload = row.get("payload") or {}
+            output.extend(self._excel_value(payload.get(key)) for key in payload_keys)
+            sheet.append(output)
+
+    @staticmethod
+    def _safe_filename(value: str) -> str:
+        cleaned = "".join(
+            character if character.isalnum() or character in "._-" else "_"
+            for character in str(value)
+        ).strip("._")
+        return cleaned[:80] or "hoa-don"
+
+    @staticmethod
+    def _available_result_path(destination: Path, filename: str) -> Path:
+        candidate = destination / filename
+        stem = Path(filename).stem
+        suffix = Path(filename).suffix
+        for copy in range(1, 1000):
+            if not candidate.exists():
+                return candidate
+            candidate = destination / f"{stem} ({copy}){suffix}"
+        raise OSError("artifact_name_exhausted")
 
     def prepare_artifacts(self, value: dict[str, Any]) -> None:
         """Run production post-processing required before local file copying."""
