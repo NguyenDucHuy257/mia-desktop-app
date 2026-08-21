@@ -160,6 +160,13 @@ class ResultViewTests(unittest.TestCase):
             "items": [{"overview_id": 1}],
             "pagination": {"limit": 50, "has_more": False, "next_cursor": None},
         }
+        backend.repository.recover_expired_leases.return_value = SimpleNamespace(
+            recovered_jobs=0,
+            recovered_tasks=0,
+            failed_tasks=0,
+            cancelled_jobs=0,
+            promoted_jobs=0,
+        )
         try:
             with tempfile.TemporaryDirectory() as directory, patch(
                 "mia_runtime.ProductionBackend", return_value=backend,
@@ -176,7 +183,9 @@ class ResultViewTests(unittest.TestCase):
                 result, should_stop = mia_runtime.dispatch("results.overview", query)
                 self.assertFalse(should_stop)
                 self.assertEqual(result["items"][0]["overview_id"], 1)
-                constructor.assert_called_once_with(Path(directory), None)
+                constructor.assert_called_once_with(Path(directory), None, start_worker=False)
+                backend.repository.recover_expired_leases.assert_called_once_with()
+                backend.worker.start.assert_called_once_with()
                 backend.results.assert_called_once_with("overview", query)
         finally:
             (
