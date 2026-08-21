@@ -8,7 +8,7 @@ from pathlib import Path
 
 class RedactingFilter(logging.Filter):
     patterns = (
-        re.compile(r"(?i)(password|token|secret|api[_-]?key)\s*[=:]\s*[^\s,;]+"),
+        re.compile(r"(?i)(password|token|secret|authorization|cookie|session|credential|api[_-]?key)\s*[=:]\s*[^\s,;]+"),
         re.compile(r"\b\d{10}(?:-\d{3})?\b"),
     )
 
@@ -21,14 +21,21 @@ class RedactingFilter(logging.Filter):
         return True
 
 
-def configure_logging(log_directory: Path, level: str = "INFO") -> logging.Logger:
-    log_directory.mkdir(parents=True, exist_ok=True)
-    logger = logging.getLogger("mia_runtime")
+def _configure_file_logger(name: str, filename: Path, level: int) -> logging.Logger:
+    logger = logging.getLogger(name)
     logger.handlers.clear()
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-    handler = RotatingFileHandler(log_directory / "runtime.log", maxBytes=1024 * 1024, backupCount=2, encoding="utf-8")
+    logger.setLevel(level)
+    handler = RotatingFileHandler(filename, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8")
     handler.addFilter(RedactingFilter())
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
     logger.propagate = False
     return logger
+
+
+def configure_logging(log_directory: Path, level: str = "INFO") -> logging.Logger:
+    log_directory.mkdir(parents=True, exist_ok=True)
+    resolved_level = getattr(logging, level.upper(), logging.INFO)
+    runtime = _configure_file_logger("mia_runtime", log_directory / "runtime.log", resolved_level)
+    _configure_file_logger("mia_crawler", log_directory / "crawler.log", resolved_level)
+    return runtime
