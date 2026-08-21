@@ -51,3 +51,70 @@
   outline: 2px solid #86efac;
   outline-offset: 2px;
 }
+
+.table-grid {
+  grid-template-columns: 40px 118px minmax(150px, 1fr) 115px minmax(180px, 260px) 210px;
+}
+
+.progress-cell {
+  width: min(100%, 260px);
+}
+
+.progress-copy span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-action-group {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.row-action-group button {
+  width: auto;
+  height: 30px;
+  border: 1px solid var(--mia-border-cool);
+  border-radius: 7px;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.row-result-button {
+  padding: 0 8px;
+  color: var(--mia-green-700);
+}
+
+.row-excel-button {
+  padding: 0 8px;
+  color: #2563eb;
+}
+
+.row-delete-button {
+  width: 28px !important;
+  flex: 0 0 28px;
+  padding: 0 !important;
+  color: #64748b;
+  font-size: 17px !important;
+}
+
+.row-action-group button:hover,
+.row-action-group button:focus-visible {
+  background: #f8fafc;
+  outline: none;
+}
+
+.row-action-placeholder {
+  color: #94a3b8;
+  font-size: 12px;
+}
