@@ -19,8 +19,15 @@ if str(VENDOR_ROOT) not in sys.path:
     sys.path.insert(0, str(VENDOR_ROOT))
 
 from mia_local_job_repository import create_local_job_repository
+from mia_local_source_models import install_source_model_shim
 from mia_local_worker import LocalWorkerLoop
 
+
+# The upstream service imports Pydantic DTOs because its normal transport is
+# HTTP/FastAPI. Desktop has no HTTP control API; install equivalent local value
+# objects before importing the exact source service so Pydantic is not part of
+# the local execution graph.
+install_source_model_shim()
 
 # mia_source_backend was originally written against two source server-host
 # modules. Pre-seed those import names with local-only adapters so importing the
