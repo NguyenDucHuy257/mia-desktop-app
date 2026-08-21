@@ -155,10 +155,21 @@ export function accountErrorMessage(error: unknown) {
     api_not_configured: 'Ứng dụng chưa được kết nối với API. Bản production cần hoàn tất xác thực thiết bị.',
     invalid_credentials: 'Mã số thuế hoặc mật khẩu không hợp lệ.',
     authentication_failed: 'Không thể đăng nhập Cổng HĐĐT. Vui lòng kiểm tra lại thông tin.',
+    invalid_source_credentials: 'Tên đăng nhập hoặc mật khẩu không đúng.',
+    source_account_locked: 'Tài khoản đã bị khóa vì nhập sai thông tin quá số lần quy định.',
+    source_login_rejected: 'Cổng hóa đơn từ chối đăng nhập.',
+    source_token_missing: 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.',
+    source_rate_limited: 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.',
     connection_not_found: 'Không tìm thấy kết nối tài khoản.',
+    resource_not_found: 'Không tìm thấy kết nối tài khoản.',
+    account_busy: 'Tài khoản đang được xử lý bởi một tác vụ khác.',
+    capacity_exhausted: 'Hàng đợi xử lý đang đầy. Vui lòng thử lại sau.',
     network_error: 'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng và thử lại.',
     api_timeout: 'Máy chủ phản hồi quá chậm. Vui lòng thử lại.',
   };
 
+  if (code.startsWith('source_http_')) {
+    return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
+  }
   return messages[code] ?? 'Không thể thêm tài khoản. Vui lòng thử lại.';
 }
