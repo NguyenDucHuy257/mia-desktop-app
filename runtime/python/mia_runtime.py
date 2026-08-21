@@ -240,7 +240,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 browser = playwright.chromium.launch(headless=True)
                 version = browser.version
                 browser.close()
-            return {"ready": True, "browser": version}, False
+            return {"ready": True, "browser": "chromium", "version": version}, False
         except Exception:
             if logger is not None:
                 logger.exception("pdf_runtime_unavailable")
