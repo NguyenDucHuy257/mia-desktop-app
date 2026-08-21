@@ -37,11 +37,11 @@ export interface CreateJobRequest {
   include_mvt?: boolean;
 }
 
+/** Local JSON-RPC acceptance envelope. No server worker-slot concept exists. */
 export interface JobAccepted {
   job_id: string;
   status: string;
   current_stage: string | null;
-  worker_slot_id: string | null;
 }
 
 export interface JobStatusResponse {
