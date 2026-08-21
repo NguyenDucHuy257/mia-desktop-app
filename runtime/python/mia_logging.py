@@ -6,19 +6,29 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
-class RedactingFilter(logging.Filter):
-    patterns = (
-        re.compile(r"(?i)(password|token|secret|authorization|cookie|session|credential|api[_-]?key)\s*[=:]\s*[^\s,;]+"),
-        re.compile(r"\b\d{10}(?:-\d{3})?\b"),
-    )
+PATTERNS = (
+    re.compile(r"(?i)(password|token|secret|authorization|cookie|session|credential|api[_-]?key)\s*[=:]\s*[^\s,;]+"),
+    re.compile(r"\b\d{10}(?:-\d{3})?\b"),
+)
 
+
+def redact_text(value: str) -> str:
+    output = value
+    for pattern in PATTERNS:
+        output = pattern.sub("[REDACTED]", output)
+    return output
+
+
+class RedactingFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        for pattern in self.patterns:
-            message = pattern.sub("[REDACTED]", message)
-        record.msg = message
+        record.msg = redact_text(record.getMessage())
         record.args = ()
         return True
+
+
+class RedactingFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_text(super().format(record))
 
 
 def _configure_file_logger(name: str, filename: Path, level: int) -> logging.Logger:
@@ -27,7 +37,7 @@ def _configure_file_logger(name: str, filename: Path, level: int) -> logging.Log
     logger.setLevel(level)
     handler = RotatingFileHandler(filename, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8")
     handler.addFilter(RedactingFilter())
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    handler.setFormatter(RedactingFormatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(handler)
     logger.propagate = False
     return logger
