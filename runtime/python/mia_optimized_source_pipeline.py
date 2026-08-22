@@ -99,13 +99,9 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         if direction not in {"purchase", "sold"}:
             return
         unit = (stage, str(direction), str(query_type or ""))
-        if unit == self._desktop_current_unit:
-            return
-        self._desktop_current_unit = unit
-        self._state["current_direction"] = str(direction)
-        self._state["current_query_type"] = str(query_type) if query_type else None
+        current_artifact = None
         if stage == "ensure_xml":
-            self._state["current_artifact"] = {
+            current_artifact = {
                 "direction": str(direction),
                 "query_type": str(query_type or ""),
                 "nbmst": str(payload.get("nbmst") or ""),
@@ -113,6 +109,16 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
                 "shdon": str(payload.get("shdon") or ""),
                 "khmshdon": str(payload.get("khmshdon") or ""),
             }
+        if (
+            unit == self._desktop_current_unit
+            and (current_artifact is None or self._state.get("current_artifact") == current_artifact)
+        ):
+            return
+        self._desktop_current_unit = unit
+        self._state["current_direction"] = str(direction)
+        self._state["current_query_type"] = str(query_type) if query_type else None
+        if current_artifact is not None:
+            self._state["current_artifact"] = current_artifact
         # Persist only when the source changes logical unit. Item/month progress
         # continues to use the source pipeline's own persistence throttle.
         self._persist(force=True)

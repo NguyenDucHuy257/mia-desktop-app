@@ -171,6 +171,12 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         self.assertTrue(observed[0]["export_html"])
         self.assertEqual(pipeline._state["current_artifact"]["shdon"], "12")
 
+        pipeline.core.run_xml_unit(object(), {
+            "direction": "purchase", "query_type": "query", "nbmst": "0101",
+            "khhdon": "AA/26E", "shdon": "13", "khmshdon": "1",
+        })
+        self.assertEqual(pipeline._state["current_artifact"]["shdon"], "13")
+
 
 if __name__ == "__main__":
     unittest.main()
