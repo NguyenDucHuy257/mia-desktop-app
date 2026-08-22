@@ -7,7 +7,10 @@ import backIcon from '../../assets/figma/back.png';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { DetailResult, LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
 import type { InvoiceQueryType } from '../../lib/api/contracts';
+import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
+import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from './result-export-errors';
+import type { ResultExportLifecycle } from './use-result-export-lifecycle';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
 
@@ -17,12 +20,15 @@ type PageToken = number | 'ellipsis';
 
 const DEFAULT_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const PAGE_SIZE = 50;
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
 
-export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, onBack }: {
+export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, crawlItem, resultExports, onBack }: {
   connectionId: string;
   exportFolder: string;
   initialDateFrom?: string;
   initialDateTo?: string;
+  crawlItem?: BatchItem;
+  resultExports: ResultExportLifecycle;
   onBack(): void;
 }) {
   const initialRange = useRef(
@@ -46,12 +52,43 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [exportOpen, setExportOpen] = useState(false);
   const [exportScopes, setExportScopes] = useState<ResultMode[]>(['overview', 'details']);
-  const [exportState, setExportState] = useState<'idle' | 'working'>('idle');
   const [feedback, setFeedback] = useState('');
   const generation = useRef(0);
   const pageCache = useRef(new Map<number, LocalResultPage<ResultItem>>());
   const cursorByPage = useRef(new Map<number, string | null>([[1, null]]));
   const exportRoot = useRef<HTMLDivElement>(null);
+
+  const crawlJob = crawlItem?.status ?? crawlItem?.record;
+  const crawlStatus = crawlJob?.status;
+  const crawlPhase = crawlItem?.phase;
+  const crawlActive = Boolean(
+    crawlPhase === 'queued'
+    || crawlPhase === 'starting'
+    || crawlPhase === 'stopping'
+    || (crawlStatus && !TERMINAL_JOB_STATUSES.has(crawlStatus)),
+  );
+  const crawlPercent = Math.max(0, Math.min(100, Number(crawlJob?.overall_percent ?? 0)));
+  const crawlLabel = crawlPhase === 'queued'
+    ? 'Chờ đến lượt xử lý…'
+    : crawlPhase === 'starting'
+      ? 'Đang tạo tác vụ đồng bộ…'
+      : crawlPhase === 'stopping'
+        ? 'Đang dừng đồng bộ…'
+        : crawlJob
+          ? formatSourceJobProgress(crawlJob)
+          : 'Đang đồng bộ dữ liệu…';
+  const crawlFingerprint = crawlJob
+    ? JSON.stringify([
+      crawlPhase,
+      crawlStatus,
+      crawlJob.event_sequence,
+      crawlJob.message,
+      crawlJob.overall_percent,
+      crawlJob.current_month?.key,
+      crawlJob.current_month?.processed,
+      crawlJob.current_month?.planned,
+    ])
+    : '';
 
   const requestPage = useCallback(async (cursor: string | null) => {
     const bridge = window.miaRuntime?.results;
@@ -156,6 +193,23 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     void loadPage(1, token);
   }, [loadPage]);
 
+  // The result view is allowed while the source job is still running. Refresh
+  // from persisted SQLite whenever the polled source progress changes so rows
+  // committed after the user opened this tab become visible without remounting.
+  // A terminal transition triggers one final refresh as well.
+  useEffect(() => {
+    if (!crawlFingerprint) return;
+    const token = generation.current + 1;
+    generation.current = token;
+    pageCache.current.clear();
+    cursorByPage.current.clear();
+    cursorByPage.current.set(1, null);
+    void loadPage(pageNumber, token);
+  // pageNumber is intentionally not a dependency: clicking a page already calls
+  // loadPage; this effect is driven only by source progress revisions.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crawlFingerprint]);
+
   useEffect(() => {
     if (!exportOpen) return;
     const close = (event: PointerEvent) => {
@@ -182,15 +236,20 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   }
 
   async function exportResults() {
-    const artifacts = window.miaRuntime?.artifacts;
-    if (!artifacts || !connectionId || exportScopes.length === 0) return;
+    if (!connectionId || exportScopes.length === 0) return;
     if (!exportFolder.trim()) {
       setFeedback('Vui lòng chọn thư mục lưu trữ ở tab Hóa đơn trước khi tải kết quả.');
       setExportOpen(false);
       return;
     }
+    if (resultExports.active) {
+      setFeedback(resultExports.owner === 'bulk'
+        ? 'Đang tải kết quả tất cả ở màn Hóa đơn. Hãy chờ tác vụ đó hoàn tất.'
+        : 'Đang tạo file Excel này. Hãy chờ tác vụ hiện tại hoàn tất.');
+      return;
+    }
+
     setFeedback('');
-    setExportState('working');
     diagnosticLog('results_export_requested', {
       connection_id: connectionId,
       scopes: exportScopes,
@@ -201,7 +260,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       destination_configured: true,
     });
     try {
-      const result = await artifacts.export({
+      const summary = await resultExports.run('results', [{
         destination: exportFolder,
         connection_ids: [connectionId],
         kinds: ['excel'],
@@ -211,15 +270,19 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         direction: direction || null,
         query_type: queryType,
         search: search.trim(),
-      });
-      diagnosticLog('results_export_completed', { connection_id: connectionId, scopes: exportScopes, file_count: result.count });
-      setFeedback(`Đã tạo ${result.count} file Excel trong thư mục lưu trữ.`);
+      }]);
+      if (summary.failures.length) {
+        const error = summary.failures[0].error;
+        diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
+        setFeedback(resultExportErrorMessage(error, dateFrom, dateTo));
+        return;
+      }
+      diagnosticLog('results_export_completed', { connection_id: connectionId, scopes: exportScopes, file_count: summary.count });
+      setFeedback(`Đã tạo ${summary.count} file Excel trong thư mục lưu trữ.`);
       setExportOpen(false);
     } catch (error) {
       diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
       setFeedback(resultExportErrorMessage(error, dateFrom, dateTo));
-    } finally {
-      setExportState('idle');
     }
   }
 
@@ -238,6 +301,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     () => columns.map((column) => columnWidth(column, columnLabels[column])).join(' '),
     [columnLabels, columns],
   );
+  const resultExportWorking = resultExports.active && resultExports.owner === 'results';
 
   return <section className="results-page results-page--figma" aria-label="Kết quả hóa đơn">
     <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại Quản lý HDDT</button>
@@ -247,16 +311,24 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         <p>Cột và tiêu đề được đọc trực tiếp từ mẫu Excel gốc của crawler nguồn.</p>
       </div>
       <div className="results-export" ref={exportRoot}>
-        <button className="results-export-trigger results-export-trigger--gold" type="button" aria-expanded={exportOpen} onClick={() => setExportOpen((value) => !value)}>
+        <button
+          className="results-export-trigger results-export-trigger--gold"
+          type="button"
+          aria-expanded={exportOpen}
+          disabled={resultExports.active}
+          title={resultExports.active && resultExports.owner === 'bulk' ? 'Đang tải kết quả tất cả ở màn Hóa đơn.' : undefined}
+          onClick={() => setExportOpen((value) => !value)}
+        >
           <svg className="results-export-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
-          <span>Tải xuống kết quả</span>
+          <span>{resultExportWorking ? 'Đang tạo Excel…' : 'Tải xuống kết quả'}</span>
         </button>
         {exportOpen ? <div className="results-export-popover results-export-popover--gold" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
-          <label><input type="checkbox" checked={exportScopes.includes('overview')} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
-          <label><input type="checkbox" checked={exportScopes.includes('details')} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
+          <label><input type="checkbox" checked={exportScopes.includes('overview')} disabled={resultExports.active} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
+          <label><input type="checkbox" checked={exportScopes.includes('details')} disabled={resultExports.active} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
           <small>Lưu tại: {exportFolder || 'Chưa chọn thư mục'}</small>
-          <button type="button" disabled={exportState === 'working' || exportScopes.length === 0} onClick={() => void exportResults()}>{exportState === 'working' ? 'Đang tạo Excel...' : 'Tải xuống'}</button>
+          <button type="button" disabled={resultExports.active || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? 'Đang tạo Excel...' : 'Tải xuống'}</button>
+          {resultExportWorking ? <div className="result-export-indeterminate" aria-hidden="true"><span /></div> : null}
         </div> : null}
       </div>
     </header>
@@ -283,10 +355,17 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       </div>
     </div>
 
+    {crawlActive ? <div className="results-crawl-status" role="status" aria-live="polite">
+      <strong>Đang đồng bộ</strong>
+      <span>{crawlLabel}</span>
+      <div className="results-crawl-track" aria-hidden="true"><span style={{ width: `${crawlPercent}%` }} /></div>
+      <em>{Math.round(crawlPercent)}%</em>
+    </div> : null}
+
     {feedback ? <div className="results-feedback" role="status">{feedback}</div> : null}
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
     {state === 'loading' && items.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
-    {state === 'ready' && items.length === 0 ? <div className="results-state results-empty">Không tồn tại hóa đơn trong thời gian này.</div> : null}
+    {state === 'ready' && items.length === 0 ? <div className="results-state results-empty">{crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không tồn tại hóa đơn trong thời gian này.'}</div> : null}
     {items.length && columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
         {columns.map((column) => {
