@@ -41,22 +41,35 @@ function localErrorMessage(code) {
   if (code === 'idempotency_conflict') return 'Yêu cầu đồng bộ bị xung đột idempotency.';
   if (code === 'connection_not_found' || code === 'resource_not_found') return 'Không tìm thấy kết nối tài khoản nguồn.';
   if (code === 'account_purge_failed') return 'Không thể xóa sạch dữ liệu tài khoản.';
+  if (code === 'result_export_no_overview_data') return 'Không có dữ liệu Tổng quan để tạo Excel.';
+  if (code === 'result_export_no_detail_data') return 'Không có dữ liệu Chi tiết để tạo Excel.';
+  if (code === 'result_export_empty') return 'Không có dữ liệu phù hợp để tạo Excel.';
+  if (code === 'result_job_not_found') return 'Chưa có dữ liệu đồng bộ để tạo Excel.';
+  if (code === 'result_export_template_missing') return 'Thiếu mẫu Excel nguồn.';
+  if (code === 'artifact_write_denied') return 'Không có quyền ghi vào thư mục lưu trữ.';
+  if (code === 'artifact_write_failed' || code === 'invalid_artifact_directory') return 'Không thể ghi file vào thư mục lưu trữ.';
+  if (code === 'invalid_result_export_range') return 'Khoảng ngày xuất Excel không hợp lệ.';
+  if (code === 'result_export_failed') return 'Không thể dựng file Excel từ dữ liệu đã lưu.';
   if (String(code).startsWith('source_http_')) return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
   return String(code || 'Local runtime operation failed.');
 }
 
 function serializeError(error) {
-  const sourceCodes = new Set([
+  const publicCodes = new Set([
     'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed',
     'database_locked', 'database_unavailable', 'job_not_found', 'job_conflict',
     'stale_job_update', 'invalid_job_transition', 'authentication_failed',
     'invalid_source_credentials', 'source_account_locked', 'source_login_rejected',
     'source_token_missing', 'source_rate_limited', 'idempotency_conflict',
     'connection_not_found', 'resource_not_found', 'source_account_failed',
-    'source_job_failed',
+    'source_job_failed', 'result_export_no_overview_data',
+    'result_export_no_detail_data', 'result_export_empty', 'result_job_not_found',
+    'result_export_template_missing', 'result_export_failed', 'artifact_write_denied',
+    'artifact_write_failed', 'invalid_artifact_directory',
+    'invalid_result_export_range',
   ]);
   const runtimeMessage = String(error?.message || '');
-  if (sourceCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_')) {
+  if (publicCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_')) {
     return { code: runtimeMessage, message: localErrorMessage(runtimeMessage) };
   }
   if (error instanceof BrokerInputError) {
