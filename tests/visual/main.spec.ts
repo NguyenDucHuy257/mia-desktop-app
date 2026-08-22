@@ -653,7 +653,7 @@ test('XML HTML source outcomes update counters and row substates live', async ({
         targets: async () => ({ keys, total: keys.length }), export: async () => {
           let processed = 0;
           const emit = (artifactKey: string, kind: 'xml' | 'html', state: 'running' | 'completed') => artifactListener?.({
-            status: 'running', phase: 'source', state, processed, total: 4,
+            status: state, processed, total: 4,
             percent: processed / 4 * 100, artifact_key: artifactKey, kind,
           });
           for (const key of keys) {

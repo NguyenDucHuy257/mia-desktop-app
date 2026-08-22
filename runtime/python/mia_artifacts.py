@@ -130,7 +130,8 @@ class ArtifactExporter:
         ):
             raise ValueError("invalid_artifact_accounts")
         destination.mkdir(parents=True, exist_ok=True)
-        sources: list[tuple[Path, str | None, str]] = []
+        sources: list[tuple[Path, str | None, str, Path]] = []
+        html_asset_roots: set[tuple[Path, Path]] = set()
         outputs: list[str] = []
         for account_id in account_ids:
             account = self._account(account_id)
@@ -145,20 +146,30 @@ class ArtifactExporter:
                         destination, account_id, account["username"]
                     )))
             for kind in set(kinds) - {"excel"}:
+                target_directory = self._artifact_target_directory(
+                    destination, account["username"], kind,
+                    value.get("date_from"), value.get("date_to"),
+                )
                 if account_id.startswith("conn_") and kind in {"xml", "html"}:
-                    sources.extend((path, key, kind) for path, key in self._source_package_paths(
-                        tax_code=account["username"], kind=kind,
-                        direction=value.get("direction"), query_type=value.get("query_type"),
-                        search=str(value.get("search") or "").strip().casefold(),
-                        date_from=value.get("date_from"), date_to=value.get("date_to"),
-                        allowed_keys=value.get("_artifact_keys"),
-                    ))
+                    package_paths = self._source_package_paths(
+                            tax_code=account["username"], kind=kind,
+                            direction=value.get("direction"), query_type=value.get("query_type"),
+                            search=str(value.get("search") or "").strip().casefold(),
+                            date_from=value.get("date_from"), date_to=value.get("date_to"),
+                            allowed_keys=value.get("_artifact_keys"),
+                        )
+                    sources.extend((path, key, kind, target_directory) for path, key in package_paths)
+                    if kind == "html":
+                        html_asset_roots.update(
+                            (path.parent.resolve(), target_directory.resolve())
+                            for path, _key in package_paths
+                        )
                 else:
-                    sources.extend((item, None, kind) for item in self._job_artifact_paths(account_id, kind))
+                    sources.extend((item, None, kind, target_directory) for item in self._job_artifact_paths(account_id, kind))
         total = len(sources)
         if progress_callback:
-            progress_callback({"status": "running", "state": "running", "processed": 0, "total": total, "percent": 0})
-        for processed, (source, artifact_key, kind) in enumerate(sources, start=1):
+            progress_callback({"status": "running", "processed": 0, "total": total, "percent": 0})
+        for processed, (source, artifact_key, kind, target_directory) in enumerate(sources, start=1):
             if cancel_callback and cancel_callback():
                 raise ValueError("artifact_cancelled")
             if progress_callback:
@@ -168,9 +179,8 @@ class ArtifactExporter:
                     "percent": ((processed - 1) / total * 100) if total else 100,
                     "artifact_key": artifact_key,
                     "kind": kind,
-                    "state": "running",
                 })
-            target = self._copy_path_atomically(destination, source)
+            target = self._copy_path_atomically(target_directory, source)
             outputs.append(str(target))
             if cancel_callback and cancel_callback():
                 raise ValueError("artifact_cancelled")
@@ -180,11 +190,58 @@ class ArtifactExporter:
                     "percent": (processed / total * 100) if total else 100,
                     "artifact_key": artifact_key,
                     "kind": kind,
-                    "state": "completed",
                 })
+        for source_directory, target_directory in sorted(
+            html_asset_roots, key=lambda item: (str(item[0]), str(item[1]))
+        ):
+            if cancel_callback and cancel_callback():
+                raise ValueError("artifact_cancelled")
+            self._copy_html_assets(source_directory, target_directory)
         if progress_callback:
-            progress_callback({"status": "completed", "state": "completed", "processed": total, "total": total, "percent": 100})
+            progress_callback({"status": "completed", "processed": total, "total": total, "percent": 100})
         return {"count": len(outputs), "files": outputs}
+
+    @staticmethod
+    def _artifact_target_directory(
+        destination: Path, tax_code: str, kind: str,
+        date_from: str | None, date_to: str | None,
+    ) -> Path:
+        range_label = (
+            f"{date_from}_{date_to}"
+            if date_from and date_to else "toan-bo"
+        )
+        kind_label = {"xml": "XML", "html": "HTML", "pdf": "PDF"}.get(
+            kind, kind.upper()
+        )
+        return destination / safe_filename(tax_code) / f"{kind_label} {range_label}"
+
+    def _copy_html_assets(self, source_directory: Path, target_directory: Path) -> None:
+        """Copy the source HTML support bundle while preserving relative paths."""
+        source_root = source_directory.resolve()
+        target_root = target_directory.resolve()
+        for source in sorted(source_root.rglob("*")):
+            if not source.is_file() or source.suffix.casefold() in {".html", ".htm"}:
+                continue
+            relative = source.resolve().relative_to(source_root)
+            target = (target_root / relative).resolve()
+            try:
+                target.relative_to(target_root)
+            except ValueError:
+                continue
+            self._copy_file_atomically(source, target)
+
+    @staticmethod
+    def _copy_file_atomically(source: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.tmp")
+        try:
+            with source.open("rb") as reader, temporary.open("wb") as writer:
+                shutil.copyfileobj(reader, writer)
+                writer.flush()
+                os.fsync(writer.fileno())
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _source_package_paths(
         self, *, tax_code: str, kind: str, direction: str | None,
@@ -235,6 +292,7 @@ class ArtifactExporter:
                 for source in root.rglob(f"*.{extension}")]
 
     def _copy_path_atomically(self, destination: Path, source: Path) -> Path:
+        destination.mkdir(parents=True, exist_ok=True)
         target = self._available_path(destination, safe_filename(source.stem) + source.suffix.lower())
         temporary = target.with_name(f".{target.name}.tmp")
         try:

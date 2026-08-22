@@ -74,8 +74,6 @@ export interface RuntimeExportProgress {
 }
 export interface RuntimeArtifactProgress {
   status: 'running' | 'completed' | 'failed';
-  phase?: 'source' | 'copy' | null;
-  state?: 'running' | 'completed' | 'failed' | null;
   processed: number;
   total: number;
   percent: number;

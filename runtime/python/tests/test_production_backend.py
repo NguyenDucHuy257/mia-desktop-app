@@ -338,7 +338,7 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertTrue(payload["export_html"])
         self.assertEqual(result["keys"], {target["artifact_key"]})
         self.assertEqual(
-            [(event["kind"], event["state"]) for event in events],
+            [(event["kind"], event["status"]) for event in events],
             [("xml", "running"), ("html", "running"),
              ("xml", "completed"), ("html", "completed")],
         )

@@ -311,6 +311,13 @@ class ResultViewTests(unittest.TestCase):
                     "0100000000 - Mua vào - Chi tiết - 2026-02-01_2026-02-28.xlsx",
                 },
             )
+            self.assertEqual(
+                {Path(path).parent.relative_to(Path(directory)) for path in result["files"]},
+                {
+                    Path("0100000000") / "Tổng quan 2026-02-01_2026-02-28",
+                    Path("0100000000") / "Chi tiết 2026-02-01_2026-02-28",
+                },
+            )
             overview_rows.assert_called_once()
             overview_writer.assert_called_once()
             detail_repository.get_detail_records_for_export.assert_called_once()

@@ -206,12 +206,12 @@ def _copy_artifacts(
         )
         value["_artifact_keys"] = source_result["keys"]
 
-    def copy_progress(event: dict[str, Any]) -> None:
-        artifact_progress({**event, "phase": "copy"})
-
     result = ArtifactExporter(storage, data_directory).export(
         value,
-        progress_callback=copy_progress,
+        # Package progress is authoritative for per-invoice XML/HTML state.
+        # Keep local copy notifications private so the stable notification
+        # contract remains compatible with already-running Electron clients.
+        progress_callback=None,
         cancel_callback=cancel_event.is_set if cancel_event is not None else None,
     )
     if not result.get("count"):

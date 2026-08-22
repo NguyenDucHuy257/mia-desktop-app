@@ -447,7 +447,7 @@ class ProductionBackend(SourceBackend):
         def emit(target, kind, state):
             if progress_callback:
                 progress_callback({
-                    "status": "running", "phase": "source", "state": state,
+                    "status": state,
                     "processed": processed, "total": total,
                     "percent": (processed / total * 100) if total else 100,
                     "artifact_key": target["artifact_key"], "kind": kind,

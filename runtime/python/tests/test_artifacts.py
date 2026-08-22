@@ -249,6 +249,10 @@ class ArtifactExporterTests(unittest.TestCase):
             copied = Path(exported["files"][0])
             self.assertTrue(copied.is_file())
             self.assertEqual(copied.read_text(encoding="utf-8"), "<invoice/>")
+            self.assertEqual(
+                copied.parent,
+                destination / tax_code / "XML 2026-08-01_2026-08-21",
+            )
             self.assertEqual(progress[0]["percent"], 0)
             self.assertEqual(progress[-1]["percent"], 100)
             self.assertTrue(all(
@@ -260,6 +264,40 @@ class ArtifactExporterTests(unittest.TestCase):
                 "purchase|query|0109999999|AA/26E|12|1",
             )
             self.assertEqual(progress[1]["kind"], "xml")
+
+            html_path = xml_path.parent.parent / "html" / "hoa-don-source.html"
+            html_path.parent.mkdir(parents=True, exist_ok=True)
+            html_path.write_text(
+                '<html><img src="assets/logo.png"><script src="details.js"></script></html>',
+                encoding="utf-8",
+            )
+            (html_path.parent / "assets").mkdir()
+            (html_path.parent / "assets" / "logo.png").write_bytes(b"image")
+            (html_path.parent / "sign-check.jpg").write_bytes(b"sign")
+            (html_path.parent / "viewinvoice-bg.jpg").write_bytes(b"background")
+            (html_path.parent / "details.js").write_text("ready=true", encoding="utf-8")
+            with closing(sqlite3.connect(source_db)) as invoices:
+                invoices.execute(
+                    "UPDATE invoice_package_items SET html_path=?,html_fetched=1 WHERE id=1",
+                    (str(html_path),),
+                )
+                invoices.commit()
+
+            html_export = exporter.export({
+                "destination": str(destination),
+                "connection_ids": [connection_id], "kinds": ["html"],
+                "direction": "purchase", "query_type": "query",
+                "date_from": "2026-08-01", "date_to": "2026-08-21",
+            })
+            self.assertEqual(html_export["count"], 1)
+            html_output = Path(html_export["files"][0])
+            html_directory = destination / tax_code / "HTML 2026-08-01_2026-08-21"
+            self.assertEqual(html_output.parent, html_directory)
+            self.assertEqual(html_output.read_text(encoding="utf-8"), html_path.read_text(encoding="utf-8"))
+            self.assertEqual((html_directory / "assets" / "logo.png").read_bytes(), b"image")
+            self.assertEqual((html_directory / "sign-check.jpg").read_bytes(), b"sign")
+            self.assertEqual((html_directory / "viewinvoice-bg.jpg").read_bytes(), b"background")
+            self.assertEqual((html_directory / "details.js").read_text(encoding="utf-8"), "ready=true")
 
             filtered_out = exporter.export({
                 "destination": str(root / "filtered-output"),

@@ -538,6 +538,20 @@ def _grouped_result_filename(
     )
 
 
+def _result_output_directory(
+    destination: Path, company_tax_code: str, scope: str,
+    date_from: str, date_to: str,
+) -> Path:
+    safe_tax_code = re.sub(
+        r"[^0-9A-Za-z._-]+", "_", company_tax_code
+    ).strip("._-") or "MIA"
+    scope_label = "Tổng quan" if scope == "overview" else "Chi tiết"
+    return (
+        destination / safe_tax_code
+        / f"{scope_label} {date_from}_{date_to}"
+    )
+
+
 def _database_revision(database_path: Path) -> tuple[tuple[int, int], ...]:
     """Track SQLite and WAL writes so cached presentation counts stay fresh."""
     revision: list[tuple[int, int]] = []
@@ -1012,7 +1026,13 @@ def _export_results_impl(
     # each final workbook. Query types no longer imply separate final files.
     reporter.set_units(len(plans) + len(groups))
 
-    with tempfile.TemporaryDirectory(prefix=".mia-result-sheets-", dir=destination) as directory:
+    company_directory = destination / (
+        re.sub(
+            r"[^0-9A-Za-z._-]+", "_", context["base_job"].company_tax_code
+        ).strip("._-") or "MIA"
+    )
+    company_directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".mia-result-sheets-", dir=company_directory) as directory:
         staging_directory = Path(directory)
         for (scope, direction), group_plans in groups.items():
             staged_jobs: list[tuple[str, str, Path]] = []
@@ -1072,8 +1092,16 @@ def _export_results_impl(
 
             reporter.start_unit(scope)
             reporter.unit("format", 0, len(staged_jobs))
-            target = _available_path(
+            output_directory = _result_output_directory(
                 destination,
+                context["base_job"].company_tax_code,
+                scope,
+                context["date_from"],
+                context["date_to"],
+            )
+            output_directory.mkdir(parents=True, exist_ok=True)
+            target = _available_path(
+                output_directory,
                 _grouped_result_filename(
                     context["base_job"].company_tax_code,
                     direction,

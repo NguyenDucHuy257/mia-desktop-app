@@ -31,7 +31,7 @@ export function actualArtifactPercent(
   sourceInvoicesTerminal: number, copied: number, invoiceTotal: number, kindCount: number,
 ) {
   const safeInvoices = Math.max(0, invoiceTotal);
-  const total = safeInvoices + safeInvoices * Math.max(1, kindCount);
+  const total = safeInvoices + safeInvoices * Math.max(0, kindCount);
   if (!total) return 0;
   return Math.max(0, Math.min(99.9, (Math.max(0, sourceInvoicesTerminal) + Math.max(0, copied)) / total * 100));
 }
@@ -94,8 +94,7 @@ export function useXmlHtmlDownloadLifecycle() {
   const percent = phase === 'completed'
     ? 100
     : actualArtifactPercent(
-      sourceTerminal, phase === 'copy' ? copyProgress.processed : 0,
-      targetKeys.size, selectedKinds.length,
+      sourceTerminal, 0, targetKeys.size, 0,
     );
 
   const completedKeys = useMemo(
@@ -105,23 +104,17 @@ export function useXmlHtmlDownloadLifecycle() {
 
   useEffect(() => window.miaRuntime?.artifacts?.onInvoiceProgress((progress) => {
     if (!activeRef.current) return;
-    if (progress.phase === 'copy') {
-      setPhase('copy');
-      setCopyProgress(progress);
-    } else if (progress.phase === 'source') {
-      setPhase('source');
-    }
-    if (!progress.artifact_key || (progress.kind !== 'xml' && progress.kind !== 'html') || !progress.state) return;
+    setPhase('source');
+    if (!progress.artifact_key || (progress.kind !== 'xml' && progress.kind !== 'html')) return;
     const key = progress.artifact_key;
     const kind = progress.kind;
-    if (progress.phase === 'source') {
-      setSourceStates((current) => current[key]
-        ? { ...current, [key]: { ...current[key], [kind]: progress.state! } }
-        : current);
-      setArtifactStates((current) => current[key]
-        ? { ...current, [key]: { ...current[key], [kind]: progress.state! } }
-        : current);
-    }
+    const state = progress.status as InvoiceArtifactState;
+    setSourceStates((current) => current[key]
+      ? { ...current, [key]: { ...current[key], [kind]: state } }
+      : current);
+    setArtifactStates((current) => current[key]
+      ? { ...current, [key]: { ...current[key], [kind]: state } }
+      : current);
   }), []);
 
   useEffect(() => {
