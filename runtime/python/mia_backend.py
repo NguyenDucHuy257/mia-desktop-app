@@ -79,6 +79,19 @@ def _transport_datetime(value):
     return value
 
 
+_RESULT_EXPORT_VALUE_ERRORS = {
+    "result_export_empty",
+    "result_job_not_found",
+    "invalid_artifact_directory",
+    "invalid_result_export_range",
+}
+
+
+def _export_error(code: str) -> dict[str, object]:
+    """Return only a stable public code; stack/path details remain in local logs."""
+    return {"count": 0, "files": [], "error_code": code}
+
+
 class ProductionBackend(SourceBackend):
     """One local source worker; no HTTP listener and no worker-slot admission."""
 
@@ -174,7 +187,9 @@ class ProductionBackend(SourceBackend):
     def close(self, *, cancel_jobs: bool = False) -> None:
         # Account purge/reinitialization may close the backend without meaning
         # "the user exited the app", so cancellation is explicit rather than
-        # the default. system.shutdown passes cancel_jobs=True.
+        # the default. Electron's runtime manager requests source cancellations
+        # before it sends system.shutdown; cancel_jobs remains useful for direct
+        # host callers and regression tests.
         if cancel_jobs:
             self.cancel_active_jobs_for_exit()
         SourceBackend.close(self)
@@ -217,10 +232,29 @@ class ProductionBackend(SourceBackend):
         return read_results(self, kind, query)
 
     def export_results(self, value):
-        # Excel is built only after the user clicks Download. Detail work uses
-        # the exact vendored source exporter/template against persisted data.
+        """Build source-native Excel and preserve only safe failure categories."""
         from mia_source_results import export_results
-        return export_results(self, value)
+
+        try:
+            return export_results(self, value)
+        except PermissionError:
+            return _export_error("artifact_write_denied")
+        except FileNotFoundError:
+            return _export_error("result_export_template_missing")
+        except ValueError as error:
+            code = str(error)
+            if code in _RESULT_EXPORT_VALUE_ERRORS:
+                return _export_error(code)
+            raise
+        except OSError:
+            return _export_error("artifact_write_failed")
+        except Exception as error:
+            if self.logger is not None:
+                self.logger.exception(
+                    "result_export_failed error_type=%s",
+                    type(error).__name__,
+                )
+            return _export_error("result_export_failed")
 
 
 __all__ = ["ProductionBackend", "SourceBackend"]
