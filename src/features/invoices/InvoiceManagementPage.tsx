@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
+import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
@@ -10,6 +11,7 @@ import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import { resultExportErrorMessage } from '../results/result-export-errors';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
@@ -181,7 +183,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       setSelectionError(`Đã xuất ${result.count} file Excel.`);
     } catch (error) {
       diagnosticLog('account_excel_export_failed', { code: (error as { code?: string })?.code }, 'error');
-      setSelectionError('Không thể xuất Excel. Vui lòng kiểm tra thư mục lưu và thử lại.');
+      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo));
     }
   }
 
@@ -210,8 +212,6 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       scopes,
       data_types: ['invoice'],
       force_refresh: forceRefresh,
-      // Use the original source API policy. The UI does not calculate which
-      // months are fresh/stale or need refresh.
       refresh_latest_month: true,
     })));
   }
@@ -255,9 +255,6 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
                     ? 'completed'
                     : 'ready';
 
-    // Source job progress is authoritative. Local batch phase only describes
-    // work that has not started yet or a user-requested stop. Raw source tokens
-    // are translated by formatSourceJobProgress without changing their values.
     const progress = Number(job?.overall_percent ?? 0);
     const progressLabel = phase === 'stopped' || runtimeStatus === 'cancelled'
       ? 'Đã dừng'
@@ -322,13 +319,13 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" disabled={batchActive} aria-busy={batchActive} onClick={startJob}>
             <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
           </button>
-          <label className="invoice-export-folder">
-            <span>THƯ MỤC LƯU TRỮ</span>
-            <div>
-              <input aria-label="Thư mục lưu trữ hóa đơn" value={exportFolder} onChange={(event) => onExportFolder(event.target.value)} title={exportFolder} />
-              <button type="button" aria-label="Chọn thư mục lưu trữ hóa đơn" onClick={() => void chooseExportFolder()}>▱</button>
-            </div>
-          </label>
+          <StorageFolderPicker
+            className="invoice-export-folder"
+            value={exportFolder}
+            onChange={onExportFolder}
+            onBrowse={chooseExportFolder}
+            ariaLabel="Thư mục lưu trữ hóa đơn"
+          />
         </div>
       </section>
       <section className="invoice-content">
