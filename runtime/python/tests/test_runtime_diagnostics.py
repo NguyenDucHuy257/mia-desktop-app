@@ -9,6 +9,9 @@ import mia_runtime
 from mia_logging import close_logging, configure_logging
 
 
+OWNER_ID = "mia-desktop-local"
+
+
 class RuntimeDiagnosticsTests(unittest.TestCase):
     def tearDown(self):
         mia_runtime.production_backend = None
@@ -16,9 +19,10 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
 
     def test_latest_jobs_returns_newest_record_per_connection(self):
         jobs = [
-            SimpleNamespace(job_id="job_old", account_key="a", created_at="2026-08-20T10:00:00Z", parameters={"connection_id": "a"}),
-            SimpleNamespace(job_id="job_new", account_key="a", created_at="2026-08-21T10:00:00Z", parameters={"connection_id": "a"}),
-            SimpleNamespace(job_id="job_b", account_key="b", created_at="2026-08-21T09:00:00Z", parameters={"connection_id": "b"}),
+            SimpleNamespace(job_id="job_old", owner_id=OWNER_ID, account_key="a", created_at="2026-08-20T10:00:00Z", parameters={"connection_id": "a"}),
+            SimpleNamespace(job_id="job_new", owner_id=OWNER_ID, account_key="a", created_at="2026-08-21T10:00:00Z", parameters={"connection_id": "a"}),
+            SimpleNamespace(job_id="job_b", owner_id=OWNER_ID, account_key="b", created_at="2026-08-21T09:00:00Z", parameters={"connection_id": "b"}),
+            SimpleNamespace(job_id="job_foreign", owner_id="another-owner", account_key="c", created_at="2026-08-22T09:00:00Z", parameters={"connection_id": "c"}),
         ]
         backend = SimpleNamespace(
             repository=SimpleNamespace(list_jobs_for_reconciliation=lambda: jobs),
@@ -27,31 +31,15 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         result = mia_runtime._latest_jobs(backend)
         self.assertEqual({item["job_id"] for item in result}, {"job_new", "job_b"})
 
-    def test_production_backend_recovers_expired_leases_before_worker_start(self):
-        events = []
-        recovery = SimpleNamespace(
-            recovered_jobs=1,
-            recovered_tasks=0,
-            failed_tasks=0,
-            cancelled_jobs=0,
-            promoted_jobs=1,
-        )
-        repository = SimpleNamespace(
-            recover_expired_leases=lambda: events.append("recover") or recovery,
-        )
-        planner = SimpleNamespace(plan=lambda **_kwargs: SimpleNamespace(decisions=[]))
-        worker = SimpleNamespace(start=lambda: events.append("worker_start"))
-        backend = SimpleNamespace(
-            repository=repository,
-            pipeline=SimpleNamespace(planner=planner),
-            worker=worker,
-        )
+    def test_production_backend_is_created_once_and_owns_worker_startup(self):
+        backend = SimpleNamespace()
         mia_runtime.data_directory = Path("C:/tmp/mia-test")
         with patch.object(mia_runtime, "ProductionBackend", return_value=backend) as constructor:
-            result = mia_runtime._production_backend()
-        self.assertIs(result, backend)
-        self.assertEqual(events, ["recover", "worker_start"])
-        constructor.assert_called_once_with(mia_runtime.data_directory, mia_runtime.logger, start_worker=False)
+            first = mia_runtime._production_backend()
+            second = mia_runtime._production_backend()
+        self.assertIs(first, backend)
+        self.assertIs(second, backend)
+        constructor.assert_called_once_with(mia_runtime.data_directory, mia_runtime.logger)
 
     def test_source_job_start_does_not_run_coverage_planner_on_rpc_thread(self):
         planner = SimpleNamespace(plan=Mock(side_effect=AssertionError("planner must not run on start RPC")))
