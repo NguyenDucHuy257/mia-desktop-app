@@ -12,6 +12,7 @@ import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
+import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
@@ -100,8 +101,9 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
+export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
   jobLifecycle: BatchJobLifecycle;
+  resultExports: ResultExportLifecycle;
   onAddAccount(): void;
   connectionId: string;
   selectedAccountIds: string[];
@@ -156,33 +158,51 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     if (folder) onExportFolder(folder);
   }
 
-  async function exportAccounts(connectionIds: string[]) {
-    if (!window.miaRuntime?.artifacts?.export) { setSelectionError('Tính năng xuất file chỉ có trong ứng dụng desktop.'); return; }
-    if (connectionIds.length !== 1) { setSelectionError('Chỉ tải Excel cho một tài khoản tại một thời điểm.'); return; }
-    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải Excel.'); return; }
+  async function exportAllResults() {
+    if (!selectedAccountIds.length) { setSelectionError('Vui lòng chọn ít nhất một tài khoản để tải kết quả.'); return; }
+    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải kết quả.'); return; }
+    if (resultExports.active) {
+      setSelectionError(resultExports.owner === 'results'
+        ? 'Đang tạo Excel trong tab Kết quả. Hãy chờ tác vụ đó hoàn tất.'
+        : 'Đang tải kết quả tất cả. Hãy chờ tác vụ hiện tại hoàn tất.');
+      return;
+    }
+
     const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
     const resultDirection = directions.length === 1 ? directions[0] : null;
-    diagnosticLog('account_excel_export_requested', {
+    diagnosticLog('bulk_result_export_requested', {
+      account_count: selectedAccountIds.length,
       date_from: dateFrom,
       date_to: dateTo,
       scopes: resultScopes,
       direction: resultDirection,
     });
+
     try {
-      const result = await window.miaRuntime.artifacts.export({
+      const summary = await resultExports.run('bulk', selectedAccountIds.map((connection_id) => ({
         destination: exportFolder,
-        connection_ids: connectionIds,
-        kinds: ['excel'],
+        connection_ids: [connection_id],
+        kinds: ['excel'] as const,
         result_scopes: resultScopes,
         date_from: dateFrom,
         date_to: dateTo,
         direction: resultDirection,
         search: '',
+      })));
+      diagnosticLog('bulk_result_export_completed', {
+        account_count: selectedAccountIds.length,
+        file_count: summary.count,
+        failed_count: summary.failures.length,
       });
-      diagnosticLog('account_excel_export_completed', { file_count: result.count });
-      setSelectionError(`Đã xuất ${result.count} file Excel.`);
+      if (!summary.failures.length) {
+        setSelectionError(`Đã xuất ${summary.count} file Excel cho ${selectedAccountIds.length} tài khoản.`);
+      } else if (summary.count > 0) {
+        setSelectionError(`Đã xuất ${summary.count} file Excel; ${summary.failures.length}/${selectedAccountIds.length} tài khoản không có hoặc không thể tạo kết quả.`);
+      } else {
+        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo));
+      }
     } catch (error) {
-      diagnosticLog('account_excel_export_failed', { code: (error as { code?: string })?.code }, 'error');
+      diagnosticLog('bulk_result_export_failed', { code: (error as { code?: string })?.code }, 'error');
       setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo));
     }
   }
@@ -281,7 +301,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       progressLabel,
       monthProgress,
       failureHint: status === 'failed' ? jobFailureHint(errorCode) : undefined,
-      actionsReady: runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning',
+      actionsReady: Boolean(job?.job_id),
     };
   });
   const visibleRows = allRows.filter((row) => {
@@ -291,6 +311,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
   const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
   const visibleAccountIds = visibleRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
   const selectedVisibleCount = visibleAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
+  const bulkExportWorking = resultExports.active && resultExports.owner === 'bulk';
 
   return (
     <div className="invoice-page">
@@ -338,7 +359,15 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
             </label>
             <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="stopped">Đã dừng</option><option value="ready">Sẵn sàng</option></select>
           </div>
-          <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+          <div className="invoice-filter-actions">
+            <div className="invoice-export-all-wrap">
+              <button className="invoice-export-all-button" type="button" disabled={resultExports.active || selectedAccountIds.length === 0} onClick={() => void exportAllResults()}>
+                {bulkExportWorking ? 'Đang tạo Excel…' : 'Tải kết quả tất cả'}
+              </button>
+              {bulkExportWorking ? <div className="result-export-indeterminate" aria-hidden="true"><span /></div> : null}
+            </div>
+            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+          </div>
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
@@ -355,10 +384,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
                 {account ? <span className="row-action-group">
-                  {row.actionsReady ? <>
-                    <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button>
-                    <button className="row-excel-button" type="button" onClick={() => void exportAccounts([account.connection_id])}>Tải Excel</button>
-                  </> : <span className="row-action-placeholder">—</span>}
+                  {row.actionsReady ? <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
               </div>;
