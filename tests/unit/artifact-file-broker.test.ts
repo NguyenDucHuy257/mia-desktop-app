@@ -2,10 +2,10 @@ import { createRequire } from 'node:module';
 import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { atomicWrite, resolveInside, validateArtifactName, validateExportRequest, validateListRequest } = require('../../electron/artifact-file-broker.cjs');
+const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest } = require('../../electron/artifact-file-broker.cjs');
 
 describe('artifact filesystem boundary', () => {
   it.each(['../escape.xml', 'C:\\escape.xml', 'CON.pdf', 'name.exe', 'a/b.html'])('rejects unsafe name %s', (name) => {
@@ -49,6 +49,49 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-08-01', date_to: '2026-08-31', query_type: 'bad' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+  });
+
+  it('returns the broker envelope expected by preload for successful exports', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    const runtime = {
+      invoke: vi.fn().mockResolvedValue({ count: 1, files: [path.join(destination, 'result.xlsx')] }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.export({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { count: 1 },
+    });
+  });
+
+  it('preserves a safe no-data reason for the renderer', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    const runtime = {
+      invoke: vi.fn().mockResolvedValue({ count: 0, files: [], error_code: 'result_export_empty' }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.export({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'result_export_empty',
+        message: 'Không có dữ liệu phù hợp để tạo Excel.',
+      },
+    });
   });
 
   it('sanitizes artifact list filters and date bounds', () => {
