@@ -10,6 +10,7 @@ import type { InvoiceQueryType } from '../../lib/api/contracts';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from './result-export-errors';
+import { ResultExportProgressBar } from './ResultExportProgressBar';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
@@ -320,15 +321,15 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           onClick={() => setExportOpen((value) => !value)}
         >
           <svg className="results-export-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
-          <span>{resultExportWorking ? 'Đang tạo Excel…' : 'Tải xuống kết quả'}</span>
+          <span>{resultExportWorking ? `Đang tạo Excel… ${Math.round(resultExports.percent)}%` : 'Tải xuống kết quả'}</span>
         </button>
         {exportOpen ? <div className="results-export-popover results-export-popover--gold" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
           <label><input type="checkbox" checked={exportScopes.includes('overview')} disabled={resultExports.active} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
           <label><input type="checkbox" checked={exportScopes.includes('details')} disabled={resultExports.active} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
           <small>Lưu tại: {exportFolder || 'Chưa chọn thư mục'}</small>
-          <button type="button" disabled={resultExports.active || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? 'Đang tạo Excel...' : 'Tải xuống'}</button>
-          {resultExportWorking ? <div className="result-export-indeterminate" aria-hidden="true"><span /></div> : null}
+          <button type="button" disabled={resultExports.active || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? `Đang tạo Excel... ${Math.round(resultExports.percent)}%` : 'Tải xuống'}</button>
+          {resultExportWorking ? <ResultExportProgressBar lifecycle={resultExports} /> : null}
         </div> : null}
       </div>
     </header>

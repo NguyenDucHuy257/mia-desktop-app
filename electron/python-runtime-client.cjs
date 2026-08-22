@@ -41,6 +41,33 @@ function runtimeEnvironment(source = process.env, additions = {}) {
   return result;
 }
 
+const EXPORT_PROGRESS_PHASES = new Set([
+  'prepare', 'query', 'load_template', 'build_rows', 'write_rows',
+  'format', 'save', 'completed',
+]);
+
+function validateRuntimeNotification(message) {
+  if (!message || message.jsonrpc !== '2.0' || message.method !== 'export.progress') return null;
+  const value = message.params;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const allowed = new Set(['status', 'scope', 'phase', 'processed', 'total', 'percent']);
+  if (Object.keys(value).some((key) => !allowed.has(key))) return null;
+  if (!['running', 'completed', 'failed'].includes(value.status)) return null;
+  if (![null, 'overview', 'details'].includes(value.scope ?? null)) return null;
+  if (!EXPORT_PROGRESS_PHASES.has(value.phase)) return null;
+  if (!Number.isInteger(value.processed) || value.processed < 0) return null;
+  if (!Number.isInteger(value.total) || value.total < 0) return null;
+  if (typeof value.percent !== 'number' || !Number.isFinite(value.percent) || value.percent < 0 || value.percent > 100) return null;
+  return Object.freeze({
+    status: value.status,
+    scope: value.scope ?? null,
+    phase: value.phase,
+    processed: value.processed,
+    total: value.total,
+    percent: value.percent,
+  });
+}
+
 function defaultRuntimeScript() {
   return path.join(__dirname, '..', 'runtime', 'python', 'mia_runtime.py');
 }
@@ -65,6 +92,7 @@ class PythonRuntimeClient {
     this.stderrTail = '';
     this.stopping = false;
     this.extraEnv = options.env || {};
+    this.onNotification = options.onNotification;
   }
 
   async start() {
@@ -187,6 +215,19 @@ class PythonRuntimeClient {
       this.#protocolFailure('invalid_response', 'Runtime returned invalid JSON.');
       return;
     }
+    if (message && message.jsonrpc === '2.0' && !Object.hasOwn(message, 'id')) {
+      const notification = validateRuntimeNotification(message);
+      if (!notification) {
+        this.#protocolFailure('invalid_response', 'Runtime returned an invalid JSON-RPC notification.');
+        return;
+      }
+      try {
+        this.onNotification?.(message.method, notification);
+      } catch (error) {
+        this.logger?.warn('python_runtime_notification_handler_failed', { method: message.method, name: error?.name });
+      }
+      return;
+    }
     if (!message || message.jsonrpc !== '2.0' || !Number.isInteger(message.id)) {
       this.#protocolFailure('invalid_response', 'Runtime returned an invalid JSON-RPC response.');
       return;
@@ -234,4 +275,5 @@ module.exports = {
   packagedRuntimeExecutable,
   runtimeEnvironment,
   sanitizeRuntimeStderr,
+  validateRuntimeNotification,
 };

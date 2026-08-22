@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const require = (await import('node:module')).createRequire(import.meta.url);
 const {
@@ -41,6 +41,21 @@ describe('PythonRuntimeClient', () => {
       message: 'method_not_found',
     });
     await client.stop();
+  }, PROCESS_TEST_TIMEOUT_MS);
+
+  it('accepts allowlisted export progress notifications without completing the pending RPC', async () => {
+    const onNotification = vi.fn();
+    const client = new PythonRuntimeClient({
+      runtimeScript: fixture('notification_runtime.py'),
+      onNotification,
+    });
+    await client.start();
+    await expect(client.call('system.health')).resolves.toEqual({ ok: true });
+    expect(onNotification).toHaveBeenCalledWith('export.progress', {
+      status: 'running', scope: 'details', phase: 'write_rows',
+      processed: 2, total: 4, percent: 50,
+    });
+    client.terminate();
   }, PROCESS_TEST_TIMEOUT_MS);
 
   it('rejects pending work when the child process crashes', async () => {

@@ -11,14 +11,20 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import tempfile
+import time
 from dataclasses import replace
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+
+logger = logging.getLogger("mia.excel_export")
+ExportProgressCallback = Callable[[dict[str, Any]], None]
 
 
 BLOCKED_RESULT_FIELDS = {
@@ -480,6 +486,92 @@ def _available_path(destination: Path, filename: str) -> Path:
     raise OSError("artifact_name_exhausted")
 
 
+class _ExportProgressReporter:
+    """Map actual workbook work units to one monotonic request percentage."""
+
+    _DETAIL_PHASES = {
+        "load_template": (0.00, 0.05),
+        "build_rows": (0.05, 0.35),
+        "write_rows": (0.35, 0.75),
+        "format": (0.75, 0.92),
+        "save": (0.92, 1.00),
+    }
+    _OVERVIEW_PHASES = {
+        "load_template": (0.00, 0.10),
+        "write_rows": (0.10, 0.80),
+        "save": (0.80, 1.00),
+    }
+
+    def __init__(self, callback: ExportProgressCallback | None) -> None:
+        self.callback = callback
+        self.unit_total = 0
+        self.unit_index = 0
+        self.last_percent = 0.0
+        self.scope: str | None = None
+        self.phase = "prepare"
+
+    def planning(self, processed: int, total: int) -> None:
+        fraction = self._fraction(processed, total)
+        self._send("query", processed, total, fraction * 5.0)
+
+    def set_units(self, total: int) -> None:
+        self.unit_total = max(1, int(total))
+        self.unit_index = 0
+
+    def start_unit(self, scope: str) -> None:
+        self.scope = scope
+
+    def unit(self, phase: str, processed: int, total: int) -> None:
+        phases = self._DETAIL_PHASES if self.scope == "details" else self._OVERVIEW_PHASES
+        start, end = phases.get(phase, (0.0, 0.0))
+        local = start + ((end - start) * self._fraction(processed, total))
+        percent = 5.0 + (
+            ((self.unit_index + local) / max(1, self.unit_total)) * 95.0
+        )
+        self._send(phase, processed, total, percent)
+
+    def complete_unit(self) -> None:
+        self.unit_index = min(self.unit_total, self.unit_index + 1)
+
+    def complete(self) -> None:
+        self._send("completed", 1, 1, 100.0, status="completed")
+
+    def failed(self) -> None:
+        self._send(self.phase, 0, 0, self.last_percent, status="failed")
+
+    @staticmethod
+    def _fraction(processed: int, total: int) -> float:
+        if total <= 0:
+            return 0.0
+        return max(0.0, min(1.0, processed / total))
+
+    def _send(
+        self,
+        phase: str,
+        processed: int,
+        total: int,
+        percent: float,
+        *,
+        status: str = "running",
+    ) -> None:
+        self.phase = phase
+        self.last_percent = max(self.last_percent, min(100.0, max(0.0, percent)))
+        if self.callback is None:
+            return
+        event = {
+            "status": status,
+            "scope": self.scope,
+            "phase": phase,
+            "processed": max(0, int(processed)),
+            "total": max(0, int(total)),
+            "percent": round(self.last_percent, 3),
+        }
+        try:
+            self.callback(event)
+        except Exception:
+            logger.exception("excel_export_progress_transport_failed phase=%s", phase)
+
+
 def _write_overview_excel_from_source_template(
     rows: list[dict[str, Any]],
     *,
@@ -488,7 +580,9 @@ def _write_overview_excel_from_source_template(
     date_from: str,
     date_to: str,
     target: Path,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> None:
+    import app.services.overview_downloader as overview_module
     from app.services.overview_downloader import OverviewDownloader
 
     renderer = OverviewDownloader(
@@ -499,16 +593,74 @@ def _write_overview_excel_from_source_template(
     begin = date.fromisoformat(date_from)
     end = date.fromisoformat(date_to)
     safe_rows = [_excel_safe_record(row) for row in rows]
-    if category == "electronic":
-        content = renderer._electronic_records_to_xlsx(
-            safe_rows, direction, begin, end
-        )
-    elif category == "cash_register":
-        content = renderer._cash_records_to_xlsx(
-            safe_rows, direction, begin, end
-        )
-    else:
-        raise ValueError("invalid_overview_export_category")
+    original_load_workbook = overview_module._load_workbook
+    original_clone_cell = overview_module._clone_cell
+    column_count = len(_overview_template_keys(category, direction))
+    timing = {"load": 0.0, "write": 0.0, "save": 0.0}
+    cloned_cells = 0
+    last_emitted_row = 1
+    write_started_at: float | None = None
+
+    def measured_load_workbook(*args, **kwargs):
+        nonlocal write_started_at
+        started = time.perf_counter()
+        workbook = original_load_workbook(*args, **kwargs)
+        timing["load"] += time.perf_counter() - started
+        if progress is not None:
+            progress("load_template", 1, 1)
+            progress("write_rows", min(1, len(rows)), len(rows))
+        write_started_at = time.perf_counter()
+        original_save = workbook.save
+
+        def measured_save(*save_args, **save_kwargs):
+            if write_started_at is not None:
+                timing["write"] += time.perf_counter() - write_started_at
+            if progress is not None:
+                progress("write_rows", len(rows), len(rows))
+                progress("save", 0, 1)
+            save_started = time.perf_counter()
+            try:
+                return original_save(*save_args, **save_kwargs)
+            finally:
+                timing["save"] += time.perf_counter() - save_started
+
+        workbook.save = measured_save
+        return workbook
+
+    def measured_clone_cell(source, target_cell):
+        nonlocal cloned_cells, last_emitted_row
+        result = original_clone_cell(source, target_cell)
+        cloned_cells += 1
+        if progress is not None and column_count > 0:
+            completed_rows = min(len(rows), 1 + (cloned_cells // column_count))
+            emit_every = max(1, len(rows) // 200)
+            if (
+                completed_rows == len(rows)
+                or completed_rows - last_emitted_row >= emit_every
+            ):
+                last_emitted_row = completed_rows
+                progress("write_rows", completed_rows, len(rows))
+        return result
+
+    if progress is not None:
+        progress("load_template", 0, 1)
+    overview_module._load_workbook = measured_load_workbook
+    overview_module._clone_cell = measured_clone_cell
+    total_started = time.perf_counter()
+    try:
+        if category == "electronic":
+            content = renderer._electronic_records_to_xlsx(
+                safe_rows, direction, begin, end
+            )
+        elif category == "cash_register":
+            content = renderer._cash_records_to_xlsx(
+                safe_rows, direction, begin, end
+            )
+        else:
+            raise ValueError("invalid_overview_export_category")
+    finally:
+        overview_module._load_workbook = original_load_workbook
+        overview_module._clone_cell = original_clone_cell
 
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -517,10 +669,22 @@ def _write_overview_excel_from_source_template(
     os.close(descriptor)
     temporary = Path(temporary_name)
     try:
+        save_started = time.perf_counter()
         temporary.write_bytes(content)
         temporary.replace(target)
+        timing["save"] += time.perf_counter() - save_started
+        if progress is not None:
+            progress("save", 1, 1)
     finally:
         temporary.unlink(missing_ok=True)
+    logger.info(
+        "excel_export_summary scope=overview invoice_count=%s row_count=%s "
+        "column_count=%s template_load_ms=%.1f worksheet_write_ms=%.1f "
+        "workbook_save_ms=%.1f total_ms=%.1f",
+        len(rows), len(rows), column_count, timing["load"] * 1000,
+        timing["write"] * 1000, timing["save"] * 1000,
+        (time.perf_counter() - total_started) * 1000,
+    )
 
 
 def _filter_detail_records(
@@ -542,7 +706,11 @@ def _filter_detail_records(
     return result
 
 
-def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
+def _export_results_impl(
+    backend,
+    value: dict[str, Any],
+    reporter: _ExportProgressReporter,
+) -> dict[str, Any]:
     """Build Excel on demand from persisted source-owned data only."""
     from app.config.crawl_config import QUERY_TYPE_TO_CATEGORY
     from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
@@ -571,71 +739,136 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
         "direction": value.get("direction"),
         "query_type": value.get("query_type"),
     }
+    context_started = time.perf_counter()
     context = _result_context(backend, query)
+    logger.info(
+        "excel_export_phase scope=all phase=result_context duration_ms=%.1f",
+        (time.perf_counter() - context_started) * 1000,
+    )
     if context is None:
         raise ValueError("result_job_not_found")
 
     search = str(value.get("search") or "").strip().casefold()
     destination.mkdir(parents=True, exist_ok=True)
     files: list[str] = []
+    combinations = [
+        (direction, query_type)
+        for direction in context["directions"]
+        for query_type in context["query_types"]
+    ]
+    candidate_total = len(combinations) * len(scopes)
+    candidate_index = 0
+    plans: list[dict[str, Any]] = []
+    detail_repository = InvoiceDetailQueryRepository(context["database_path"])
 
-    if "overview" in scopes:
-        for direction in context["directions"]:
-            for query_type in context["query_types"]:
-                rows = _all_overview_fields(context, direction, query_type, search)
-                if not rows:
-                    continue
-                category = QUERY_TYPE_TO_CATEGORY.get(query_type)
-                source_name = OUTPUT_NAMES.get((direction, category))
-                if not source_name:
-                    source_name = f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
-                target = _available_path(destination, source_name)
-                _write_overview_excel_from_source_template(
-                    rows,
-                    direction=direction,
-                    category=str(category),
-                    date_from=context["date_from"],
-                    date_to=context["date_to"],
-                    target=target,
-                )
-                files.append(str(target))
-
-    if "details" in scopes:
-        repository = InvoiceDetailQueryRepository(context["database_path"])
-        exporter = InvoiceDetailExcelExporter(
-            _source_template_dir() / "invoice_detail.xlsx",
-            row_builder=_ExcelSafeDetailRowBuilder(),
-        )
-        for direction in context["directions"]:
-            for query_type in context["query_types"]:
-                records = repository.get_detail_records_for_export(
+    # Discover real, non-empty workbook units before rendering so mixed scope
+    # progress never resets and never counts a workbook that will not exist.
+    for scope in scopes:
+        for direction, query_type in combinations:
+            query_started = time.perf_counter()
+            if scope == "overview":
+                payload = _all_overview_fields(context, direction, query_type, search)
+            else:
+                payload = detail_repository.get_detail_records_for_export(
                     context["base_job"].company_tax_code,
                     direction,
                     query_type,
                     context["date_from"],
                     context["date_to"],
                 )
-                records = _filter_detail_records(records, search)
-                if not records:
-                    continue
-                direction_label = "MUA VÀO" if direction == "purchase" else "BÁN RA"
-                type_label = "HĐĐT" if query_type == "query" else "MÁY TÍNH TIỀN"
-                target = _available_path(
-                    destination,
-                    f"THỐNG KÊ CHI TIẾT HÓA ĐƠN "
-                    f"{direction_label} - {type_label}.xlsx",
-                )
-                exporter.export(
-                    detail_records=records,
-                    output_path=target,
-                    from_date=context["date_from"],
-                    to_date=context["date_to"],
-                )
-                files.append(str(target))
+                payload = _filter_detail_records(payload, search)
+            query_seconds = time.perf_counter() - query_started
+            candidate_index += 1
+            reporter.planning(candidate_index, candidate_total)
+            logger.info(
+                "excel_export_phase scope=%s phase=query record_count=%s duration_ms=%.1f",
+                scope, len(payload), query_seconds * 1000,
+            )
+            if payload:
+                plans.append({
+                    "scope": scope,
+                    "direction": direction,
+                    "query_type": query_type,
+                    "payload": payload,
+                })
 
-    if not files:
+    if not plans:
         raise ValueError("result_export_empty")
+    reporter.set_units(len(plans))
+
+    for plan in plans:
+        scope = plan["scope"]
+        direction = plan["direction"]
+        query_type = plan["query_type"]
+        reporter.start_unit(scope)
+        if scope == "overview":
+            category = QUERY_TYPE_TO_CATEGORY.get(query_type)
+            source_name = OUTPUT_NAMES.get((direction, category))
+            if not source_name:
+                source_name = f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
+            target = _available_path(destination, source_name)
+            _write_overview_excel_from_source_template(
+                plan["payload"],
+                direction=direction,
+                category=str(category),
+                date_from=context["date_from"],
+                date_to=context["date_to"],
+                target=target,
+                progress=reporter.unit,
+            )
+        else:
+            if reporter.callback is None:
+                exporter = InvoiceDetailExcelExporter(
+                    _source_template_dir() / "invoice_detail.xlsx",
+                    row_builder=_ExcelSafeDetailRowBuilder(),
+                )
+            else:
+                from mia_progressive_excel_exporter import (
+                    ProgressiveInvoiceDetailExcelExporter,
+                )
+                exporter = ProgressiveInvoiceDetailExcelExporter(
+                    _source_template_dir() / "invoice_detail.xlsx",
+                    row_builder=_ExcelSafeDetailRowBuilder(),
+                    progress=reporter.unit,
+                )
+            direction_label = "MUA VÀO" if direction == "purchase" else "BÁN RA"
+            type_label = "HĐĐT" if query_type == "query" else "MÁY TÍNH TIỀN"
+            target = _available_path(
+                destination,
+                f"THỐNG KÊ CHI TIẾT HÓA ĐƠN "
+                f"{direction_label} - {type_label}.xlsx",
+            )
+            exporter.export(
+                detail_records=plan["payload"],
+                output_path=target,
+                from_date=context["date_from"],
+                to_date=context["date_to"],
+            )
+        files.append(str(target))
+        reporter.complete_unit()
+
+    reporter.complete()
     return {"count": len(files), "files": files}
+
+
+def export_results(
+    backend,
+    value: dict[str, Any],
+    *,
+    progress_callback: ExportProgressCallback | None = None,
+) -> dict[str, Any]:
+    reporter = _ExportProgressReporter(progress_callback)
+    started = time.perf_counter()
+    try:
+        return _export_results_impl(backend, value, reporter)
+    except Exception:
+        reporter.failed()
+        raise
+    finally:
+        logger.info(
+            "excel_export_phase scope=all phase=total duration_ms=%.1f",
+            (time.perf_counter() - started) * 1000,
+        )
 
 
 __all__ = ["export_results", "read_results"]

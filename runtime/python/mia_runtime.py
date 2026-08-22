@@ -411,7 +411,20 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         try:
             value = dict(params)
             if value.get("result_scopes"):
-                return _production_backend().export_results(value), False
+                def export_progress(event: dict[str, Any]) -> None:
+                    # JSON-RPC notification: no request id and no sensitive
+                    # invoice/path data. Electron allowlists this method and
+                    # forwards only its bounded presentation fields.
+                    write_message({
+                        "jsonrpc": "2.0",
+                        "method": "export.progress",
+                        "params": event,
+                    })
+
+                return _production_backend().export_results(
+                    value,
+                    progress_callback=export_progress,
+                ), False
             from mia_artifacts import ArtifactExporter
 
             if storage is None:

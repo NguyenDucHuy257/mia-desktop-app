@@ -255,6 +255,12 @@ void app.whenReady().then(async () => {
     dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
     env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
     logger: electronLog(),
+    onNotification(method, payload) {
+      if (method !== 'export.progress') return;
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('mia:artifacts:export-progress', payload);
+      }
+    },
   });
   await offlineRuntime.start();
   electronLog().info('offline_runtime_ready');

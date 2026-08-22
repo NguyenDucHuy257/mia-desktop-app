@@ -249,12 +249,18 @@ class ProductionBackend(SourceBackend):
         from mia_source_results import read_results
         return read_results(self, kind, query)
 
-    def export_results(self, value):
+    def export_results(self, value, *, progress_callback=None):
         """Build source-native Excel and preserve only safe failure categories."""
         from mia_source_results import export_results
 
         try:
-            return export_results(self, value)
+            if progress_callback is None:
+                return export_results(self, value)
+            return export_results(
+                self,
+                value,
+                progress_callback=progress_callback,
+            )
         except PermissionError:
             return _export_error("artifact_write_denied")
         except FileNotFoundError:

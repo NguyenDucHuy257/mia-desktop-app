@@ -118,8 +118,8 @@ class OfflineRuntimeManager {
       : require('node:path').join(__dirname, '..', 'runtime', 'browsers');
     const env = { ...this.options.env, PLAYWRIGHT_BROWSERS_PATH: browserPath };
     const clientOptions = this.options.isPackaged
-      ? { runtimeExecutable: packagedRuntimeExecutable(this.options.resourcesPath), env, logger: this.logger }
-      : { pythonExecutable: this.options.pythonExecutable, runtimeScript: this.options.runtimeScript, env, logger: this.logger };
+      ? { runtimeExecutable: packagedRuntimeExecutable(this.options.resourcesPath), env, logger: this.logger, onNotification: this.options.onNotification }
+      : { pythonExecutable: this.options.pythonExecutable, runtimeScript: this.options.runtimeScript, env, logger: this.logger, onNotification: this.options.onNotification };
     const client = new PythonRuntimeClient(clientOptions);
     await client.start();
     // Windows process creation can legitimately take several seconds under

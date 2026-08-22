@@ -13,6 +13,7 @@ import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
+import { ResultExportProgressBar } from '../results/ResultExportProgressBar';
 import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
@@ -365,9 +366,11 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           <div className="invoice-filter-actions">
             <div className="invoice-export-all-wrap">
               <button className="invoice-export-all-button" type="button" disabled={resultExports.active || selectedAccountIds.length === 0} onClick={() => void exportAllResults()}>
-                {bulkExportWorking ? 'Đang tạo Excel…' : 'Tải kết quả tất cả'}
+                {bulkExportWorking
+                  ? `Đang tạo Excel ${resultExports.accountIndex}/${resultExports.accountTotal}`
+                  : 'Tải kết quả tất cả'}
               </button>
-              {bulkExportWorking ? <div className="result-export-indeterminate" aria-hidden="true"><span /></div> : null}
+              {bulkExportWorking ? <ResultExportProgressBar lifecycle={resultExports} /> : null}
             </div>
             <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
           </div>

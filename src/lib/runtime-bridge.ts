@@ -40,6 +40,7 @@ export interface MiaRuntimeBridge {
     export(request: ArtifactExportRequest): Promise<{ count: number; files: string[] }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     openDirectory(directory: string): Promise<boolean>;
+    onExportProgress(listener: (progress: RuntimeExportProgress) => void): () => void;
   };
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
   logs: {
@@ -57,6 +58,16 @@ export interface MiaRuntimeBridge {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
   };
+}
+
+export type ExcelExportPhase = 'prepare' | 'query' | 'load_template' | 'build_rows' | 'write_rows' | 'format' | 'save' | 'completed';
+export interface RuntimeExportProgress {
+  status: 'running' | 'completed' | 'failed';
+  scope: 'overview' | 'details' | null;
+  phase: ExcelExportPhase;
+  processed: number;
+  total: number;
+  percent: number;
 }
 
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }

@@ -45,6 +45,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     export: (request) => invokeResult('mia:artifacts:export', request),
     list: (request) => invokeResult('mia:artifacts:list', request),
     openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
+    onExportProgress: (listener) => {
+      if (typeof listener !== 'function') throw new TypeError('invalid export progress listener');
+      const wrapped = (_event, progress) => listener(progress);
+      ipcRenderer.on('mia:artifacts:export-progress', wrapped);
+      return () => ipcRenderer.removeListener('mia:artifacts:export-progress', wrapped);
+    },
   }),
   preferences: Object.freeze({
     get: () => ipcRenderer.invoke('mia:preferences:get'),
