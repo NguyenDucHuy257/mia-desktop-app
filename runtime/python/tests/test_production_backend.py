@@ -269,6 +269,37 @@ class ProductionBackendTests(unittest.TestCase):
             overwrite=False,
         )
 
+    def test_artifact_export_keys_cover_every_filtered_overview_page(self):
+        backend = object.__new__(ProductionBackend)
+        pages = [
+            {
+                "items": [{"direction": "purchase", "fields": {
+                    "nbmst": "0101", "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+                }}],
+                "pagination": {"has_more": True, "next_cursor": "page-2"},
+            },
+            {
+                "items": [{"direction": "sold", "fields": {
+                    "nbmst": "0102", "khhdon": "BB", "shdon": "2", "khmshdon": "2",
+                }}],
+                "pagination": {"has_more": False, "next_cursor": None},
+            },
+        ]
+        backend.results = Mock(side_effect=pages)
+
+        keys = backend.artifact_keys_for_export({
+            "connection_ids": ["conn_1"], "date_from": "2026-08-01",
+            "date_to": "2026-08-31", "direction": None,
+            "query_type": "query", "search": "đối tác",
+        })
+
+        self.assertEqual(keys, {
+            "purchase|query|0101|AA|1|1", "sold|query|0102|BB|2|2",
+        })
+        self.assertEqual(backend.results.call_count, 2)
+        self.assertEqual(backend.results.call_args_list[0].args[0], "overview")
+        self.assertEqual(backend.results.call_args_list[1].args[1]["cursor"], "page-2")
+
 
 if __name__ == "__main__":
     unittest.main()

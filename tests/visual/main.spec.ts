@@ -570,11 +570,55 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
   await expect(page.locator('.nav-button[data-active="true"]')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'HTML', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'XML/HTML' })).toBeVisible();
+  await expect(page.getByText('Tra cứu XML/HTML các hóa đơn đã/chưa đồng bộ')).toBeVisible();
+  await expect(page.locator('.xml-html-company')).toHaveCSS('font-size', '12px');
   await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(50);
+  const grids = await page.locator('.xml-html-row').evaluateAll((rows) => rows.slice(0, 3).map((row) => getComputedStyle(row).gridTemplateColumns));
+  expect(new Set(grids).size).toBe(1);
   await expect(page.getByText('Tổng 51 hàng · tối đa 50 hàng/trang')).toBeVisible();
+  const download = page.getByRole('button', { name: 'Tải xuống kết quả' });
+  await expect(download).toHaveCSS('background-color', 'rgb(37, 99, 184)');
+  await expect(download).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await download.hover();
+  await expect(download).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await page.mouse.down();
+  await expect(download).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await page.mouse.up();
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(1);
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveAttribute('data-active', 'true');
   await expect(page.locator('.nav-button[data-active="true"]')).toHaveCount(1);
+});
+
+test('XML HTML empty data requires explicit overview synchronization', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_sync', username: '0100000000', company_name: 'CÔNG TY TNHH HỒNG TRÀ NGỌC GIA', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    let synced = false;
+    const starts: unknown[] = [];
+    Object.defineProperty(window, 'xmlHtmlSyncStarts', { value: starts });
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      jobs: {
+        resume: async () => null, resumeAll: async () => [], latestAll: async () => [],
+        start: async (intent: unknown) => { starts.push(intent); synced = true; return { record: { job_id: 'job_sync', connection_id: account.connection_id, intent, idempotency_key: 'sync', created_at: 'now', updated_at: 'now', status: 'queued' }, accepted: { job_id: 'job_sync', status: 'queued', current_stage: null } }; },
+        status: async () => ({ job_id: 'job_sync', status: 'completed', stage: null, overall_percent: 100, current_month: null, updated_at: 'now', error: null }),
+        summary: async () => ({ job_id: 'job_sync', status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }), cancel: async () => ({}), clear: async () => undefined,
+      },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      results: { overview: async () => ({ items: synced ? [{ row_id: 1, direction: 'purchase', fields: { tdlap: '20/08/2026', khmshdon: '1', khhdon: 'AA/26E', shdon: '1', nbmst: '0101', nbten: 'Đối tác', tgtttbso: 1000, tthai: 'Hóa đơn mới' } }] : [], total_count: synced ? 1 : 0, pagination: { limit: 50, has_more: false, next_cursor: null } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
+      artifacts: { list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
+    } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'XML/HTML', exact: true }).click();
+  await expect(page.getByText('Không tồn tại hóa đơn trong thời gian này.')).toBeVisible();
+  await page.getByRole('button', { name: 'Tải xuống kết quả' }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Chưa có dữ liệu hóa đơn trong khoảng thời gian này. Vui lòng Đồng bộ dữ liệu trước.');
+  await page.getByRole('button', { name: 'Đóng' }).click();
+  await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(1, { timeout: 10_000 });
+  const starts = await page.evaluate(() => (window as typeof window & { xmlHtmlSyncStarts: Array<Record<string, unknown>> }).xmlHtmlSyncStarts);
+  expect(starts).toHaveLength(1);
+  expect(starts[0]).toMatchObject({ connection_id: 'conn_sync', scopes: ['overview'], data_types: ['invoice'] });
 });

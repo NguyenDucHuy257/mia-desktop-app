@@ -350,7 +350,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       </div>
       <div className="results-export" ref={exportRoot}>
         <button
-          className="results-export-trigger"
+          className="results-export-trigger primary-download-button"
           type="button"
           aria-expanded={exportOpen}
           disabled={resultExports.active}

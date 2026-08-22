@@ -346,6 +346,44 @@ class ProductionBackend(SourceBackend):
         from mia_source_results import read_results
         return read_results(self, kind, query)
 
+    def artifact_keys_for_export(self, value):
+        """Resolve the exact filtered Overview set through the source reader.
+
+        This is presentation/filesystem orchestration only: invoice selection,
+        search and cursor semantics stay owned by ``read_results``. Paths and
+        database internals never cross JSON-RPC into the renderer.
+        """
+        connection_ids = value.get("connection_ids") or ()
+        if len(connection_ids) != 1:
+            return set()
+        query = {
+            "connection_id": str(connection_ids[0]),
+            "date_from": value.get("date_from"),
+            "date_to": value.get("date_to"),
+            "direction": value.get("direction"),
+            "query_type": value.get("query_type"),
+            "search": str(value.get("search") or ""),
+            "limit": 50,
+        }
+        keys = set()
+        cursor = None
+        while True:
+            page = self.results("overview", {**query, "cursor": cursor})
+            for row in page.get("items") or ():
+                fields = row.get("fields") or {}
+                keys.add("|".join((
+                    str(row.get("direction") or ""),
+                    str(value.get("query_type") or ""),
+                    str(fields.get("nbmst") or ""),
+                    str(fields.get("khhdon") or ""),
+                    str(fields.get("shdon") or ""),
+                    str(fields.get("khmshdon") or ""),
+                )))
+            pagination = page.get("pagination") or {}
+            cursor = pagination.get("next_cursor")
+            if not pagination.get("has_more") or not cursor:
+                return keys
+
     def export_results(self, value, *, progress_callback=None):
         """Build source-native Excel and preserve only safe failure categories."""
         from mia_source_results import export_results

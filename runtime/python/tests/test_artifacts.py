@@ -259,6 +259,24 @@ class ArtifactExporterTests(unittest.TestCase):
                 progress[1]["artifact_key"],
                 "purchase|query|0109999999|AA/26E|12|1",
             )
+            self.assertEqual(progress[1]["kind"], "xml")
+
+            filtered_out = exporter.export({
+                "destination": str(root / "filtered-output"),
+                "connection_ids": [connection_id], "kinds": ["xml"],
+                "direction": "purchase", "query_type": "query",
+                "date_from": "2026-08-01", "date_to": "2026-08-21",
+                "search": "AA/26E", "_artifact_keys": set(),
+            })
+            self.assertEqual(filtered_out["count"], 0)
+
+            with self.assertRaisesRegex(ValueError, "artifact_cancelled"):
+                exporter.export({
+                    "destination": str(root / "cancelled-output"),
+                    "connection_ids": [connection_id], "kinds": ["xml"],
+                    "direction": "purchase", "query_type": "query",
+                    "date_from": "2026-08-01", "date_to": "2026-08-21",
+                }, cancel_callback=lambda: True)
 
     def test_safe_excel_value_covers_all_formula_prefixes(self):
         for prefix in ("=", "+", "-", "@"):

@@ -51,14 +51,15 @@ function validateRuntimeNotification(message) {
   const value = message.params;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   if (message.method === 'artifact.progress') {
-    const allowed = new Set(['status', 'processed', 'total', 'percent', 'artifact_key']);
+    const allowed = new Set(['status', 'processed', 'total', 'percent', 'artifact_key', 'kind']);
     if (Object.keys(value).some((key) => !allowed.has(key))) return null;
     if (!['running', 'completed', 'failed'].includes(value.status)) return null;
     if (!Number.isInteger(value.processed) || value.processed < 0) return null;
     if (!Number.isInteger(value.total) || value.total < 0) return null;
     if (typeof value.percent !== 'number' || !Number.isFinite(value.percent) || value.percent < 0 || value.percent > 100) return null;
     if (value.artifact_key !== undefined && value.artifact_key !== null && (typeof value.artifact_key !== 'string' || value.artifact_key.length > 512)) return null;
-    return Object.freeze({ status: value.status, processed: value.processed, total: value.total, percent: value.percent, artifact_key: value.artifact_key ?? null });
+    if (value.kind !== undefined && value.kind !== null && !['xml', 'html', 'pdf'].includes(value.kind)) return null;
+    return Object.freeze({ status: value.status, processed: value.processed, total: value.total, percent: value.percent, artifact_key: value.artifact_key ?? null, kind: value.kind ?? null });
   }
   if (message.method !== 'export.progress') return null;
   const allowed = new Set(['status', 'scope', 'phase', 'processed', 'total', 'percent']);

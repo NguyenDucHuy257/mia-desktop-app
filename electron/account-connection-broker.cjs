@@ -50,6 +50,9 @@ function localErrorMessage(code) {
   if (code === 'artifact_write_failed' || code === 'invalid_artifact_directory') return 'Không thể ghi file vào thư mục lưu trữ.';
   if (code === 'invalid_result_export_range') return 'Khoảng ngày xuất Excel không hợp lệ.';
   if (code === 'result_export_failed') return 'Không thể dựng file Excel từ dữ liệu đã lưu.';
+  if (code === 'artifact_cancelled') return 'Đã dừng tải XML/HTML.';
+  if (code === 'artifact_task_active') return 'Đang có một lượt tải XML/HTML khác.';
+  if (code === 'artifact_batch_empty') return 'Không có artifact XML/HTML phù hợp để tải.';
   if (String(code).startsWith('source_http_')) return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
   return String(code || 'Local runtime operation failed.');
 }
@@ -66,7 +69,8 @@ function serializeError(error) {
     'result_export_no_detail_data', 'result_export_empty', 'result_job_not_found',
     'result_export_template_missing', 'result_export_failed', 'artifact_write_denied',
     'artifact_write_failed', 'invalid_artifact_directory',
-    'invalid_result_export_range',
+    'invalid_result_export_range', 'artifact_cancelled', 'artifact_task_active',
+    'artifact_batch_empty',
   ]);
   const runtimeMessage = String(error?.message || '');
   if (publicCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_')) {

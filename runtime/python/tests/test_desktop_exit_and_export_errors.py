@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,6 +104,49 @@ class ResultExportErrorTests(unittest.TestCase):
 
         self.assertEqual(result["error_code"], "artifact_write_denied")
         self.assertNotIn("private path", str(result))
+
+
+class ArtifactExportTaskTests(unittest.TestCase):
+    def test_local_artifact_task_can_be_cancelled_over_json_rpc(self):
+        previous = (
+            mia_runtime.storage,
+            mia_runtime.data_directory,
+            mia_runtime._artifact_task,
+        )
+        entered = threading.Event()
+
+        def copy_until_cancelled(_value, cancel_event):
+            entered.set()
+            self.assertTrue(cancel_event.wait(1))
+            raise ValueError("artifact_cancelled")
+
+        try:
+            mia_runtime.storage = Mock()
+            mia_runtime.data_directory = Path(tempfile.gettempdir())
+            mia_runtime._artifact_task = None
+            with patch.object(mia_runtime, "_copy_artifacts", side_effect=copy_until_cancelled):
+                started, should_stop = mia_runtime.dispatch(
+                    "artifacts.export.start",
+                    {"destination": str(Path(tempfile.gettempdir())), "connection_ids": ["conn_1"], "kinds": ["xml"]},
+                )
+                self.assertFalse(should_stop)
+                self.assertTrue(entered.wait(1))
+                cancelled, _ = mia_runtime.dispatch(
+                    "artifacts.export.cancel", {"task_id": started["task_id"]}
+                )
+                self.assertEqual(cancelled["status"], "cancelling")
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    status, _ = mia_runtime.dispatch(
+                        "artifacts.export.status", {"task_id": started["task_id"]}
+                    )
+                    if status["status"] == "cancelled":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(status["status"], "cancelled")
+                self.assertEqual(status["error"], "artifact_cancelled")
+        finally:
+            mia_runtime.storage, mia_runtime.data_directory, mia_runtime._artifact_task = previous
 
 
 if __name__ == "__main__":

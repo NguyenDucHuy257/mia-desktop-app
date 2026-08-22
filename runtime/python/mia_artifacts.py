@@ -114,6 +114,7 @@ class ArtifactExporter:
         self,
         value: dict[str, Any],
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_callback: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         destination = Path(value["destination"])
         if not destination.is_absolute():
@@ -129,7 +130,7 @@ class ArtifactExporter:
         ):
             raise ValueError("invalid_artifact_accounts")
         destination.mkdir(parents=True, exist_ok=True)
-        sources: list[tuple[Path, str | None]] = []
+        sources: list[tuple[Path, str | None, str]] = []
         outputs: list[str] = []
         for account_id in account_ids:
             account = self._account(account_id)
@@ -145,32 +146,39 @@ class ArtifactExporter:
                     )))
             for kind in set(kinds) - {"excel"}:
                 if account_id.startswith("conn_") and kind in {"xml", "html"}:
-                    sources.extend(self._source_package_paths(
+                    sources.extend((path, key, kind) for path, key in self._source_package_paths(
                         tax_code=account["username"], kind=kind,
                         direction=value.get("direction"), query_type=value.get("query_type"),
                         search=str(value.get("search") or "").strip().casefold(),
                         date_from=value.get("date_from"), date_to=value.get("date_to"),
+                        allowed_keys=value.get("_artifact_keys"),
                     ))
                 else:
-                    sources.extend((item, None) for item in self._job_artifact_paths(account_id, kind))
+                    sources.extend((item, None, kind) for item in self._job_artifact_paths(account_id, kind))
         total = len(sources)
         if progress_callback:
             progress_callback({"status": "running", "processed": 0, "total": total, "percent": 0})
-        for processed, (source, artifact_key) in enumerate(sources, start=1):
+        for processed, (source, artifact_key, kind) in enumerate(sources, start=1):
+            if cancel_callback and cancel_callback():
+                raise ValueError("artifact_cancelled")
             if progress_callback:
                 progress_callback({
                     "status": "running", "processed": processed - 1,
                     "total": total,
                     "percent": ((processed - 1) / total * 100) if total else 100,
                     "artifact_key": artifact_key,
+                    "kind": kind,
                 })
             target = self._copy_path_atomically(destination, source)
             outputs.append(str(target))
+            if cancel_callback and cancel_callback():
+                raise ValueError("artifact_cancelled")
             if progress_callback:
                 progress_callback({
                     "status": "running", "processed": processed, "total": total,
                     "percent": (processed / total * 100) if total else 100,
                     "artifact_key": artifact_key,
+                    "kind": kind,
                 })
         if progress_callback:
             progress_callback({"status": "completed", "processed": total, "total": total, "percent": 100})
@@ -179,7 +187,7 @@ class ArtifactExporter:
     def _source_package_paths(
         self, *, tax_code: str, kind: str, direction: str | None,
         query_type: str | None, search: str, date_from: str | None,
-        date_to: str | None,
+        date_to: str | None, allowed_keys: set[str] | None = None,
     ) -> list[tuple[Path, str]]:
         database = self.data_directory / "source-data" / tax_code / "db" / "invoices.sqlite3"
         if not database.is_file():
@@ -210,9 +218,11 @@ class ArtifactExporter:
         paths: list[tuple[Path, str]] = []
         for raw_path, *identity in rows:
             source = Path(str(raw_path))
+            artifact_key = "|".join(str(item) for item in identity)
             searchable = " ".join(str(item) for item in identity[2:]).casefold()
-            if source.is_file() and (not search or search in searchable):
-                paths.append((source, "|".join(str(item) for item in identity)))
+            selected = artifact_key in allowed_keys if allowed_keys is not None else not search or search in searchable
+            if source.is_file() and selected:
+                paths.append((source, artifact_key))
         return paths
 
     def _job_artifact_paths(self, account_id: str, kind: str) -> list[Path]:

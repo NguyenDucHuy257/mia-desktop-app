@@ -165,6 +165,11 @@ ipcMain.handle('mia:artifacts:export', (event, request) => {
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
   return artifactBroker.export(request);
 });
+ipcMain.handle('mia:artifacts:cancel', (event) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.cancel();
+});
 ipcMain.handle('mia:artifacts:list', (event, request) => {
   assertTrustedSender(event);
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);

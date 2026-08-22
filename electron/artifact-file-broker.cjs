@@ -109,9 +109,39 @@ async function invokeArtifactExport(getRuntime, value) {
   return result;
 }
 
+function waitForTaskPoll(delayMs = 100) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function createArtifactBroker(getRuntime) {
+  let activeTaskId = null;
   return Object.freeze({
-    export: (value) => runBrokerCommand(() => invokeArtifactExport(getRuntime, value)),
+    export: (value) => runBrokerCommand(async () => {
+      const request = validateExportRequest(value);
+      const kinds = new Set(request.kinds);
+      if (request.result_scopes || ![...kinds].every((kind) => kind === 'xml' || kind === 'html')) {
+        return invokeArtifactExport(getRuntime, request);
+      }
+      const runtime = getRuntime();
+      const started = await runtime.invoke('artifacts.export.start', request);
+      activeTaskId = started.task_id;
+      try {
+        while (true) {
+          const task = await runtime.invoke('artifacts.export.status', { task_id: activeTaskId });
+          if (task.status === 'completed') return task.result;
+          if (task.status === 'cancelled') throw new Error('artifact_cancelled');
+          if (task.status === 'failed') throw new Error(task.error || 'artifact_write_failed');
+          await waitForTaskPoll();
+        }
+      } finally {
+        activeTaskId = null;
+      }
+    }),
+    cancel: () => runBrokerCommand(async () => {
+      if (!activeTaskId) return { cancelled: false };
+      const task = await getRuntime().invoke('artifacts.export.cancel', { task_id: activeTaskId });
+      return { cancelled: task.status === 'cancelling' || task.status === 'cancelled' };
+    }),
     list: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.list', validateListRequest(value))),
   });
 }

@@ -55,4 +55,36 @@ describe('invoice result control presentation', () => {
     expect(addAccount).toContain('Quay lại Quản lý HDDT');
     expect(addAccount).not.toContain('Quay lại Quản lý tải');
   });
+
+  it('keeps Results and XML HTML download buttons blue in every interactive state', async () => {
+    const [results, page, styles] = await Promise.all([
+      source('src/features/results/ResultsPage.tsx'),
+      source('src/features/artifacts/XmlHtmlPage.tsx'),
+      source('src/styles/xml-html.css'),
+    ]);
+    expect(results).toContain('results-export-trigger primary-download-button');
+    expect(page).toContain('primary-download-button xml-html-download');
+    expect(styles).toContain('.primary-download-button:hover:not(:disabled)');
+    expect(styles).toContain('.primary-download-button:active:not(:disabled)');
+    expect(styles).toContain('background: #2563b8');
+    expect(styles).toContain('color: #fff');
+    expect(styles).not.toContain('.primary-download-button { background: linear-gradient');
+  });
+
+  it('uses the shared XML HTML control block and exact lifecycle copy', async () => {
+    const [page, styles] = await Promise.all([
+      source('src/features/artifacts/XmlHtmlPage.tsx'),
+      source('src/styles/xml-html.css'),
+    ]);
+    expect(page).toContain('Tra cứu XML/HTML các hóa đơn đã/chưa đồng bộ');
+    expect(page).toContain('xml-html-control-block');
+    expect(page).toContain('<StorageFolderPicker');
+    expect(page).toContain('Đồng bộ dữ liệu');
+    expect(page).toContain('Tải xuống kết quả');
+    expect(page).toContain('Dừng tải');
+    expect(styles).toContain('.xml-html-company');
+    expect(styles).toContain('font-size: 12px !important');
+    expect(styles).toContain('width: clamp(245px, 25vw, 390px)');
+    expect(styles).toContain('background: #f0fdf4');
+  });
 });

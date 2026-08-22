@@ -38,6 +38,7 @@ export interface MiaRuntimeBridge {
   artifacts: {
     selectDirectory(): Promise<string | null>;
     export(request: ArtifactExportRequest): Promise<{ count: number; files: string[] }>;
+    cancel(): Promise<{ cancelled: boolean }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     openDirectory(directory: string): Promise<boolean>;
     onExportProgress(listener: (progress: RuntimeExportProgress) => void): () => void;
@@ -76,6 +77,7 @@ export interface RuntimeArtifactProgress {
   total: number;
   percent: number;
   artifact_key?: string | null;
+  kind?: 'xml' | 'html' | 'pdf' | null;
 }
 
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }

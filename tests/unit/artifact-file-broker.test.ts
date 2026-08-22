@@ -107,6 +107,44 @@ describe('artifact filesystem boundary', () => {
     });
   });
 
+  it('runs XML and HTML copying as a cancellable local artifact task', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-packages');
+    const runtime = {
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'artifact_1', status: 'running' })
+        .mockResolvedValueOnce({ task_id: 'artifact_1', status: 'running' })
+        .mockResolvedValueOnce({ task_id: 'artifact_1', status: 'completed', result: { count: 2, files: ['a.xml', 'a.html'] } }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.export({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'] }))
+      .resolves.toMatchObject({ ok: true, data: { count: 2 } });
+    expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
+      'artifacts.export.start', 'artifacts.export.status', 'artifacts.export.status',
+    ]);
+  });
+
+  it('forwards stop to the active local artifact task', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-packages-cancel');
+    let cancelled = false;
+    const runtime = {
+      invoke: vi.fn(async (method) => {
+        if (method === 'artifacts.export.start') return { task_id: 'artifact_2', status: 'running' };
+        if (method === 'artifacts.export.cancel') { cancelled = true; return { task_id: 'artifact_2', status: 'cancelling' }; }
+        if (method === 'artifacts.export.status') return cancelled
+          ? { task_id: 'artifact_2', status: 'cancelled', error: 'artifact_cancelled' }
+          : { task_id: 'artifact_2', status: 'running' };
+        throw new Error('unexpected method');
+      }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+    const exportPromise = broker.export({ destination, connection_ids: ['conn_1'], kinds: ['xml'] });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await expect(broker.cancel()).resolves.toEqual({ ok: true, data: { cancelled: true } });
+    await expect(exportPromise).resolves.toMatchObject({ ok: false, error: { code: 'artifact_cancelled' } });
+  });
+
   it('sanitizes artifact list filters and date bounds', () => {
     const query = validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31', limit: 50 });
     expect(query).toMatchObject({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31' });
