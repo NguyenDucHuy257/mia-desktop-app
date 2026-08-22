@@ -4,9 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from openpyxl import load_workbook
-
 import mia_runtime
+from app.job_engine.models import JobRecord
 from mia_backend import ProductionBackend
 
 
@@ -73,66 +72,84 @@ class SourceJobIntentTests(unittest.TestCase):
 
 
 class ResultViewTests(unittest.TestCase):
-    def backend_with_job(self):
-        backend = object.__new__(ProductionBackend)
-        backend.data_root = Path("source-data")
-        job = SimpleNamespace(
+    @staticmethod
+    def source_job() -> JobRecord:
+        return JobRecord(
             job_id="job-latest",
-            owner_id="mia-desktop-local",
             account_key="conn_account_1",
-            created_at="2026-08-20T10:00:00+00:00",
-            updated_at="2026-08-20T10:00:00+00:00",
             company_tax_code="0100000000",
+            job_type="invoice_crawl",
+            queue_order=1,
             parameters={
                 "connection_id": "conn_account_1",
                 "date_from": "2026-01-01",
                 "date_to": "2026-01-31",
-                "directions": ["purchase"],
-                "query_types": ["query"],
+                "directions": ["purchase", "sold"],
+                "query_types": ["query", "sco-query"],
             },
+            status="completed",
+            current_stage="finalize",
+            worker_id=None,
+            lease_token=None,
+            lease_generation=0,
+            lease_expires_at=None,
+            available_at="2026-08-20T10:00:00+00:00",
+            cancel_requested_at=None,
+            warning_count=0,
+            created_at="2026-08-20T10:00:00+00:00",
+            updated_at="2026-08-20T10:00:00+00:00",
+            started_at="2026-08-20T10:00:00+00:00",
+            finished_at="2026-08-20T10:05:00+00:00",
+            last_error_code=None,
+            last_error_message=None,
+            owner_id="mia-desktop-local",
+            pipeline_version=2,
         )
+
+    def backend_with_job(self, *, data_root: Path | None = None):
+        backend = object.__new__(ProductionBackend)
+        backend.data_root = data_root or Path("source-data")
+        job = self.source_job()
         backend.repository = SimpleNamespace(
             list_jobs_for_reconciliation=lambda: [job]
         )
         return backend, job
 
-    def test_result_range_overrides_latest_job_range_using_source_result_reader(self):
+    def test_result_range_and_source_filters_override_latest_job_view(self):
         backend, _ = self.backend_with_job()
         reader = Mock()
         reader.overview_page.return_value = {
             "items": [{
                 "id": 7,
-                "direction": "sold",
                 "nbmst": "0300000000",
                 "khhdon": "AA/26E",
                 "shdon": "12",
                 "khmshdon": "1",
             }],
+            "total_count": 1,
             "pagination": {"has_more": False, "next_cursor": None},
         }
 
-        def replace_job(job, *, parameters):
-            return SimpleNamespace(**{**vars(job), "parameters": parameters})
-
         with patch(
-            "mia_source_backend.JobResultReader", return_value=reader
-        ), patch(
-            "mia_source_backend.replace", side_effect=replace_job
+            "app.external_api.results.JobResultReader", return_value=reader
         ):
             result = backend.results("overview", {
                 "connection_id": "conn_account_1",
                 "date_from": "2026-02-01",
                 "date_to": "2026-02-28",
-                "direction": None,
+                "direction": "sold",
+                "query_type": "sco-query",
                 "limit": 50,
             })
 
         read_job = reader.overview_page.call_args.args[0]
         self.assertEqual(read_job.parameters["date_from"], "2026-02-01")
         self.assertEqual(read_job.parameters["date_to"], "2026-02-28")
-        self.assertEqual(read_job.parameters["directions"], ["purchase", "sold"])
-        self.assertEqual(read_job.parameters["query_types"], ["query", "sco-query"])
+        self.assertEqual(read_job.parameters["directions"], ["sold"])
+        self.assertEqual(read_job.parameters["query_types"], ["sco-query"])
         self.assertEqual(result["items"][0]["direction"], "sold")
+        self.assertTrue(result["columns"])
+        self.assertTrue(result["column_labels"])
 
     def test_result_dispatch_initializes_source_backend_after_restart(self):
         previous = (
@@ -169,36 +186,59 @@ class ResultViewTests(unittest.TestCase):
                 mia_runtime.production_backend,
             ) = previous
 
-    def test_result_workbook_can_include_overview_and_detail_sheets(self):
-        backend, _ = self.backend_with_job()
-        backend._all_result_rows = Mock(side_effect=[
-            [{
-                "direction": "purchase",
-                "business_key": "A",
-                "payload": {"shdon": "1"},
-            }],
-            [{
-                "direction": "purchase",
-                "business_key": "A",
-                "line_key": "1",
-                "payload": {"thhdvu": "Dịch vụ"},
-            }],
-        ])
+    def test_result_export_uses_separate_source_native_overview_and_detail_files(self):
         with tempfile.TemporaryDirectory() as directory:
-            result = backend.export_results({
-                "destination": directory,
-                "connection_ids": ["conn_account_1"],
-                "result_scopes": ["overview", "details"],
-                "date_from": "2026-02-01",
-                "date_to": "2026-02-28",
-                "direction": None,
-                "search": "",
-            })
-            target = Path(result["files"][0])
-            self.assertTrue(target.is_file())
-            workbook = load_workbook(target, read_only=True)
-            self.assertEqual(workbook.sheetnames, ["Tong quan", "Chi tiet"])
-            workbook.close()
+            root = Path(directory)
+            backend, _ = self.backend_with_job(data_root=root / "source-data")
+            overview_row = {
+                "khmshdon": "1",
+                "khhdon": "AA/26E",
+                "shdon": "1",
+                "tdlap": "2026-02-01T00:00:00+07:00",
+            }
+            detail_record = {"raw_detail_path": "unused.json"}
+
+            def write_overview(_rows, **kwargs):
+                kwargs["target"].write_bytes(b"source-overview")
+
+            detail_repository = Mock()
+            detail_repository.get_detail_records_for_export.return_value = [detail_record]
+            detail_exporter = Mock()
+            detail_exporter.export.side_effect = (
+                lambda **kwargs: Path(kwargs["output_path"]).write_bytes(b"source-detail")
+            )
+
+            with patch(
+                "mia_source_results._all_overview_fields",
+                return_value=[overview_row],
+            ) as overview_rows, patch(
+                "mia_source_results._write_overview_excel_from_source_template",
+                side_effect=write_overview,
+            ) as overview_writer, patch(
+                "app.repositories.invoice_detail_query_repository.InvoiceDetailQueryRepository",
+                return_value=detail_repository,
+            ), patch(
+                "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
+                return_value=detail_exporter,
+            ):
+                result = backend.export_results({
+                    "destination": directory,
+                    "connection_ids": ["conn_account_1"],
+                    "result_scopes": ["overview", "details"],
+                    "date_from": "2026-02-01",
+                    "date_to": "2026-02-28",
+                    "direction": "purchase",
+                    "query_type": "query",
+                    "search": "",
+                })
+
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(len(result["files"]), 2)
+            self.assertTrue(all(Path(path).is_file() for path in result["files"]))
+            overview_rows.assert_called_once()
+            overview_writer.assert_called_once()
+            detail_repository.get_detail_records_for_export.assert_called_once()
+            detail_exporter.export.assert_called_once()
 
 
 if __name__ == "__main__":
