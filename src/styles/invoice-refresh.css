@@ -351,28 +351,33 @@
   position: absolute;
   left: 184px;
   bottom: 5px;
-  width: min(364px, calc(100% - 200px));
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  width: min(480px, calc(100% - 200px));
+  display: block;
   color: #45464d;
   font-size: 10px;
   line-height: 11px;
   letter-spacing: .5px;
 }
 
+/* The visible label now lives inside the folder button. Keep the old span in
+ * markup only as an inert compatibility hook until the next component cleanup. */
+.invoice-page .invoice-export-folder > span {
+  display: none;
+}
+
 .invoice-page .invoice-export-folder > div {
   width: 100%;
-  height: 34px;
+  height: 36px;
   display: flex;
+  align-items: stretch;
 }
 
 .invoice-page .invoice-export-folder input {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
   padding: 0 12px;
   border: 1px solid #cbd5e1;
-  border-radius: 5px 0 0 5px;
+  border-radius: 6px 0 0 6px;
   background: #fff;
   color: #374151;
   font-size: 12px;
@@ -386,20 +391,45 @@
 }
 
 .invoice-page .invoice-export-folder button {
-  width: 46px;
-  flex: 0 0 46px;
-  border: 1px solid #cbd5e1;
+  width: 148px;
+  flex: 0 0 148px;
+  padding: 0 12px;
+  border: 1px solid #b9c8dc;
   border-left: 0;
-  border-radius: 0 5px 5px 0;
-  background: #eef2ff;
-  color: #334155;
+  border-radius: 0 6px 6px 0;
+  background: linear-gradient(180deg, #f7faff 0%, #eaf1fb 100%);
+  color: #24558d;
   cursor: pointer;
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 0;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.invoice-page .invoice-export-folder button::before {
+  content: '';
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3.5 6.5a2 2 0 0 1 2-2h4.1l2 2H18.5a2 2 0 0 1 2 2v8.8a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2V6.5Zm2 .1v10.7c0 .1.1.2.2.2h12.6c.1 0 .2-.1.2-.2V8.6H10.8l-2-2H5.5Z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3.5 6.5a2 2 0 0 1 2-2h4.1l2 2H18.5a2 2 0 0 1 2 2v8.8a2.2 2.2 0 0 1-2.2 2.2H5.7a2.2 2.2 0 0 1-2.2-2.2V6.5Zm2 .1v10.7c0 .1.1.2.2.2h12.6c.1 0 .2-.1.2-.2V8.6H10.8l-2-2H5.5Z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.invoice-page .invoice-export-folder button::after {
+  content: 'Thư mục lưu trữ';
+  font-size: 11px;
   line-height: 1;
 }
 
 .invoice-page .invoice-export-folder button:hover,
 .invoice-page .invoice-export-folder button:focus-visible {
-  background: #e0e7ff;
-  border-color: #94a3b8;
+  background: linear-gradient(180deg, #eef5ff 0%, #dce9f8 100%);
+  border-color: #8da9ca;
+  color: #174a82;
 }
