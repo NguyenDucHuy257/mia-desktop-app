@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createResultBroker, validateQuery } = require('../../electron/result-broker.cjs');
+const { MAX_RESULT_CURSOR_LENGTH, createResultBroker, validateQuery } = require('../../electron/result-broker.cjs');
 
 describe('result IPC broker', () => {
   it('normalizes safe cursor queries and enforces 50 rows per page', () => {
@@ -14,6 +14,14 @@ describe('result IPC broker', () => {
     expect(() => validateQuery({ connection_id: 'account-1', limit: 51 })).toThrow();
     expect(() => validateQuery({ connection_id: 'account-1', offset: 10 })).toThrow();
     expect(() => validateQuery({ connection_id: '../bad' })).toThrow();
+  });
+
+  it('round-trips long opaque source cursors used by page 2+', () => {
+    const cursor = 'eyJ3cmFwcGVkIjoi' + 'x'.repeat(512);
+    expect(validateQuery({ connection_id: 'account-1', cursor }).cursor).toBe(cursor);
+    expect(() => validateQuery({
+      connection_id: 'account-1', cursor: 'x'.repeat(MAX_RESULT_CURSOR_LENGTH + 1),
+    })).toThrow();
   });
 
   it('accepts an explicit result range and exact source invoice type', () => {
