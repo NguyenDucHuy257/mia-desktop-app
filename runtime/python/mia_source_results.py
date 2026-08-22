@@ -479,11 +479,49 @@ def _available_path(destination: Path, filename: str) -> Path:
     candidate = destination / filename
     stem = Path(filename).stem
     suffix = Path(filename).suffix
-    for copy_index in range(1, 1000):
+    for copy_index in range(2, 1001):
         if not candidate.exists():
             return candidate
         candidate = destination / f"{stem} ({copy_index}){suffix}"
     raise OSError("artifact_name_exhausted")
+
+
+def _grouped_result_filename(
+    company_tax_code: str,
+    direction: str,
+    scope: str,
+    date_from: str,
+    date_to: str,
+) -> str:
+    safe_tax_code = re.sub(r"[^0-9A-Za-z._-]+", "_", company_tax_code).strip("._-")
+    if not safe_tax_code:
+        safe_tax_code = "MIA"
+    direction_label = "Mua vào" if direction == "purchase" else "Bán ra"
+    scope_label = "Tổng quan" if scope == "overview" else "Chi tiết"
+    return (
+        f"{safe_tax_code} - {direction_label} - {scope_label} - "
+        f"{date_from}_{date_to}.xlsx"
+    )
+
+
+def _combine_source_workbooks_atomically(
+    staged_jobs: list[tuple[str, str, Path]],
+    target: Path,
+) -> None:
+    """Reuse source styled-sheet copying while keeping desktop writes atomic."""
+    from app.services.overview_downloader import OverviewDownloader
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.stem}-", suffix=".xlsx", dir=target.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    temporary.unlink(missing_ok=True)
+    try:
+        OverviewDownloader.combine_workbooks(staged_jobs, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 class _ExportProgressReporter:
@@ -715,7 +753,6 @@ def _export_results_impl(
     from app.config.crawl_config import QUERY_TYPE_TO_CATEGORY
     from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
     from app.repositories.invoice_detail_query_repository import InvoiceDetailQueryRepository
-    from app.services.overview_downloader import OUTPUT_NAMES
 
     destination = Path(value["destination"])
     if not destination.is_absolute():
@@ -794,58 +831,89 @@ def _export_results_impl(
 
     if not plans:
         raise ValueError("result_export_empty")
-    reporter.set_units(len(plans))
-
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for plan in plans:
-        scope = plan["scope"]
-        direction = plan["direction"]
-        query_type = plan["query_type"]
-        reporter.start_unit(scope)
-        if scope == "overview":
-            category = QUERY_TYPE_TO_CATEGORY.get(query_type)
-            source_name = OUTPUT_NAMES.get((direction, category))
-            if not source_name:
-                source_name = f"DANH SÁCH HÓA ĐƠN {direction} {query_type}.xlsx"
-            target = _available_path(destination, source_name)
-            _write_overview_excel_from_source_template(
-                plan["payload"],
-                direction=direction,
-                category=str(category),
-                date_from=context["date_from"],
-                date_to=context["date_to"],
-                target=target,
-                progress=reporter.unit,
-            )
-        else:
-            if reporter.callback is None:
-                exporter = InvoiceDetailExcelExporter(
-                    _source_template_dir() / "invoice_detail.xlsx",
-                    row_builder=_ExcelSafeDetailRowBuilder(),
+        groups.setdefault((plan["scope"], plan["direction"]), []).append(plan)
+
+    # One unit per rendered source sheet plus one real combine/save unit for
+    # each final workbook. Query types no longer imply separate final files.
+    reporter.set_units(len(plans) + len(groups))
+
+    with tempfile.TemporaryDirectory(prefix=".mia-result-sheets-", dir=destination) as directory:
+        staging_directory = Path(directory)
+        for (scope, direction), group_plans in groups.items():
+            staged_jobs: list[tuple[str, str, Path]] = []
+            for sheet_index, plan in enumerate(group_plans, start=1):
+                query_type = plan["query_type"]
+                category = str(QUERY_TYPE_TO_CATEGORY.get(query_type) or "")
+                if category not in {"electronic", "cash_register"}:
+                    raise ValueError("invalid_overview_export_category")
+                reporter.start_unit(scope)
+                staged_target = staging_directory / (
+                    f"{scope}-{direction}-{category}-{sheet_index}.xlsx"
                 )
-            else:
-                from mia_progressive_excel_exporter import (
-                    ProgressiveInvoiceDetailExcelExporter,
-                )
-                exporter = ProgressiveInvoiceDetailExcelExporter(
-                    _source_template_dir() / "invoice_detail.xlsx",
-                    row_builder=_ExcelSafeDetailRowBuilder(),
-                    progress=reporter.unit,
-                )
-            direction_label = "MUA VÀO" if direction == "purchase" else "BÁN RA"
-            type_label = "HĐĐT" if query_type == "query" else "MÁY TÍNH TIỀN"
+                if scope == "overview":
+                    _write_overview_excel_from_source_template(
+                        plan["payload"],
+                        direction=direction,
+                        category=category,
+                        date_from=context["date_from"],
+                        date_to=context["date_to"],
+                        target=staged_target,
+                        progress=reporter.unit,
+                    )
+                else:
+                    if reporter.callback is None:
+                        exporter = InvoiceDetailExcelExporter(
+                            _source_template_dir() / "invoice_detail.xlsx",
+                            row_builder=_ExcelSafeDetailRowBuilder(),
+                        )
+                    else:
+                        from mia_progressive_excel_exporter import (
+                            ProgressiveInvoiceDetailExcelExporter,
+                        )
+                        exporter = ProgressiveInvoiceDetailExcelExporter(
+                            _source_template_dir() / "invoice_detail.xlsx",
+                            row_builder=_ExcelSafeDetailRowBuilder(),
+                            progress=reporter.unit,
+                        )
+                    exporter.export(
+                        detail_records=plan["payload"],
+                        output_path=staged_target,
+                        from_date=context["date_from"],
+                        to_date=context["date_to"],
+                    )
+                combine_category = category
+                if scope == "details":
+                    # Source's cash_register branch intentionally reuses one
+                    # Overview prototype style per column. Detail workbooks can
+                    # carry row-specific styles/merges, so pass the source sheet
+                    # label as the presentation category and let the same
+                    # combiner take its full-cell clone path.
+                    combine_category = {
+                        "electronic": "Hóa đơn điện tử",
+                        "cash_register": "Máy tính tiền",
+                    }[category]
+                staged_jobs.append((direction, combine_category, staged_target))
+                reporter.complete_unit()
+
+            reporter.start_unit(scope)
+            reporter.unit("format", 0, len(staged_jobs))
             target = _available_path(
                 destination,
-                f"THỐNG KÊ CHI TIẾT HÓA ĐƠN "
-                f"{direction_label} - {type_label}.xlsx",
+                _grouped_result_filename(
+                    context["base_job"].company_tax_code,
+                    direction,
+                    scope,
+                    context["date_from"],
+                    context["date_to"],
+                ),
             )
-            exporter.export(
-                detail_records=plan["payload"],
-                output_path=target,
-                from_date=context["date_from"],
-                to_date=context["date_to"],
-            )
-        files.append(str(target))
-        reporter.complete_unit()
+            _combine_source_workbooks_atomically(staged_jobs, target)
+            reporter.unit("format", len(staged_jobs), len(staged_jobs))
+            reporter.unit("save", 1, 1)
+            reporter.complete_unit()
+            files.append(str(target))
 
     reporter.complete()
     return {"count": len(files), "files": files}

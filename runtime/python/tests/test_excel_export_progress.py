@@ -12,6 +12,7 @@ from mia_progressive_excel_exporter import ProgressiveInvoiceDetailExcelExporter
 from mia_source_results import (
     _ExcelSafeDetailRowBuilder,
     _ExportProgressReporter,
+    _combine_source_workbooks_atomically,
     _source_template_dir,
     _write_overview_excel_from_source_template,
 )
@@ -126,6 +127,105 @@ class ExcelExportProgressTests(unittest.TestCase):
             self.assertIn(("write_rows", 4, 4), events)
             self.assertIn(("format", 38, 38), events)
             self.assertIn(("save", 1, 1), events)
+
+    def test_source_combiner_preserves_detail_sheet_values_styles_and_merges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = self._records(root)
+            template = _source_template_dir() / "invoice_detail.xlsx"
+            electronic = root / "electronic.xlsx"
+            cash = root / "cash.xlsx"
+            combined = root / "combined.xlsx"
+            for target in (electronic, cash):
+                InvoiceDetailExcelExporter(
+                    template, _ExcelSafeDetailRowBuilder()
+                ).export(records, target, "2026-08-01", "2026-08-31")
+
+            _combine_source_workbooks_atomically(
+                [
+                    ("purchase", "electronic", electronic),
+                    ("purchase", "Máy tính tiền", cash),
+                ],
+                combined,
+            )
+
+            combined_book = load_workbook(combined, data_only=False)
+            try:
+                self.assertEqual(
+                    combined_book.sheetnames,
+                    ["Hóa đơn điện tử", "Máy tính tiền"],
+                )
+                for source_path, sheet_name in (
+                    (electronic, "Hóa đơn điện tử"),
+                    (cash, "Máy tính tiền"),
+                ):
+                    source_book = load_workbook(source_path, data_only=False)
+                    try:
+                        source_sheet = source_book.active
+                        target_sheet = combined_book[sheet_name]
+                        self.assertEqual(
+                            {str(value) for value in source_sheet.merged_cells.ranges},
+                            {str(value) for value in target_sheet.merged_cells.ranges},
+                        )
+                        for row in range(1, source_sheet.max_row + 1):
+                            for column in range(1, source_sheet.max_column + 1):
+                                source_cell = source_sheet.cell(row, column)
+                                target_cell = target_sheet.cell(row, column)
+                                self.assertEqual(source_cell.value, target_cell.value)
+                                if source_cell.value is None:
+                                    continue
+                                message = f"{sheet_name}!R{row}C{column}"
+                                self.assertEqual(
+                                    (
+                                        source_cell.font.name,
+                                        source_cell.font.sz,
+                                        source_cell.font.b,
+                                        source_cell.font.i,
+                                        source_cell.font.color.type if source_cell.font.color else None,
+                                        source_cell.font.color.rgb if source_cell.font.color and source_cell.font.color.type == "rgb" else None,
+                                    ),
+                                    (
+                                        target_cell.font.name,
+                                        target_cell.font.sz,
+                                        target_cell.font.b,
+                                        target_cell.font.i,
+                                        target_cell.font.color.type if target_cell.font.color else None,
+                                        target_cell.font.color.rgb if target_cell.font.color and target_cell.font.color.type == "rgb" else None,
+                                    ),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    (source_cell.fill.fill_type, source_cell.fill.fgColor.type, source_cell.fill.fgColor.rgb),
+                                    (target_cell.fill.fill_type, target_cell.fill.fgColor.type, target_cell.fill.fgColor.rgb),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    tuple(getattr(source_cell.border, side).style for side in ("left", "right", "top", "bottom")),
+                                    tuple(getattr(target_cell.border, side).style for side in ("left", "right", "top", "bottom")),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    (
+                                        source_cell.alignment.horizontal,
+                                        source_cell.alignment.vertical,
+                                        source_cell.alignment.wrap_text,
+                                    ),
+                                    (
+                                        target_cell.alignment.horizontal,
+                                        target_cell.alignment.vertical,
+                                        target_cell.alignment.wrap_text,
+                                    ),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    source_cell.number_format,
+                                    target_cell.number_format,
+                                    message,
+                                )
+                    finally:
+                        source_book.close()
+            finally:
+                combined_book.close()
 
     def test_reporter_events_are_monotonic_and_terminal(self):
         events = []
