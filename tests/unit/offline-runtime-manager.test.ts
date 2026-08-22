@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const require = (await import('node:module')).createRequire(import.meta.url);
 const { OfflineRuntimeManager } = require('../../electron/offline-runtime-manager.cjs');
@@ -59,6 +59,37 @@ describe('OfflineRuntimeManager', () => {
     expect(resumed.job_id).toBe(first.job_id);
     expect(duplicate).toMatchObject({ job_id: first.job_id, reused: true });
   }, PROCESS_TEST_TIMEOUT_MS);
+
+  it('cancels observed source jobs before shutting down the Python client', async () => {
+    const runtime = await manager() as any;
+    const order: string[] = [];
+    const client = {
+      call: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        order.push(method === 'source.jobs.cancel' ? `${method}:${params.job_id}` : method);
+        if (method === 'source.jobs.resume_all') {
+          return [
+            { job_id: 'job-running', status: 'running' },
+            { job_id: 'job-queued', status: 'queued' },
+          ];
+        }
+        if (method === 'source.jobs.cancel') return { job_id: params.job_id, status: 'cancelling' };
+        throw new Error(`unexpected method ${method}`);
+      }),
+      stop: vi.fn(async () => { order.push('client.stop'); }),
+    };
+    runtime.client = client;
+    runtime.sourceJobsObserved = true;
+
+    await runtime.stop();
+
+    expect(order).toEqual([
+      'source.jobs.resume_all',
+      'source.jobs.cancel:job-running',
+      'source.jobs.cancel:job-queued',
+      'client.stop',
+    ]);
+    expect(client.stop).toHaveBeenCalledOnce();
+  });
 
   it('enforces the bounded restart limit', async () => {
     const runtime = await manager(1);
