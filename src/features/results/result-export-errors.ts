@@ -1,4 +1,11 @@
-export function resultExportErrorMessage(error: unknown, dateFrom?: string, dateTo?: string) {
+type ResultExportScope = 'overview' | 'details';
+
+export function resultExportErrorMessage(
+  error: unknown,
+  dateFrom?: string,
+  dateTo?: string,
+  scopes: ResultExportScope[] = [],
+) {
   const code = String((error as { code?: string })?.code ?? 'internal_error');
   const range = dateFrom && dateTo ? ` từ ${formatDate(dateFrom)} đến ${formatDate(dateTo)}` : '';
 
@@ -9,6 +16,12 @@ export function resultExportErrorMessage(error: unknown, dateFrom?: string, date
     return `Không có dữ liệu Chi tiết${range} để tạo Excel. Hãy đồng bộ phạm vi Chi tiết trước.`;
   }
   if (code === 'result_export_empty') {
+    if (scopes.length === 1 && scopes[0] === 'overview') {
+      return `Không có dữ liệu Tổng quan${range} để tạo Excel.`;
+    }
+    if (scopes.length === 1 && scopes[0] === 'details') {
+      return `Không có dữ liệu Chi tiết${range} để tạo Excel. Hãy đồng bộ phạm vi Chi tiết trước.`;
+    }
     return `Không có dữ liệu hóa đơn${range} phù hợp với lựa chọn hiện tại.`;
   }
   if (code === 'result_job_not_found') {
