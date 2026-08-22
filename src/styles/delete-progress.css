@@ -65,3 +65,14 @@
 @keyframes delete-progress-spin {
   to { transform: rotate(360deg); }
 }
+
+/* App-level late override: the storage path is self-explanatory and already
+ * has an accessible input label, so keep the toolbar compact without a visual
+ * caption above the field. */
+.invoice-page .invoice-export-folder > span {
+  display: none;
+}
+
+.invoice-page .invoice-export-folder {
+  gap: 0;
+}
