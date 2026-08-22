@@ -54,6 +54,21 @@ export interface JobStatusResponse {
   /** Exact source unit currently executing; counters remain source-owned. */
   current_direction?: InvoiceDirection | null;
   current_query_type?: InvoiceQueryType | null;
+  current_artifact?: {
+    direction: InvoiceDirection;
+    query_type: InvoiceQueryType;
+    nbmst: string;
+    khhdon: string;
+    shdon: string;
+    khmshdon: string;
+  } | null;
+  artifact_progress?: {
+    current_key: string;
+    processed: number;
+    completed_xml: number;
+    completed_html: number;
+    items: Record<string, { xml: 'running' | 'completed' | 'failed'; html: 'running' | 'completed' | 'failed' }>;
+  } | null;
   /** Raw source progress_state.message token used as presentation input. */
   message?: string | null;
   event_sequence?: number;

@@ -1,0 +1,179 @@
+/* Shared Excel export feedback driven by Python's actual export work units. */
+.result-export-progress {
+  width: 100%;
+  margin-top: 7px;
+}
+
+.result-export-progress-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: #76530d;
+  font-size: 10px;
+}
+
+.result-export-progress-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.result-export-progress-copy strong {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.result-export-progress-track {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f4e7bd;
+}
+
+.result-export-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #e7c66e 0%, #f8e5a8 48%, #cda13d 100%);
+  transition: width 180ms ease;
+}
+
+.invoice-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.invoice-export-all-wrap {
+  min-width: 172px;
+  display: flex;
+  align-items: center;
+}
+
+.invoice-export-all-button {
+  position: relative;
+  isolation: isolate;
+  min-width: 172px;
+  height: 42px;
+  padding: 0 16px;
+  overflow: hidden;
+  border: 1px solid #8caedb;
+  border-radius: 9px;
+  background: #e8f0fc;
+  color: #315f9f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.invoice-export-all-button:hover:not(:disabled),
+.invoice-export-all-button:focus-visible:not(:disabled) {
+  border-color: #6f9bd6;
+  background: #dce9fb;
+  color: #1d4f91;
+  outline: none;
+}
+
+.invoice-export-all-button:disabled {
+  cursor: not-allowed;
+  opacity: .58;
+}
+
+.invoice-export-all-button[data-exporting='true']:disabled {
+  opacity: 1;
+}
+
+.invoice-export-all-button[data-exporting='true'] {
+  color: #173f75;
+  background: #eef5ff;
+}
+
+.invoice-export-button-fill {
+  position: absolute;
+  z-index: -1;
+  inset: 0 auto 0 0;
+  background: #bad2f1;
+  transition: width 180ms ease;
+}
+
+.invoice-export-button-progress {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.invoice-action-icon {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.results-export-popover .result-export-progress {
+  margin-top: 8px;
+}
+
+.results-crawl-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 9px;
+  background: #f8fbff;
+  color: #334155;
+  font-size: 12px;
+}
+
+.results-crawl-status > strong {
+  flex: 0 0 auto;
+  color: #1d4ed8;
+  white-space: nowrap;
+}
+
+.results-crawl-status > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.results-crawl-status > em {
+  flex: 0 0 42px;
+  color: #2563eb;
+  font-style: normal;
+  font-weight: 800;
+  text-align: right;
+}
+
+.results-crawl-track {
+  width: min(240px, 24vw);
+  height: 5px;
+  flex: 0 1 240px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.results-crawl-track > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #60a5fa;
+  transition: width 180ms ease;
+}

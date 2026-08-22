@@ -98,6 +98,39 @@ class LocalSequentialJobRepository:
             connection.commit()
             return int(cursor.rowcount)
 
+    def latest_invoice_job_for_account(self, account_key: str, *, owner_id: str | None = None):
+        """Return the newest invoice job even when it is terminal/cancelled.
+
+        ``list_jobs_for_reconciliation`` intentionally excludes failed/cancelled
+        jobs so recovery can never resurrect them. Results presentation has a
+        different requirement: a cancelled desktop batch may still have many
+        invoice rows already committed to the source SQLite database. Reading
+        those rows needs the latest job's company/range metadata, but must not
+        make that job eligible for reconciliation again. This read-only lookup
+        therefore queries the same source control table and returns the source
+        ``JobRecord`` through the delegate.
+        """
+        database_path = self.delegate.database_path
+        where_owner = " AND owner_id = ?" if owner_id is not None else ""
+        params: tuple[object, ...] = (
+            (account_key, owner_id) if owner_id is not None else (account_key,)
+        )
+        with closing(sqlite3.connect(database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            row = connection.execute(
+                f"""
+                SELECT job_id
+                FROM crawl_jobs
+                WHERE account_key = ?
+                  AND job_type = 'invoice_crawl'
+                  {where_owner}
+                ORDER BY created_at DESC, job_id DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        return self.delegate.get_job(str(row[0])) if row else None
+
     def create_admitted_job(self, request, tasks=(), *, stages=None, now=None):
         # ExternalApiService is reused only as an in-process source service. Its
         # server host normally calls a worker-slot admission facade here. Local

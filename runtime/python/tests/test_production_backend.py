@@ -64,6 +64,75 @@ class ProductionBackendTests(unittest.TestCase):
         )
         portal.get_company_info.assert_called_once_with()
 
+    def test_reused_import_reconnects_and_verifies_the_submitted_password(self):
+        backend = object.__new__(ProductionBackend)
+        existing = SimpleNamespace(connection_id="conn_existing", username="0100000000")
+        reconnected = SimpleNamespace(connection_id="conn_existing", username="0100000000")
+        backend.service = Mock()
+        backend.service.create_account_connection.return_value = (existing, True)
+        backend.service.reconnect_account_connection.return_value = reconnected
+        backend._source_company_name = Mock(return_value="Verified Company")
+        backend._save_company_name = Mock()
+        backend.public_connection = Mock(return_value={"connection_id": "conn_existing"})
+
+        result = backend.create_connection("0100000000", "submitted-password")
+
+        self.assertEqual(result["connection_id"], "conn_existing")
+        reconnect_body = backend.service.reconnect_account_connection.call_args.args[1]
+        self.assertEqual(reconnect_body.username, "0100000000")
+        self.assertEqual(reconnect_body.password.get_secret_value(), "submitted-password")
+        backend._source_company_name.assert_called_once_with(reconnected)
+        backend._save_company_name.assert_called_once_with(
+            "conn_existing", "Verified Company"
+        )
+
+    def test_invalid_new_import_is_revoked_and_not_reported_as_success(self):
+        backend = object.__new__(ProductionBackend)
+        created = SimpleNamespace(connection_id="conn_invalid", username="0100000000")
+        backend.service = Mock()
+        backend.service.create_account_connection.return_value = (created, False)
+        backend._source_company_name = Mock(side_effect=RuntimeError("invalid_source_credentials"))
+        backend._save_company_name = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "invalid_source_credentials"):
+            backend.create_connection("0100000000", "wrong-password")
+
+        backend.service.revoke_account_connection.assert_called_once_with(
+            "conn_invalid", owner_id="mia-desktop-local"
+        )
+        backend._save_company_name.assert_not_called()
+
+    def test_account_list_backfills_only_missing_names_and_isolates_failures(self):
+        backend = object.__new__(ProductionBackend)
+        backend.service = Mock()
+        backend.logger = Mock()
+        backend._load_company_names = Mock(return_value={"conn_named": "Cached Company"})
+        backend._save_company_name = Mock()
+        backend._source_company_name = Mock(
+            side_effect=["Backfilled Company", RuntimeError("auth failed")]
+        )
+        records = [
+            {"connection_id": "conn_named", "company_name": "Cached Company"},
+            {"connection_id": "conn_missing", "company_name": None},
+            {"connection_id": "conn_failed", "company_name": None},
+        ]
+        backend.service.get_account_connection.side_effect = [
+            SimpleNamespace(connection_id="conn_missing"),
+            SimpleNamespace(connection_id="conn_failed"),
+        ]
+
+        with patch("mia_backend.SourceBackend.list_connections", return_value=records):
+            result = backend.list_connections()
+
+        self.assertEqual(result[0]["company_name"], "Cached Company")
+        self.assertEqual(result[1]["company_name"], "Backfilled Company")
+        self.assertIsNone(result[2]["company_name"])
+        self.assertEqual(backend._source_company_name.call_count, 2)
+        backend._save_company_name.assert_called_once_with(
+            "conn_missing", "Backfilled Company"
+        )
+        backend.logger.warning.assert_called_once()
+
     def test_source_account_connection_and_job_engine_own_durable_state(self):
         with tempfile.TemporaryDirectory() as directory:
             backend, connection = self._create_backend_and_connection(directory)
@@ -144,6 +213,17 @@ class ProductionBackendTests(unittest.TestCase):
                 "current_stage": "auth",
                 "current_month": None,
                 "message": "auth:captcha_fetched",
+                "artifact_progress": {
+                    "current_key": "purchase|query|0101|AA|1|1",
+                    "processed": 1,
+                    "completed_xml": 1,
+                    "completed_html": 1,
+                    "items": {
+                        "purchase|query|0101|AA|1|1": {
+                            "xml": "completed", "html": "completed",
+                        },
+                    },
+                },
             },
             current_stage="auth",
             last_error_code="source_rate_limited",
@@ -160,6 +240,11 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(value["overall_percent"], 5)
         self.assertEqual(value["error"]["code"], "source_rate_limited")
         self.assertEqual(value["error"]["message"], "source_rate_limited")
+        self.assertEqual(value["artifact_progress"]["completed_xml"], 1)
+        self.assertEqual(
+            value["artifact_progress"]["items"]["purchase|query|0101|AA|1|1"]["html"],
+            "completed",
+        )
         # HTTP API retryability classification is intentionally not part of the
         # local JSON-RPC contract. Desktop owns polling/retry behavior itself.
         self.assertFalse(value["error"]["retryable"])
@@ -198,6 +283,64 @@ class ProductionBackendTests(unittest.TestCase):
             "2026-01-01",
             "2026-01-31",
             overwrite=False,
+        )
+
+    def test_artifact_export_keys_cover_every_filtered_overview_page(self):
+        backend = object.__new__(ProductionBackend)
+        targets = [
+            {"artifact_key": "purchase|query|0101|AA|1|1"},
+            {"artifact_key": "sold|query|0102|BB|2|2"},
+        ]
+        with patch("mia_source_results.read_artifact_targets", return_value=targets) as reader:
+            keys = backend.artifact_keys_for_export({
+                "connection_ids": ["conn_1"], "date_from": "2026-08-01",
+                "date_to": "2026-08-31", "direction": None,
+                "query_type": "query", "search": "đối tác",
+            })
+
+        self.assertEqual(keys, {
+            "purchase|query|0101|AA|1|1", "sold|query|0102|BB|2|2",
+        })
+        reader.assert_called_once()
+        self.assertEqual(reader.call_args.args[1]["query_type"], "query")
+        self.assertEqual(reader.call_args.args[1]["search"], "đối tác")
+
+    def test_invoice_package_batch_uses_overview_targets_without_creating_a_job(self):
+        backend = object.__new__(ProductionBackend)
+        target = {
+            "artifact_key": "purchase|query|0101|AA|1|1",
+            "direction": "purchase", "query_type": "query", "nbmst": "0101",
+            "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+            "nlap": "2026-08-01", "nlap_date": "2026-08-01",
+        }
+        backend.artifact_targets_for_export = Mock(return_value=[target])
+        backend.accounts = Mock()
+        backend.accounts.session_hash.return_value = (Mock(), "session-hash")
+        backend._result_job = Mock(return_value=SimpleNamespace(parameters={"scope": "overview"}))
+        backend.handler = Mock()
+        backend.handler.run_xml_unit.return_value = {"outcome": "downloaded"}
+        backend.logger = Mock()
+        events = []
+        request = {
+            "connection_ids": ["conn_1"], "kinds": ["xml", "html"],
+            "date_from": "2026-08-01", "date_to": "2026-08-31",
+            "direction": "purchase", "query_type": "query", "search": "",
+        }
+
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={"session_hash": "session-hash"})):
+            result = backend.ensure_invoice_packages(request, progress_callback=events.append)
+
+        backend.handler.authenticate_job.assert_called_once()
+        backend.handler.run_xml_unit.assert_called_once()
+        payload = backend.handler.run_xml_unit.call_args.args[1]
+        self.assertEqual(payload["nbmst"], "0101")
+        self.assertTrue(payload["export_xml"])
+        self.assertTrue(payload["export_html"])
+        self.assertEqual(result["keys"], {target["artifact_key"]})
+        self.assertEqual(
+            [(event["kind"], event["status"]) for event in events],
+            [("xml", "running"), ("html", "running"),
+             ("xml", "completed"), ("html", "completed")],
         )
 
 

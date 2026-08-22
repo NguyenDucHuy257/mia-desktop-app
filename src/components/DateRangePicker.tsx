@@ -17,6 +17,7 @@ interface DateRangePickerProps {
   className?: string;
   fromLabel?: string;
   toLabel?: string;
+  disabled?: boolean;
 }
 
 function datePartAtPointer(input: HTMLInputElement, clientX: number): DatePart {
@@ -53,7 +54,7 @@ function selectDatePart(input: HTMLInputElement, part: DatePart) {
   input.setSelectionRange(range[0], range[1]);
 }
 
-export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fromLabel = 'Từ ngày', toLabel = 'Đến ngày' }: DateRangePickerProps) {
+export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fromLabel = 'Từ ngày', toLabel = 'Đến ngày', disabled = false }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [fromText, setFromText] = useState(displayDate(dateFrom));
   const [toText, setToText] = useState(displayDate(dateTo));
@@ -75,6 +76,7 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
 
   useEffect(() => { setFromText(displayDate(dateFrom)); }, [dateFrom]);
   useEffect(() => { setToText(displayDate(dateTo)); }, [dateTo]);
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 
   function apply() {
     const nextFrom = parseDateText(fromText);
@@ -115,12 +117,12 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
   }
 
   return <div ref={root} className={`date-range-control ${className}`.trim()}>
-    <button className="date-range-trigger" type="button" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((value) => !value)}>
+    <button className="date-range-trigger" type="button" disabled={disabled} aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((value) => !value)}>
       <img src={calendarIcon} alt="" /><span><small>KHOẢNG THỜI GIAN</small><strong>{displayDate(dateFrom)} - {displayDate(dateTo)}</strong></span>
     </button>
     {open ? <div className="date-range-popover" role="dialog" aria-label="Chọn khoảng thời gian">
-      <label>{fromLabel}<span><input aria-label={`${fromLabel} nhập tay`} inputMode="numeric" placeholder="d/m/yyyy" value={fromText} onChange={(event) => setFromText(event.target.value.replace(/[^0-9/]/g, ''))} onBlur={() => normalize(fromText, setFromText)} onWheel={(event) => onWheel(event, setFromText)} onKeyDown={(event) => onKeyDown(event, setFromText)} /><input aria-label={`${fromLabel} chọn lịch`} type="date" value={parseDateText(fromText) ?? ''} max={parseDateText(toText) ?? undefined} onChange={(event) => setFromText(displayDate(event.target.value))} /></span></label>
-      <label>{toLabel}<span><input aria-label={`${toLabel} nhập tay`} inputMode="numeric" placeholder="d/m/yyyy" value={toText} onChange={(event) => setToText(event.target.value.replace(/[^0-9/]/g, ''))} onBlur={() => normalize(toText, setToText)} onWheel={(event) => onWheel(event, setToText)} onKeyDown={(event) => onKeyDown(event, setToText)} /><input aria-label={`${toLabel} chọn lịch`} type="date" value={parseDateText(toText) ?? ''} min={parseDateText(fromText) ?? undefined} onChange={(event) => setToText(displayDate(event.target.value))} /></span></label>
+      <label>{fromLabel}<span><input aria-label={`${fromLabel} nhập tay`} inputMode="numeric" placeholder="d/m/yyyy" value={fromText} onChange={(event) => setFromText(event.target.value.replace(/[^0-9/]/g, ''))} onBlur={() => normalize(fromText, setFromText)} onWheel={(event) => onWheel(event, setFromText)} onKeyDown={(event) => onKeyDown(event, setFromText)} /><span className="date-range-calendar-control"><img src={calendarIcon} alt="" aria-hidden="true" /><input aria-label={`${fromLabel} chọn lịch`} type="date" value={parseDateText(fromText) ?? ''} max={parseDateText(toText) ?? undefined} onChange={(event) => setFromText(displayDate(event.target.value))} /></span></span></label>
+      <label>{toLabel}<span><input aria-label={`${toLabel} nhập tay`} inputMode="numeric" placeholder="d/m/yyyy" value={toText} onChange={(event) => setToText(event.target.value.replace(/[^0-9/]/g, ''))} onBlur={() => normalize(toText, setToText)} onWheel={(event) => onWheel(event, setToText)} onKeyDown={(event) => onKeyDown(event, setToText)} /><span className="date-range-calendar-control"><img src={calendarIcon} alt="" aria-hidden="true" /><input aria-label={`${toLabel} chọn lịch`} type="date" value={parseDateText(toText) ?? ''} min={parseDateText(fromText) ?? undefined} onChange={(event) => setToText(displayDate(event.target.value))} /></span></span></label>
       {error ? <p role="alert">{error}</p> : null}
       <div><button type="button" onClick={() => setOpen(false)}>Hủy</button><button type="button" onClick={apply}>Áp dụng</button></div>
     </div> : null}

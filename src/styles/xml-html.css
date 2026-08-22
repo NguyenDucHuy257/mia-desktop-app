@@ -1,0 +1,77 @@
+.xml-html-page { height: 100%; padding: 20px 24px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; color: #1a1c1b; }
+.xml-html-page > header { display: flex; align-items: center; justify-content: space-between; }
+.xml-html-page h1 { margin: 0 0 3px; font-size: 22px; }
+.xml-html-page header p { margin: 0; color: #62625b; font-size: 13px; }
+
+.xml-html-control-block { padding: 12px; border: 1px solid #e5e5e0; border-radius: 14px; background: #f6f6f3; display: grid; gap: 10px; }
+.xml-html-control-row { min-width: 0; display: flex; align-items: center; gap: 9px; }
+.xml-html-control-row > select, .xml-html-search { min-width: 0; height: 42px; padding: 0 11px; border: 1px solid #d6d6cf; border-radius: 10px; outline: 0; background: #fff; color: #344054; font-size: 12px; text-overflow: ellipsis; }
+.xml-html-control-row > select:focus-visible, .xml-html-search:focus-visible { border-color: #16a34a; box-shadow: 0 0 0 3px rgb(22 163 74 / 10%); }
+.xml-html-company { width: clamp(245px, 25vw, 390px); flex: 1 1 320px; font-size: 12px !important; }
+.xml-html-query-type { width: 155px; flex: 0 1 155px; }
+.xml-html-direction { width: 155px; flex: 0 1 155px; }
+.xml-html-refresh { height: 36px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; color: #344054; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.xml-html-refresh > input { position: absolute; opacity: 0; pointer-events: none; }
+.xml-html-refresh > span { width: 18px; height: 18px; border: 1px solid #9ca3af; border-radius: 5px; display: grid; place-items: center; background: #fff; }
+.xml-html-refresh > span[data-checked="true"] { border-color: #166534; background: #166534; }
+.xml-html-refresh img { width: 11px; height: 9px; filter: brightness(0) invert(1); }
+.xml-html-sync { height: 38px; padding: 0 14px; border: 0; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: #166534; color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.xml-html-sync img { width: 11px; height: 13px; filter: brightness(0) invert(1); }
+.xml-html-sync:hover:not(:disabled) { background: #14532d; }
+.xml-html-sync:disabled { opacity: .55; cursor: not-allowed; }
+.xml-html-control-row--storage .storage-folder-picker { min-width: 370px; flex: 1 1 520px; }
+.xml-html-search { width: min(320px, 25vw); flex: 1 1 220px; }
+.xml-html-kind-options { flex: 0 0 auto; display: flex; gap: 7px; }
+.xml-html-kind-options label { height: 38px; padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 9px; display: inline-flex; align-items: center; gap: 7px; color: #52606d; background: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.xml-html-kind-options label[data-active="true"] { border-color: #166534; color: #166534; background: #f0fdf4; }
+.xml-html-kind-options input { accent-color: #166534; }
+
+.primary-download-button { border: 1px solid #2563b8; background: #2563b8; color: #fff; box-shadow: none; }
+.primary-download-button:hover:not(:disabled) { border-color: #1e4f96; background: #1e5aa8; color: #fff; }
+.primary-download-button:active:not(:disabled) { border-color: #193f78; background: #194b8e; color: #fff; }
+.primary-download-button:focus-visible { outline: 0; border-color: #1d4ed8; color: #fff; box-shadow: 0 0 0 3px rgb(59 130 246 / 25%); }
+.primary-download-button:disabled { border-color: #8caedb; background: #8caedb; color: #f8fbff; opacity: .68; cursor: not-allowed; }
+.primary-download-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.results-page--figma .results-export-trigger.primary-download-button { border-color: #2563b8; background: #2563b8; color: #fff; }
+.results-page--figma .results-export-trigger.primary-download-button:hover:not(:disabled) { border-color: #1e4f96; background: #1e5aa8; color: #fff; }
+.results-page--figma .results-export-trigger.primary-download-button:active:not(:disabled) { border-color: #193f78; background: #194b8e; color: #fff; }
+.results-page--figma .results-export-trigger.primary-download-button:focus-visible { border-color: #1d4ed8; background: #2563b8; color: #fff; box-shadow: 0 0 0 3px rgb(59 130 246 / 25%); }
+.results-page--figma .results-export-trigger.primary-download-button:disabled { border-color: #8caedb; background: #8caedb; color: #f8fbff; }
+
+.xml-html-download-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.xml-html-download { min-width: 190px; height: 40px; padding: 0 17px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.xml-html-stop.stop-button { position: static; width: 118px; height: 40px; border-radius: 10px; font-size: 13px; }
+.xml-html-stop .stop-button-icon { width: 16px; height: 16px; fill: currentColor; }
+
+.xml-html-sync-progress { min-height: 48px; padding: 8px 12px; border: 1px solid #bbf7d0; border-radius: 9px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px 12px; background: #f0fdf4; color: #166534; font-size: 12px; }
+.xml-html-sync-progress > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #3f6b4e; }
+.xml-html-sync-progress > i { grid-column: 1 / 3; height: 6px; overflow: hidden; border-radius: 999px; background: #dcfce7; }
+.xml-html-sync-progress > i > b { display: block; height: 100%; border-radius: inherit; background: #16a34a; }
+.xml-html-sync-progress > em { grid-column: 3; grid-row: 1 / 3; font-style: normal; font-weight: 800; }
+.xml-html-progress { min-height: 52px; padding: 7px 11px; border: 1px solid #bbf7d0; border-radius: 9px; background: #f0fdf4; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 3px 12px; color: #166534; }
+.xml-html-progress > div { display: contents; font-size: 12px; }
+.xml-html-progress > div > b { justify-self: end; }
+.xml-html-progress > small { grid-column: 1 / -1; color: #3f6b4e; font-size: 11px; }
+.xml-html-progress > span { grid-column: 1 / -1; height: 6px; border-radius: 999px; overflow: hidden; background: #dcfce7; }
+.xml-html-progress > span > i { height: 100%; display: block; border-radius: inherit; background: #16a34a; transition: width 180ms ease; }
+
+.xml-html-state { min-height: 150px; border: 1px dashed #d6d6cf; border-radius: 12px; display: grid; place-items: center; color: #62625b; }
+.xml-html-table { min-height: 210px; flex: 1 1 0; overflow-x: auto; overflow-y: auto; border: 1px solid #dce3ea; border-radius: 10px; scrollbar-gutter: stable; scrollbar-color: #4f8fd8 #f3f6f9; }
+.xml-html-table::-webkit-scrollbar { width: 12px; height: 12px; }
+.xml-html-table::-webkit-scrollbar-thumb { border: 2px solid #fff; border-radius: 999px; background: linear-gradient(90deg, #3b82f6, #38a7d8 48%, #d6ad42); }
+.xml-html-row { width: 100%; min-width: 1345px; min-height: 42px; box-sizing: border-box; display: grid; align-items: stretch; border-bottom: 1px solid #e8edf2; background: #fff; }
+.xml-html-row--head { position: sticky; top: 0; z-index: 2; background: #f4f7fa; font-weight: 700; }
+.xml-html-row > span { min-width: 0; padding: 10px 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.xml-html-row > span:first-child { text-align: center; }
+.xml-html-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.xml-html-row span[data-progress="Chưa xử lý"] { color: #667085; font-weight: 600; }
+.xml-html-row span[data-progress="Hoàn tất"] { color: #166534; font-weight: 700; }
+.xml-html-row span[data-progress="Đang tải"] { color: #2563b8; font-weight: 700; }
+.xml-html-row span[data-progress="Lỗi"] { color: #b91c1c; font-weight: 700; }
+.xml-html-page .artifact-pager { flex: 0 0 48px; border-radius: 8px; }
+
+@media (max-width: 1250px) {
+  .xml-html-control-row { flex-wrap: wrap; }
+  .xml-html-company { width: min(420px, 42vw); flex-basis: 300px; }
+  .xml-html-control-row--storage .storage-folder-picker { min-width: min(420px, 100%); }
+}

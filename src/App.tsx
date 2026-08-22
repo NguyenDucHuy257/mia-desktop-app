@@ -6,13 +6,18 @@ import { createAccountConnectionGateway } from './features/accounts/account-gate
 import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
-import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
+import { useResultExportLifecycle } from './features/results/use-result-export-lifecycle';
+import { PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
+import { XmlHtmlPage } from './features/artifacts/XmlHtmlPage';
+import { useXmlHtmlDownloadLifecycle } from './features/artifacts/use-xml-html-download-lifecycle';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
+import './styles/result-export-progress.css';
+
+const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
-  xml: 'XML Downloader',
-  html: 'HTML Downloader',
+  'xml-html': 'XML/HTML',
   pdf: 'PDF Downloader',
   materials: 'Mã vật tư',
   logs: 'Nhật ký',
@@ -51,14 +56,29 @@ export default function App() {
   const [connectionId, setConnectionId] = useState('');
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
-  const [exportFolder, setExportFolder] = useState('C:\\MIACrawl\\Export\\PDF\\T10_2023');
+  const [exportFolder, setExportFolder] = useState(DEFAULT_EXPORT_FOLDER);
   const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
   const invoiceJobs = useBatchJobLifecycle();
+  const resultExports = useResultExportLifecycle();
+  const xmlHtmlDownloads = useXmlHtmlDownloadLifecycle();
   const deleteQueue = useRef<string[]>([]);
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
+  const preferenceWrite = useRef<Promise<void>>(Promise.resolve());
+
+  function updateExportFolder(value: string) {
+    setExportFolder(value);
+    const preferences = window.miaRuntime?.preferences;
+    if (!preferences) return;
+    preferenceWrite.current = preferenceWrite.current
+      .catch(() => undefined)
+      .then(async () => {
+        const current = await preferences.get();
+        await preferences.set({ ...current, exportFolder: value });
+      });
+  }
 
   async function refreshAccounts() {
     try {
@@ -113,7 +133,12 @@ export default function App() {
     void drainDeleteQueue();
   }
 
-  useEffect(() => { void refreshAccounts(); }, []);
+  useEffect(() => {
+    void refreshAccounts();
+    void window.miaRuntime?.preferences?.get()
+      .then((preferences) => setExportFolder(preferences.exportFolder || DEFAULT_EXPORT_FOLDER))
+      .catch(() => undefined);
+  }, []);
 
   function navigate(value: NavigationKey) {
     setActive(value);
@@ -135,13 +160,27 @@ export default function App() {
             exportFolder={exportFolder}
             initialDateFrom={resultRange?.dateFrom}
             initialDateTo={resultRange?.dateTo}
+            crawlItem={invoiceJobs.items[connectionId]}
+            resultExports={resultExports}
             onBack={() => setView('navigation')}
           />
         ) : active === 'invoices' ? (
-          <InvoiceManagementPage jobLifecycle={invoiceJobs} accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} exportFolder={exportFolder} onExportFolder={setExportFolder} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { deleteAccount(id); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }} />
-        ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-          : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-            : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+          <InvoiceManagementPage
+            jobLifecycle={invoiceJobs}
+            resultExports={resultExports}
+            accounts={accounts}
+            connectionId={connectionId}
+            selectedAccountIds={selectedAccountIds}
+            exportFolder={exportFolder}
+            onExportFolder={updateExportFolder}
+            onAddAccount={() => setView('add-account')}
+            onDeleteAccount={async (id) => { deleteAccount(id); }}
+            onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])}
+            onSelectAccounts={setSelectedAccountIds}
+            onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
+          />
+        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={xmlHtmlDownloads} />
+            : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
               : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />

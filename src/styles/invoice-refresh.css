@@ -72,7 +72,7 @@
   grid-template-columns:
     40px
     112px
-    minmax(130px, 225px)
+    minmax(240px, 340px)
     110px
     minmax(160px, 1fr)
     minmax(190px, 220px);
@@ -293,6 +293,14 @@
 
 .invoice-page .stop-button:not(:disabled):active {
   transform: scale(.97);
+}
+
+.invoice-page .stop-button-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: block;
+  fill: currentColor;
 }
 
 /* Dual progress: the source overall percentage never resets, while the

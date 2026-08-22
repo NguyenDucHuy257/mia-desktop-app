@@ -2,7 +2,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const LOCAL_CONCURRENCY = 1;
-const DEFAULTS = Object.freeze({ concurrency: LOCAL_CONCURRENCY, retries: 5 });
+const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
+const DEFAULTS = Object.freeze({
+  concurrency: LOCAL_CONCURRENCY,
+  retries: 5,
+  exportFolder: DEFAULT_EXPORT_FOLDER,
+});
 
 function validatePreferences(value) {
   if (!value || typeof value !== 'object') throw new TypeError('invalid_preferences');
@@ -10,9 +15,11 @@ function validatePreferences(value) {
   // readable, but MIA Desktop always executes one account/job at a time.
   const requestedConcurrency = Number(value.concurrency ?? LOCAL_CONCURRENCY);
   const retries = Number(value.retries);
+  const exportFolder = value.exportFolder ?? DEFAULT_EXPORT_FOLDER;
   if (!Number.isInteger(requestedConcurrency) || requestedConcurrency < 1 || requestedConcurrency > 4) throw new TypeError('invalid_concurrency');
   if (!Number.isInteger(retries) || retries < 0 || retries > 5) throw new TypeError('invalid_retries');
-  return { concurrency: LOCAL_CONCURRENCY, retries };
+  if (typeof exportFolder !== 'string' || exportFolder.length > 1024 || /[\x00-\x1f]/.test(exportFolder)) throw new TypeError('invalid_export_folder');
+  return { concurrency: LOCAL_CONCURRENCY, retries, exportFolder };
 }
 
 async function readPreferences(userDataDirectory) {
@@ -76,4 +83,4 @@ async function readSanitizedLogs(userDataDirectory) {
   return entries.slice(-500).map((item) => item.line);
 }
 
-module.exports = { DEFAULTS, LOCAL_CONCURRENCY, readPreferences, readSanitizedLogs, validatePreferences, writePreferences };
+module.exports = { DEFAULTS, DEFAULT_EXPORT_FOLDER, LOCAL_CONCURRENCY, readPreferences, readSanitizedLogs, validatePreferences, writePreferences };

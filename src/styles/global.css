@@ -14,8 +14,10 @@ button { color: inherit; }
 .secondary-nav { margin-top: auto; padding-top: 17px; border-top: 1px solid var(--mia-border-warm); }
 .nav-button { width: 185px; height: 42px; padding: 8px 12px; border: 0; border-radius: 8px; display: flex; align-items: center; gap: 12px; color: #5d5f5d; background: transparent; font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
 .nav-button[data-active="true"] { height: 36px; margin: 0 0 6px; color: var(--mia-green-700); background: var(--mia-green-50); border: 1px solid var(--mia-green-700); }
+.nav-button:not([data-active="true"]):hover { color: #3f5145; background: #ecefe9; }
 .nav-icon-frame { width: 24px; height: 20px; display: grid; place-items: center; flex: 0 0 24px; }
 .nav-icon-frame img { display: block; max-width: 24px; max-height: 20px; }
+.nav-button[data-active="true"] .nav-icon-frame img { filter: brightness(0) saturate(100%) invert(30%) sepia(34%) saturate(1070%) hue-rotate(92deg) brightness(91%) contrast(91%); }
 .workspace { width: calc(100vw - var(--mia-sidebar-width)); min-width: 0; height: 100%; background: #fff; }
 .topbar { height: 56px; padding: 0 24px; border-bottom: 1px solid var(--mia-border-warm); background: var(--mia-surface-topbar); display: flex; align-items: center; justify-content: space-between; }
 .topbar h1 { margin: 0; font-size: 18px; line-height: 23.4px; font-weight: 700; }
@@ -162,10 +164,12 @@ button { color: inherit; }
 .date-range-trigger strong { color: var(--mia-text-strong); font-size: 11px; line-height: 14px; white-space: nowrap; }
 .date-range-popover { position: absolute; z-index: 80; top: calc(100% + 8px); left: 0; width: 330px; padding: 16px; border: 1px solid var(--mia-border-warm); border-radius: 14px; background: #fff; box-shadow: 0 16px 38px rgb(15 23 42 / 18%); display: grid; gap: 12px; }
 .date-range-popover label { color: var(--mia-text-strong); font-size: 12px; font-weight: 700; display: grid; gap: 6px; }
-.date-range-popover label span { display: grid; grid-template-columns: 1fr 42px; gap: 7px; }
+.date-range-popover label > span { display: grid; grid-template-columns: 1fr 42px; gap: 7px; }
 .date-range-popover input { min-width: 0; height: 38px; padding: 0 10px; border: 1px solid #d6d6cf; border-radius: 9px; font: inherit; }
-.date-range-popover input[type="date"] { width: 42px; padding: 7px; color: transparent; }
-.date-range-popover input[type="date"]::-webkit-calendar-picker-indicator { width: 20px; height: 20px; margin: 0; cursor: pointer; }
+.date-range-calendar-control { position: relative; width: 42px; height: 38px; border: 1px solid #d6d6cf; border-radius: 9px; background: #fff; display: grid; place-items: center; overflow: hidden; }
+.date-range-calendar-control > img { width: 18px; height: 18px; display: block; pointer-events: none; }
+.date-range-calendar-control > input[type="date"] { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; border: 0; opacity: 0; cursor: pointer; }
+.date-range-calendar-control:focus-within { border-color: #16a34a; box-shadow: 0 0 0 3px rgb(22 163 74 / 10%); }
 .date-range-popover p { margin: 0; color: var(--mia-danger); font-size: 11px; }
 .date-range-popover > div { display: flex; justify-content: flex-end; gap: 8px; }
 .date-range-popover > div button { height: 34px; padding: 0 14px; border: 1px solid var(--mia-green-700); border-radius: 9px; color: var(--mia-green-700); background: #fff; font-weight: 700; cursor: pointer; }
@@ -238,7 +242,6 @@ button { color: inherit; }
 .artifact-state[data-state="loading"] > small > b { color: #166534; font-weight: 400; }
 .artifact-state[data-state="loading"] > small > i { grid-column: 1 / -1; width: 400px; height: 6px; border-radius: 6px; background: #e5e5e0; overflow: hidden; }
 .artifact-state[data-state="loading"] > small em { display: block; height: 6px; border-radius: 6px; background: #166534; }
-.app-frame:has(.artifact-page) .nav-button[data-active="true"], .app-frame:has(.pdf-page) .nav-button[data-active="true"] { border-color: transparent; }
 .artifact-pager { height: 57px; padding: 0 24px; background: #f7f9fb; display: flex; align-items: center; justify-content: space-between; color: #62625b; font-size: 12px; line-height: 16px; }
 .artifact-pager div { display: flex; align-items: center; gap: 8px; transform: translate(-11px, 2px); }
 .artifact-pager button { width: 32px; height: 32px; padding: 0; border: 1px solid #cbd5e1; border-radius: 2px; background: #fff; display: grid; place-items: center; }

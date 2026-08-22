@@ -38,8 +38,12 @@ export interface MiaRuntimeBridge {
   artifacts: {
     selectDirectory(): Promise<string | null>;
     export(request: ArtifactExportRequest): Promise<{ count: number; files: string[] }>;
+    cancel(): Promise<{ cancelled: boolean }>;
+    targets(request: ArtifactExportRequest): Promise<{ keys: string[]; total: number }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     openDirectory(directory: string): Promise<boolean>;
+    onExportProgress(listener: (progress: RuntimeExportProgress) => void): () => void;
+    onInvoiceProgress(listener: (progress: RuntimeArtifactProgress) => void): () => void;
   };
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
   logs: {
@@ -59,8 +63,26 @@ export interface MiaRuntimeBridge {
   };
 }
 
+export type ExcelExportPhase = 'prepare' | 'query' | 'load_template' | 'build_rows' | 'write_rows' | 'format' | 'save' | 'completed';
+export interface RuntimeExportProgress {
+  status: 'running' | 'completed' | 'failed';
+  scope: 'overview' | 'details' | null;
+  phase: ExcelExportPhase;
+  processed: number;
+  total: number;
+  percent: number;
+}
+export interface RuntimeArtifactProgress {
+  status: 'running' | 'completed' | 'failed';
+  processed: number;
+  total: number;
+  percent: number;
+  artifact_key?: string | null;
+  kind?: 'xml' | 'html' | 'pdf' | null;
+}
+
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
-export interface LocalPreferences { concurrency: number; retries: number }
+export interface LocalPreferences { concurrency: number; retries: number; exportFolder: string }
 export interface ArtifactExportRequest {
   destination: string;
   connection_ids: string[];
@@ -72,7 +94,7 @@ export interface ArtifactExportRequest {
   query_type?: InvoiceQueryType | null;
   search?: string;
 }
-export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: InvoiceDirection | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
+export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: InvoiceDirection | null; query_type?: InvoiceQueryType | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
 export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: InvoiceDirection | null; size: number; updated_at: number }
 
 export interface ResultQuery {
@@ -118,6 +140,15 @@ export interface PersistedJob {
   stage_percent?: number;
   current_direction?: InvoiceDirection | null;
   current_query_type?: InvoiceQueryType | null;
+  current_artifact?: {
+    direction: InvoiceDirection;
+    query_type: InvoiceQueryType;
+    nbmst: string;
+    khhdon: string;
+    shdon: string;
+    khmshdon: string;
+  } | null;
+  artifact_progress?: JobStatusResponse['artifact_progress'];
   message?: string | null;
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];

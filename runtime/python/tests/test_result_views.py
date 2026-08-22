@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 import mia_runtime
 from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
@@ -14,6 +14,7 @@ from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
 from app.services.overview_downloader import _find_header_row
 from mia_backend import ProductionBackend
+from mia_source_results import _available_path
 
 
 class SourceJobIntentTests(unittest.TestCase):
@@ -79,6 +80,15 @@ class SourceJobIntentTests(unittest.TestCase):
 
 
 class ResultViewTests(unittest.TestCase):
+    def test_result_filename_collision_starts_with_copy_two(self):
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory)
+            (destination / "result.xlsx").write_bytes(b"existing")
+            self.assertEqual(
+                _available_path(destination, "result.xlsx").name,
+                "result (2).xlsx",
+            )
+
     @staticmethod
     def source_job() -> JobRecord:
         return JobRecord(
@@ -157,6 +167,51 @@ class ResultViewTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["direction"], "sold")
         self.assertTrue(result["columns"])
         self.assertTrue(result["column_labels"])
+        self.assertEqual(result["total_count"], 1)
+
+    def test_detail_pages_report_total_display_rows_not_invoice_count(self):
+        backend, _ = self.backend_with_job()
+
+        class DetailReader:
+            @staticmethod
+            def detail_page(_job, *, limit, cursor):
+                start = int(cursor or 0)
+                rows = [
+                    {"id": index + 1, "stt": index + 1, "ten": f"Dòng {index + 1}"}
+                    for index in range(start, min(start + limit, 73))
+                ]
+                next_offset = start + len(rows)
+                return {
+                    "items": rows,
+                    "invoice_count": 12,
+                    "row_count": len(rows),
+                    "pagination": {
+                        "limit": limit,
+                        "has_more": next_offset < 73,
+                        "next_cursor": str(next_offset) if next_offset < 73 else None,
+                    },
+                }
+
+        with patch(
+            "app.external_api.results.JobResultReader", return_value=DetailReader()
+        ):
+            query = {
+                "connection_id": "conn_account_1",
+                "date_from": "2026-03-01",
+                "date_to": "2026-03-31",
+                "direction": "purchase",
+                "query_type": "query",
+                "limit": 50,
+            }
+            first = backend.results("details", query)
+            second = backend.results(
+                "details", {**query, "cursor": first["pagination"]["next_cursor"]}
+            )
+
+        self.assertEqual(len(first["items"]), 50)
+        self.assertEqual(first["total_count"], 73)
+        self.assertEqual(len(second["items"]), 23)
+        self.assertEqual(second["total_count"], 73)
 
     def test_result_dispatch_initializes_source_backend_after_restart(self):
         previous = (
@@ -193,7 +248,7 @@ class ResultViewTests(unittest.TestCase):
                 mia_runtime.production_backend,
             ) = previous
 
-    def test_result_export_uses_separate_source_native_overview_and_detail_files(self):
+    def test_result_export_groups_source_sheets_by_direction_and_scope(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             backend, _ = self.backend_with_job(data_root=root / "source-data")
@@ -207,6 +262,10 @@ class ResultViewTests(unittest.TestCase):
 
             def write_overview(_rows, **kwargs):
                 kwargs["target"].write_bytes(b"source-overview")
+
+            def combine(staged_jobs, target):
+                self.assertEqual(len(staged_jobs), 1)
+                target.write_bytes(b"combined-source-workbook")
 
             detail_repository = Mock()
             detail_repository.get_detail_records_for_export.return_value = [detail_record]
@@ -227,6 +286,9 @@ class ResultViewTests(unittest.TestCase):
             ), patch(
                 "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
                 return_value=detail_exporter,
+            ), patch(
+                "mia_source_results._combine_source_workbooks_atomically",
+                side_effect=combine,
             ):
                 result = backend.export_results({
                     "destination": directory,
@@ -242,10 +304,110 @@ class ResultViewTests(unittest.TestCase):
             self.assertEqual(result["count"], 2)
             self.assertEqual(len(result["files"]), 2)
             self.assertTrue(all(Path(path).is_file() for path in result["files"]))
+            self.assertEqual(
+                {Path(path).name for path in result["files"]},
+                {
+                    "0100000000 - Mua vào - Tổng quan - 2026-02-01_2026-02-28.xlsx",
+                    "0100000000 - Mua vào - Chi tiết - 2026-02-01_2026-02-28.xlsx",
+                },
+            )
+            self.assertEqual(
+                {Path(path).parent.relative_to(Path(directory)) for path in result["files"]},
+                {
+                    Path("0100000000") / "Tổng quan 2026-02-01_2026-02-28",
+                    Path("0100000000") / "Chi tiết 2026-02-01_2026-02-28",
+                },
+            )
             overview_rows.assert_called_once()
             overview_writer.assert_called_once()
             detail_repository.get_detail_records_for_export.assert_called_once()
             detail_exporter.export.assert_called_once()
+
+    def test_export_creates_four_direction_scope_workbooks_with_two_category_sheets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend, _ = self.backend_with_job(data_root=root / "source-data")
+
+            def write_marker(path: Path, marker: str) -> None:
+                workbook = Workbook()
+                worksheet = workbook.active
+                worksheet.cell(5, 1).value = "STT"
+                worksheet.cell(5, 2).value = "Marker"
+                worksheet.cell(6, 1).value = 1
+                worksheet.cell(6, 2).value = marker
+                workbook.save(path)
+                workbook.close()
+
+            def overview_rows(_context, direction, query_type, _search):
+                return [{"marker": f"overview:{direction}:{query_type}"}]
+
+            def overview_writer(rows, **kwargs):
+                write_marker(kwargs["target"], rows[0]["marker"])
+
+            detail_repository = Mock()
+            detail_repository.get_detail_records_for_export.side_effect = (
+                lambda _tax_code, direction, query_type, _from, _to: [
+                    {"marker": f"details:{direction}:{query_type}"}
+                ]
+            )
+
+            class MarkerDetailExporter:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def export(self, *, detail_records, output_path, **_kwargs):
+                    write_marker(Path(output_path), detail_records[0]["marker"])
+
+            with patch(
+                "mia_source_results._all_overview_fields",
+                side_effect=overview_rows,
+            ), patch(
+                "mia_source_results._write_overview_excel_from_source_template",
+                side_effect=overview_writer,
+            ), patch(
+                "app.repositories.invoice_detail_query_repository.InvoiceDetailQueryRepository",
+                return_value=detail_repository,
+            ), patch(
+                "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
+                MarkerDetailExporter,
+            ):
+                result = backend.export_results({
+                    "destination": directory,
+                    "connection_ids": ["conn_account_1"],
+                    "result_scopes": ["overview", "details"],
+                    "date_from": "2026-08-01",
+                    "date_to": "2026-08-22",
+                    "direction": None,
+                    "query_type": None,
+                    "search": "",
+                })
+
+            expected = {
+                f"0100000000 - {direction_label} - {scope_label} - 2026-08-01_2026-08-22.xlsx"
+                for direction_label in ("Mua vào", "Bán ra")
+                for scope_label in ("Tổng quan", "Chi tiết")
+            }
+            self.assertEqual(result["count"], 4)
+            self.assertEqual({Path(path).name for path in result["files"]}, expected)
+
+            labels = {
+                "Hóa đơn điện tử": "query",
+                "Máy tính tiền": "sco-query",
+            }
+            for path_value in result["files"]:
+                path = Path(path_value)
+                scope = "overview" if "Tổng quan" in path.name else "details"
+                direction = "purchase" if "Mua vào" in path.name else "sold"
+                workbook = load_workbook(path, data_only=False)
+                try:
+                    self.assertEqual(workbook.sheetnames, list(labels))
+                    for sheet_name, query_type in labels.items():
+                        self.assertEqual(
+                            workbook[sheet_name].cell(6, 2).value,
+                            f"{scope}:{direction}:{query_type}",
+                        )
+                finally:
+                    workbook.close()
 
     def test_real_source_excel_export_uses_selected_result_range(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -380,16 +542,17 @@ class ResultViewTests(unittest.TestCase):
             self.assertEqual(result["count"], 2)
             overview_path = next(
                 Path(path) for path in result["files"]
-                if Path(path).name.startswith("DANH SÁCH")
+                if "Tổng quan" in Path(path).name
             )
             detail_path = next(
                 Path(path) for path in result["files"]
-                if Path(path).name.startswith("THỐNG KÊ CHI TIẾT")
+                if "Chi tiết" in Path(path).name
             )
 
             overview_workbook = load_workbook(overview_path, data_only=False)
             try:
-                worksheet = overview_workbook.active
+                self.assertEqual(overview_workbook.sheetnames, ["Hóa đơn điện tử"])
+                worksheet = overview_workbook["Hóa đơn điện tử"]
                 header_row = _find_header_row(worksheet)
                 self.assertEqual(
                     worksheet.cell(4, 1).value,
@@ -411,7 +574,8 @@ class ResultViewTests(unittest.TestCase):
 
             detail_workbook = load_workbook(detail_path, data_only=False)
             try:
-                worksheet = detail_workbook.active
+                self.assertEqual(detail_workbook.sheetnames, ["Hóa đơn điện tử"])
+                worksheet = detail_workbook["Hóa đơn điện tử"]
                 header_row = InvoiceDetailExcelExporter._find_header_row(worksheet)
                 headers = [
                     str(worksheet.cell(header_row, column).value or "")

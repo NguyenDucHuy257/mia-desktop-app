@@ -15,6 +15,7 @@ import logging
 import os
 import sqlite3
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -39,6 +40,9 @@ logger = None
 production_backend: Any | None = None
 # Kept patchable for unit tests while avoiding an eager import of mia_backend.
 ProductionBackend = None
+_write_lock = threading.Lock()
+_artifact_task_lock = threading.Lock()
+_artifact_task: dict[str, Any] | None = None
 
 
 class RpcError(Exception):
@@ -59,8 +63,9 @@ def write_message(payload: dict[str, Any]) -> None:
             },
             separators=(",", ":"),
         ).encode("utf-8")
-    sys.stdout.buffer.write(encoded + b"\n")
-    sys.stdout.buffer.flush()
+    with _write_lock:
+        sys.stdout.buffer.write(encoded + b"\n")
+        sys.stdout.buffer.flush()
 
 
 def validate_request(value: Any) -> tuple[str | int, str, Any]:
@@ -178,6 +183,77 @@ def _purge_source_account(connection_id: str) -> dict[str, Any]:
     }
 
 
+def _copy_artifacts(
+    value: dict[str, Any], cancel_event: threading.Event | None = None
+) -> dict[str, Any]:
+    from mia_artifacts import ArtifactExporter
+
+    if storage is None or data_directory is None:
+        raise RpcError(-32011, "storage_not_initialized")
+    backend = _production_backend()
+    backend.prepare_artifacts(value)
+
+    def artifact_progress(event: dict[str, Any]) -> None:
+        write_message({
+            "jsonrpc": "2.0", "method": "artifact.progress", "params": event,
+        })
+
+    if set(value.get("kinds") or ()).intersection({"xml", "html"}):
+        source_result = backend.ensure_invoice_packages(
+            value,
+            progress_callback=artifact_progress,
+            cancel_callback=cancel_event.is_set if cancel_event is not None else None,
+        )
+        value["_artifact_keys"] = source_result["keys"]
+
+    result = ArtifactExporter(storage, data_directory).export(
+        value,
+        # Package progress is authoritative for per-invoice XML/HTML state.
+        # Keep local copy notifications private so the stable notification
+        # contract remains compatible with already-running Electron clients.
+        progress_callback=None,
+        cancel_callback=cancel_event.is_set if cancel_event is not None else None,
+    )
+    if not result.get("count"):
+        raise RpcError(-32062, "artifact_batch_empty")
+    return result
+
+
+def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: threading.Event) -> None:
+    global _artifact_task
+    try:
+        result = _copy_artifacts(value, cancel_event)
+        status, error = "completed", None
+    except ValueError as exc:
+        if str(exc) == "artifact_cancelled":
+            result, status, error = None, "cancelled", "artifact_cancelled"
+        else:
+            result, status, error = None, "failed", "invalid_params"
+    except RpcError as exc:
+        result, status, error = None, "failed", exc.message
+    except OSError:
+        result, status, error = None, "failed", "artifact_write_failed"
+    except Exception:
+        if logger is not None:
+            logger.exception("artifact_task_failed task_id=%s", task_id)
+        result, status, error = None, "failed", "internal_error"
+    with _artifact_task_lock:
+        if _artifact_task and _artifact_task.get("task_id") == task_id:
+            _artifact_task.update(status=status, result=result, error=error)
+
+
+def _artifact_task_view(task_id: str) -> dict[str, Any]:
+    with _artifact_task_lock:
+        if not _artifact_task or _artifact_task.get("task_id") != task_id:
+            raise RpcError(-32063, "artifact_task_not_found")
+        return {
+            "task_id": task_id,
+            "status": _artifact_task["status"],
+            "result": _artifact_task.get("result"),
+            "error": _artifact_task.get("error"),
+        }
+
+
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
 
@@ -204,7 +280,11 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         return {"accepted": True}, True
 
     if method == "storage.initialize":
-        if not isinstance(params, dict) or not isinstance(params.get("data_dir"), str):
+        if (
+            not isinstance(params, dict)
+            or not isinstance(params.get("data_dir"), str)
+            or not isinstance(params.get("reset_desktop_session", False), bool)
+        ):
             raise RpcError(-32602, "invalid_params")
         data_dir = Path(params["data_dir"])
         if not data_dir.is_absolute():
@@ -216,6 +296,13 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             logger = configure_logging(
                 data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
             )
+            if params.get("reset_desktop_session"):
+                from mia_backend import cancel_stale_jobs_for_desktop_session
+
+                cancelled = cancel_stale_jobs_for_desktop_session(data_dir, logger)
+                logger.info(
+                    "desktop_session_reset active_jobs_cancelled=%s", cancelled
+                )
             # mia.sqlite3 remains migration/artifact compatibility storage only.
             # No legacy crawler/thread is constructed from it.
             crawler = None
@@ -405,20 +492,76 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 logger.exception("pdf_runtime_unavailable")
             raise RpcError(-32061, "pdf_runtime_unavailable") from None
 
+    if method == "artifacts.export.start":
+        global _artifact_task
+        if data_directory is None or storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        value = dict(params)
+        kinds = set(value.get("kinds") or ())
+        if value.get("result_scopes") or not kinds or not kinds.issubset({"xml", "html"}):
+            raise RpcError(-32602, "invalid_params")
+        with _artifact_task_lock:
+            if _artifact_task and _artifact_task.get("status") in {"running", "cancelling"}:
+                raise RpcError(-32064, "artifact_task_active")
+            task_id = f"artifact_{uuid.uuid4().hex}"
+            cancel_event = threading.Event()
+            _artifact_task = {
+                "task_id": task_id, "status": "running", "result": None,
+                "error": None, "cancel_event": cancel_event,
+            }
+        threading.Thread(
+            target=_run_artifact_task,
+            args=(task_id, value, cancel_event),
+            name="mia-artifact-export",
+            daemon=True,
+        ).start()
+        return {"task_id": task_id, "status": "running"}, False
+
+    if method == "artifacts.targets":
+        if data_directory is None or storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            value = dict(params)
+            keys = _production_backend().artifact_keys_for_export(value)
+            return {"keys": sorted(keys), "total": len(keys)}, False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+
+    if method == "artifacts.export.status":
+        return _artifact_task_view(str(params.get("task_id") or "")), False
+
+    if method == "artifacts.export.cancel":
+        task_id = str(params.get("task_id") or "")
+        with _artifact_task_lock:
+            if not _artifact_task or _artifact_task.get("task_id") != task_id:
+                raise RpcError(-32063, "artifact_task_not_found")
+            if _artifact_task["status"] == "running":
+                _artifact_task["status"] = "cancelling"
+                _artifact_task["cancel_event"].set()
+            status = _artifact_task["status"]
+        return {"task_id": task_id, "status": status}, False
+
     if method == "artifacts.export":
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             value = dict(params)
             if value.get("result_scopes"):
-                return _production_backend().export_results(value), False
-            from mia_artifacts import ArtifactExporter
+                def export_progress(event: dict[str, Any]) -> None:
+                    # JSON-RPC notification: no request id and no sensitive
+                    # invoice/path data. Electron allowlists this method and
+                    # forwards only its bounded presentation fields.
+                    write_message({
+                        "jsonrpc": "2.0",
+                        "method": "export.progress",
+                        "params": event,
+                    })
 
-            if storage is None:
-                raise RpcError(-32011, "storage_not_initialized")
-            if production_backend is not None:
-                production_backend.prepare_artifacts(value)
-            return ArtifactExporter(storage, data_directory).export(value), False
+                return _production_backend().export_results(
+                    value,
+                    progress_callback=export_progress,
+                ), False
+            return _copy_artifacts(value), False
         except RpcError:
             raise
         except (KeyError, TypeError, ValueError):

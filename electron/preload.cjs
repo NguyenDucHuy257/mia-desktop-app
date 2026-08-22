@@ -43,8 +43,22 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   artifacts: Object.freeze({
     selectDirectory: () => ipcRenderer.invoke('mia:artifacts:select-directory'),
     export: (request) => invokeResult('mia:artifacts:export', request),
+    cancel: () => invokeResult('mia:artifacts:cancel'),
+    targets: (request) => invokeResult('mia:artifacts:targets', request),
     list: (request) => invokeResult('mia:artifacts:list', request),
     openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
+    onExportProgress: (listener) => {
+      if (typeof listener !== 'function') throw new TypeError('invalid export progress listener');
+      const wrapped = (_event, progress) => listener(progress);
+      ipcRenderer.on('mia:artifacts:export-progress', wrapped);
+      return () => ipcRenderer.removeListener('mia:artifacts:export-progress', wrapped);
+    },
+    onInvoiceProgress: (listener) => {
+      if (typeof listener !== 'function') throw new TypeError('invalid invoice artifact progress listener');
+      const wrapped = (_event, progress) => listener(progress);
+      ipcRenderer.on('mia:artifacts:invoice-progress', wrapped);
+      return () => ipcRenderer.removeListener('mia:artifacts:invoice-progress', wrapped);
+    },
   }),
   preferences: Object.freeze({
     get: () => ipcRenderer.invoke('mia:preferences:get'),

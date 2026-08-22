@@ -23,6 +23,10 @@ function isTerminalStatus(status?: string | null) {
   return Boolean(status && TERMINAL_JOB_STATUSES.has(status as JobStatusResponse['status']));
 }
 
+export function currentSessionJobRecords(records: PersistedJob[]) {
+  return records.filter((record) => record.status && !isTerminalStatus(record.status));
+}
+
 export function jobFailureMessage(code?: string) {
   if (code === 'invalid_source_credentials') return 'Tên đăng nhập hoặc mật khẩu không đúng.';
   if (code === 'source_account_locked') return 'Tài khoản đã bị khóa vì nhập sai thông tin quá số lần quy định.';
@@ -50,7 +54,7 @@ function jobStartFailureMessage(code?: string) {
   return 'Không thể tạo tác vụ đồng bộ. Xem Nhật ký để biết chi tiết.';
 }
 
-export function useBatchJobLifecycle() {
+export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisting?: boolean } = {}) {
   const [items, setItems] = useState<Record<string, BatchItem>>({});
   const [message, setMessage] = useState<{ kind: 'notice' | 'error' | 'success'; text: string } | null>(null);
   const [active, setActive] = useState(false);
@@ -250,6 +254,9 @@ export function useBatchJobLifecycle() {
         status.current_month?.processed,
         status.current_month?.planned,
         status.current_month?.percent,
+        status.artifact_progress?.processed,
+        status.artifact_progress?.completed_xml,
+        status.artifact_progress?.completed_html,
         status.error?.code,
       ]);
       if (lastLoggedStatus.current.get(jobId) !== fingerprint) {
@@ -261,6 +268,9 @@ export function useBatchJobLifecycle() {
           stage: status.stage,
           overall_percent: status.overall_percent,
           current_month: status.current_month,
+          artifact_processed: status.artifact_progress?.processed,
+          artifact_completed_xml: status.artifact_progress?.completed_xml,
+          artifact_completed_html: status.artifact_progress?.completed_html,
           error_code: status.error?.code,
         }, status.status === 'failed' ? 'error' : 'info');
       }
@@ -301,21 +311,20 @@ export function useBatchJobLifecycle() {
   }, [finishStoppingIfDone, launchNext, updateItems]);
 
   useEffect(() => {
+    if (!hydrateExisting) return stopTimers;
     const token = generation.current;
     const jobs = window.miaRuntime?.jobs;
     if (!jobs) return stopTimers;
-    const hydrate = typeof jobs.latestAll === 'function'
-      ? jobs.latestAll()
-      : typeof jobs.resumeAll === 'function'
-        ? jobs.resumeAll()
-        : jobs.resume().then((record) => record ? [record] : []);
+    const hydrate = typeof jobs.resumeAll === 'function'
+      ? jobs.resumeAll()
+      : jobs.resume().then((record) => record ? [record] : []);
     void hydrate.then((records) => {
       if (token !== generation.current) return;
       const restored: Record<string, BatchItem> = {};
-      const activeRecords = records.filter((record) => record.status && !isTerminalStatus(record.status));
-      for (const record of records) {
+      const activeRecords = currentSessionJobRecords(records);
+      for (const record of activeRecords) {
         restored[record.connection_id] = { connectionId: record.connection_id, record };
-        if (record.job_id && record.status && !isTerminalStatus(record.status)) {
+        if (record.job_id) {
           void poll(record.job_id, record.connection_id, 0, token);
         }
       }
@@ -325,10 +334,10 @@ export function useBatchJobLifecycle() {
         setActive(true);
         batchConnectionIds.current = new Set(activeRecords.map((record) => record.connection_id));
       }
-      diagnosticLog('job_state_hydrated', { account_count: records.length, active_count: activeRecords.length });
+      diagnosticLog('job_state_hydrated', { account_count: activeRecords.length, active_count: activeRecords.length });
     }).catch((error) => diagnosticLog('job_state_hydrate_failed', { code: (error as { code?: string })?.code }, 'warn'));
     return stopTimers;
-  }, [poll, stopTimers, updateItems]);
+  }, [hydrateExisting, poll, stopTimers, updateItems]);
 
   const startMany = useCallback((intents: CreateJobRequest[]) => {
     // Lock in the hook itself, not only in the button. Two clicks can arrive in

@@ -1,11 +1,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 const require = (await import('node:module')).createRequire(import.meta.url);
 const {
   PythonRuntimeClient,
   runtimeEnvironment,
+  validateRuntimeNotification,
 } = require('../../electron/python-runtime-client.cjs');
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,21 @@ describe('PythonRuntimeClient', () => {
       message: 'method_not_found',
     });
     await client.stop();
+  }, PROCESS_TEST_TIMEOUT_MS);
+
+  it('accepts allowlisted export progress notifications without completing the pending RPC', async () => {
+    const onNotification = vi.fn();
+    const client = new PythonRuntimeClient({
+      runtimeScript: fixture('notification_runtime.py'),
+      onNotification,
+    });
+    await client.start();
+    await expect(client.call('system.health')).resolves.toEqual({ ok: true });
+    expect(onNotification).toHaveBeenCalledWith('export.progress', {
+      status: 'running', scope: 'details', phase: 'write_rows',
+      processed: 2, total: 4, percent: 50,
+    });
+    client.terminate();
   }, PROCESS_TEST_TIMEOUT_MS);
 
   it('rejects pending work when the child process crashes', async () => {
@@ -79,6 +95,18 @@ describe('PythonRuntimeClient', () => {
     expect(env).not.toHaveProperty('MIA_API_ACCESS_TOKEN');
     expect(env).not.toHaveProperty('PORTAL_PASSWORD');
     expect(env).not.toHaveProperty('ARBITRARY_SECRET');
+  });
+
+  it('accepts only bounded path-free invoice artifact progress', () => {
+    expect(validateRuntimeNotification({ jsonrpc: '2.0', method: 'artifact.progress', params: {
+      status: 'running', processed: 3, total: 8, percent: 37.5,
+      artifact_key: 'purchase|query|0101|AA/26E|12|1',
+      kind: 'html',
+    }})).toMatchObject({ processed: 3, total: 8, percent: 37.5 });
+    expect(validateRuntimeNotification({ jsonrpc: '2.0', method: 'artifact.progress', params: {
+      status: 'running', processed: 3, total: 8, percent: 37.5,
+      filesystem_path: 'C:\\secret\\invoice.xml',
+    }})).toBeNull();
   });
 
   it('rejects requests larger than one MiB before writing to the process', async () => {

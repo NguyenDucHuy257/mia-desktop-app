@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
+import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
+import { pageBounds, paginationTokens } from '../../components/pagination-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
-import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
+import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import { resultExportErrorMessage } from '../results/result-export-errors';
+import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
@@ -28,6 +32,7 @@ interface InvoiceRow {
 }
 
 const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
+const ACCOUNT_PAGE_SIZE = 20;
 
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
@@ -98,8 +103,9 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
+export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
   jobLifecycle: BatchJobLifecycle;
+  resultExports: ResultExportLifecycle;
   onAddAccount(): void;
   connectionId: string;
   selectedAccountIds: string[];
@@ -154,34 +160,54 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     if (folder) onExportFolder(folder);
   }
 
-  async function exportAccounts(connectionIds: string[]) {
-    if (!window.miaRuntime?.artifacts?.export) { setSelectionError('Tính năng xuất file chỉ có trong ứng dụng desktop.'); return; }
-    if (connectionIds.length !== 1) { setSelectionError('Chỉ tải Excel cho một tài khoản tại một thời điểm.'); return; }
-    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải Excel.'); return; }
+  async function exportAllResults() {
+    if (!selectedAccountIds.length) { setSelectionError('Vui lòng chọn ít nhất một tài khoản để tải kết quả.'); return; }
+    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải kết quả.'); return; }
+    if (resultExports.active) {
+      setSelectionError(resultExports.owner === 'results'
+        ? 'Đang tạo Excel trong tab Kết quả. Hãy chờ tác vụ đó hoàn tất.'
+        : 'Đang tải kết quả tất cả. Hãy chờ tác vụ hiện tại hoàn tất.');
+      return;
+    }
+
     const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
     const resultDirection = directions.length === 1 ? directions[0] : null;
-    diagnosticLog('account_excel_export_requested', {
+    diagnosticLog('bulk_result_export_requested', {
+      account_count: selectedAccountIds.length,
       date_from: dateFrom,
       date_to: dateTo,
       scopes: resultScopes,
       direction: resultDirection,
     });
+
+    const requests: ArtifactExportRequest[] = selectedAccountIds.map((connection_id) => ({
+      destination: exportFolder,
+      connection_ids: [connection_id],
+      kinds: ['excel'],
+      result_scopes: resultScopes,
+      date_from: dateFrom,
+      date_to: dateTo,
+      direction: resultDirection,
+      search: '',
+    }));
+
     try {
-      const result = await window.miaRuntime.artifacts.export({
-        destination: exportFolder,
-        connection_ids: connectionIds,
-        kinds: ['excel'],
-        result_scopes: resultScopes,
-        date_from: dateFrom,
-        date_to: dateTo,
-        direction: resultDirection,
-        search: '',
+      const summary = await resultExports.run('bulk', requests);
+      diagnosticLog('bulk_result_export_completed', {
+        account_count: selectedAccountIds.length,
+        file_count: summary.count,
+        failed_count: summary.failures.length,
       });
-      diagnosticLog('account_excel_export_completed', { file_count: result.count });
-      setSelectionError(`Đã xuất ${result.count} file Excel.`);
+      if (!summary.failures.length) {
+        setSelectionError(`Đã xuất ${summary.count} file Excel cho ${selectedAccountIds.length} tài khoản.`);
+      } else if (summary.count > 0) {
+        setSelectionError(`Đã xuất ${summary.count} file Excel; ${summary.failures.length}/${selectedAccountIds.length} tài khoản không có hoặc không thể tạo kết quả.`);
+      } else {
+        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo, resultScopes));
+      }
     } catch (error) {
-      diagnosticLog('account_excel_export_failed', { code: (error as { code?: string })?.code }, 'error');
-      setSelectionError('Không thể xuất Excel. Vui lòng kiểm tra thư mục lưu và thử lại.');
+      diagnosticLog('bulk_result_export_failed', { code: (error as { code?: string })?.code }, 'error');
+      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo, resultScopes));
     }
   }
 
@@ -210,8 +236,6 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       scopes,
       data_types: ['invoice'],
       force_refresh: forceRefresh,
-      // Use the original source API policy. The UI does not calculate which
-      // months are fresh/stale or need refresh.
       refresh_latest_month: true,
     })));
   }
@@ -237,6 +261,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const sourceError = job?.error?.message;
     const inlineError = item?.error;
     const phase = item?.phase;
+    const accountNeedsAuth = ['auth_failed', 'suspended'].includes(account.status);
     const status: RowStatus = phase === 'stopped'
       ? 'stopped'
       : inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
@@ -252,12 +277,11 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
                 : runtimeStatus === 'cancelled'
                   ? 'stopped'
                   : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
-                    ? 'completed'
-                    : 'ready';
+                  ? 'completed'
+                    : accountNeedsAuth
+                      ? 'failed'
+                      : 'ready';
 
-    // Source job progress is authoritative. Local batch phase only describes
-    // work that has not started yet or a user-requested stop. Raw source tokens
-    // are translated by formatSourceJobProgress without changing their values.
     const progress = Number(job?.overall_percent ?? 0);
     const progressLabel = phase === 'stopped' || runtimeStatus === 'cancelled'
       ? 'Đã dừng'
@@ -268,7 +292,9 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           : phase === 'queued'
             ? 'Chờ đến lượt xử lý…'
             : status === 'failed'
-              ? inlineError ?? sourceError ?? errorCode ?? 'Job xử lý thất bại.'
+              ? inlineError ?? sourceError ?? errorCode ?? (accountNeedsAuth
+                ? 'Cần xác thực lại tài khoản.'
+                : 'Job xử lý thất bại.')
               : status === 'ready'
                 ? 'Chưa đồng bộ'
                 : formatSourceJobProgress(job);
@@ -283,17 +309,29 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
       progress,
       progressLabel,
       monthProgress,
-      failureHint: status === 'failed' ? jobFailureHint(errorCode) : undefined,
-      actionsReady: runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning',
+      failureHint: status === 'failed'
+        ? accountNeedsAuth && !errorCode
+          ? 'Vui lòng nhập lại MST và mật khẩu.'
+          : jobFailureHint(errorCode)
+        : undefined,
+      actionsReady: Boolean(job?.job_id),
     };
   });
-  const visibleRows = allRows.filter((row) => {
+  const filteredRows = allRows.filter((row) => {
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
   });
+  const { currentPage, totalPages, start: firstRowIndex, end: lastRowIndex } = pageBounds(filteredRows.length, page, ACCOUNT_PAGE_SIZE);
+  const pageRows = filteredRows.slice(firstRowIndex, lastRowIndex);
+  const accountPageTokens = paginationTokens(totalPages, currentPage);
   const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
-  const visibleAccountIds = visibleRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
-  const selectedVisibleCount = visibleAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
+  const filteredAccountIds = filteredRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
+  const selectedFilteredCount = filteredAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
+  const bulkExportWorking = resultExports.active && resultExports.owner === 'bulk';
+
+  useEffect(() => {
+    if (page !== currentPage) setPage(currentPage);
+  }, [currentPage, page]);
 
   return (
     <div className="invoice-page">
@@ -322,13 +360,13 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" disabled={batchActive} aria-busy={batchActive} onClick={startJob}>
             <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
           </button>
-          <label className="invoice-export-folder">
-            <span>THƯ MỤC LƯU TRỮ</span>
-            <div>
-              <input aria-label="Thư mục lưu trữ hóa đơn" value={exportFolder} onChange={(event) => onExportFolder(event.target.value)} title={exportFolder} />
-              <button type="button" aria-label="Chọn thư mục lưu trữ hóa đơn" onClick={() => void chooseExportFolder()}>▱</button>
-            </div>
-          </label>
+          <StorageFolderPicker
+            className="invoice-export-folder"
+            value={exportFolder}
+            onChange={onExportFolder}
+            onBrowse={chooseExportFolder}
+            ariaLabel="Thư mục lưu trữ hóa đơn"
+          />
         </div>
       </section>
       <section className="invoice-content">
@@ -341,27 +379,51 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
             </label>
             <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="stopped">Đã dừng</option><option value="ready">Sẵn sàng</option></select>
           </div>
-          <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+          <div className="invoice-filter-actions">
+            <div className="invoice-export-all-wrap">
+              <button
+                className="invoice-export-all-button"
+                type="button"
+                data-exporting={bulkExportWorking}
+                disabled={resultExports.active || selectedAccountIds.length === 0}
+                aria-label={bulkExportWorking
+                  ? `Tiến trình tải kết quả ${resultExports.accountIndex}/${resultExports.accountTotal}, ${Math.round(resultExports.percent)}%`
+                  : 'Tải kết quả tất cả'}
+                aria-valuemin={bulkExportWorking ? 0 : undefined}
+                aria-valuemax={bulkExportWorking ? 100 : undefined}
+                aria-valuenow={bulkExportWorking ? Math.round(resultExports.percent) : undefined}
+                onClick={() => void exportAllResults()}
+              >
+                {bulkExportWorking ? (
+                  <>
+                    <span className="invoice-export-button-fill" style={{ width: `${Math.max(0, Math.min(100, resultExports.percent))}%` }} />
+                    <span className="invoice-export-button-progress">
+                      <strong>{resultExports.accountIndex}/{resultExports.accountTotal}</strong>
+                      <strong>{Math.round(resultExports.percent)}%</strong>
+                    </span>
+                  </>
+                ) : <><DownloadIcon /><span>Tải kết quả tất cả</span></>}
+              </button>
+            </div>
+            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><StopIcon /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+          </div>
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
-            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản" onClick={() => onSelectAccounts(selectedVisibleCount === visibleAccountIds.length ? selectedAccountIds.filter((id) => !visibleAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...visibleAccountIds])])}><SelectionBox checked={visibleAccountIds.length > 0 && selectedVisibleCount === visibleAccountIds.length} indeterminate={selectedVisibleCount > 0 && selectedVisibleCount < visibleAccountIds.length} /></button>
+            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFilteredCount === filteredAccountIds.length ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...filteredAccountIds])])}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
             <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
-            {visibleRows.map((row, index) => {
+            {pageRows.map((row, index) => {
               const account = accountByTaxCode.get(row.taxCode);
-              return <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
+              return <div className="table-row table-grid" data-status={row.status} key={account?.connection_id ?? `${row.taxCode}-${firstRowIndex + index}`}>
                 {account ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <span>{row.taxCode}</span>
-                <strong className="company-name">{row.company}</strong>
+                <strong className="company-name" title={row.company}>{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
                 {account ? <span className="row-action-group">
-                  {row.actionsReady ? <>
-                    <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button>
-                    <button className="row-excel-button" type="button" onClick={() => void exportAccounts([account.connection_id])}>Tải Excel</button>
-                  </> : <span className="row-action-placeholder">—</span>}
+                  {row.actionsReady ? <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
               </div>;
@@ -369,13 +431,21 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           </div>
         </div>
         <footer className="pagination">
-          <span>{accounts ? `Hiển thị ${visibleRows.length} tài khoản` : `Hiển thị trang ${page} trong tổng số 128 hóa đơn`}</span>
-          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>‹</button>{[1, 2, 3].map((value) => <button type="button" key={value} data-active={page === value} onClick={() => setPage(value)}>{value}</button>)}<span>...</span><button type="button" onClick={() => setPage(3)}>3</button><button type="button" aria-label="Trang sau" disabled={page === 3} onClick={() => setPage((value) => Math.min(3, value + 1))}>›</button></div>
+          <span>{`Hiển thị ${filteredRows.length ? firstRowIndex + 1 : 0}–${lastRowIndex} trên tổng ${filteredRows.length} tài khoản`}</span>
+          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div>
         </footer>
       </section>
       {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
     </div>
   );
+}
+
+function DownloadIcon() {
+  return <svg className="invoice-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" /></svg>;
+}
+
+function StopIcon() {
+  return <svg className="stop-button-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><rect x="4" y="4" width="10" height="10" rx="1.5" /></svg>;
 }
 
 function OptionCheck({ checked, label, disabled, title, onChange }: { checked: boolean; label: string; disabled?: boolean; title?: string; onChange?(): void }) {
