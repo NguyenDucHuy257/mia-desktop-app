@@ -239,7 +239,10 @@ export function UtilityPage({ title, description }: { title: string; description
   const visibleLogs = logs.filter((line) => line.toLocaleLowerCase('vi').includes(query.toLocaleLowerCase('vi')));
   async function saveSettings() {
     try {
-      const saved = await window.miaRuntime?.preferences?.set({ concurrency: 1, retries });
+      const current = await window.miaRuntime?.preferences?.get();
+      const saved = current
+        ? await window.miaRuntime?.preferences?.set({ ...current, concurrency: 1, retries })
+        : undefined;
       if (!saved) throw new Error('preferences_unavailable');
       setRetries(saved.retries);
       setMessage('Đã lưu cài đặt trên máy. Tác vụ mới sẽ áp dụng cấu hình này.');

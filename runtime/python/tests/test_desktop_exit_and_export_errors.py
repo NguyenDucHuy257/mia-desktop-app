@@ -1,8 +1,11 @@
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import mia_backend
+import mia_runtime
 from mia_backend import ProductionBackend
 
 
@@ -39,6 +42,39 @@ class DesktopExitCancellationTests(unittest.TestCase):
 
         backend.cancel_active_jobs_for_exit.assert_called_once_with()
         source_close.assert_called_once_with(backend)
+
+    def test_fresh_runtime_session_cancels_stale_jobs_before_worker_start(self):
+        previous = (
+            mia_runtime.storage,
+            mia_runtime.data_directory,
+            mia_runtime.logger,
+            mia_runtime.production_backend,
+        )
+        logger = Mock()
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch(
+                "mia_backend.cancel_stale_jobs_for_desktop_session",
+                return_value=2,
+            ) as reset_jobs, patch(
+                "mia_runtime.configure_logging", return_value=logger
+            ):
+                result, should_stop = mia_runtime.dispatch(
+                    "storage.initialize",
+                    {
+                        "data_dir": str(Path(directory)),
+                        "reset_desktop_session": True,
+                    },
+                )
+                self.assertFalse(should_stop)
+                self.assertEqual(result["schema_version"], 4)
+                reset_jobs.assert_called_once_with(Path(directory), logger)
+        finally:
+            (
+                mia_runtime.storage,
+                mia_runtime.data_directory,
+                mia_runtime.logger,
+                mia_runtime.production_backend,
+            ) = previous
 
 
 class ResultExportErrorTests(unittest.TestCase):

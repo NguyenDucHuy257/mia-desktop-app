@@ -71,7 +71,7 @@ export interface RuntimeExportProgress {
 }
 
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
-export interface LocalPreferences { concurrency: number; retries: number }
+export interface LocalPreferences { concurrency: number; retries: number; exportFolder: string }
 export interface ArtifactExportRequest {
   destination: string;
   connection_ids: string[];

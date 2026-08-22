@@ -30,7 +30,9 @@ describe('OfflineRuntimeManager', () => {
     const second = runtime.start();
     expect(first).toBe(second);
     await expect(first).resolves.toMatchObject({ protocol_version: '1.0', runtime_version: '0.5.0' });
+    expect((runtime as any).sessionResetPending).toBe(false);
     await expect(runtime.invoke('storage.status')).resolves.toEqual({ schema_version: 4, integrity: 'ok' });
+    expect((runtime as any).sessionResetPending).toBe(false);
   }, PROCESS_TEST_TIMEOUT_MS);
 
   it('restarts after a crash and preserves the database', async () => {

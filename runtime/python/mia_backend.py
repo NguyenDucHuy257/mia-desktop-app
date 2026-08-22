@@ -94,6 +94,29 @@ def _export_error(code: str) -> dict[str, object]:
     return {"count": 0, "files": [], "error_code": code}
 
 
+def cancel_stale_jobs_for_desktop_session(data_dir, logger=None) -> int:
+    """Cancel pre-launch work without constructing or starting a crawler."""
+    repository = create_local_job_repository(
+        sqlite_path=Path(data_dir) / "source-control.sqlite3"
+    )
+    repository.migrate()
+    cancelled = 0
+    for job in repository.list_jobs_for_reconciliation():
+        if (
+            job.owner_id != source_backend_module.OWNER_ID
+            or job.status in source_backend_module.JOB_TERMINAL_STATES
+        ):
+            continue
+        repository.request_cancellation(job.job_id)
+        cancelled += 1
+    if logger is not None:
+        logger.info(
+            "job_engine event=desktop_session_reset_cancel_requested count=%s",
+            cancelled,
+        )
+    return cancelled
+
+
 class ProductionBackend(SourceBackend):
     """One local source worker; no HTTP listener and no worker-slot admission."""
 
@@ -133,10 +156,43 @@ class ProductionBackend(SourceBackend):
             ),
             owner_id=source_backend_module.OWNER_ID,
         )
-        self._save_company_name(
-            connection.connection_id,
-            self._source_company_name(connection),
-        )
+        # Source create intentionally reuses an already-ready connection. An
+        # explicit desktop import must still validate the password just typed,
+        # so reconnect the same source connection before requesting company
+        # info. This resets only source-managed encrypted auth state.
+        if reused:
+            connection = self.service.reconnect_account_connection(
+                connection.connection_id,
+                source_backend_module.ReconnectAccountConnectionBody(
+                    username=username,
+                    password=password,
+                ),
+                owner_id=source_backend_module.OWNER_ID,
+            )
+        try:
+            self._save_company_name(
+                connection.connection_id,
+                self._source_company_name(connection),
+            )
+        except Exception:
+            # A brand-new invalid credential must not leave a seemingly ready
+            # account row behind. Reused connections remain in source's
+            # auth_failed state so the user can reconnect them explicitly.
+            if not reused:
+                try:
+                    self.service.revoke_account_connection(
+                        connection.connection_id,
+                        owner_id=source_backend_module.OWNER_ID,
+                    )
+                except Exception as cleanup_error:
+                    logger = getattr(self, "logger", None)
+                    if logger is not None:
+                        logger.warning(
+                            "invalid_account_cleanup_failed connection_ref=%s error_type=%s",
+                            str(connection.connection_id)[-8:],
+                            type(cleanup_error).__name__,
+                        )
+            raise
         return self.public_connection(connection, reused=reused)
 
     def reconnect_connection(self, connection_id: str, username: str, password: str):
@@ -153,6 +209,37 @@ class ProductionBackend(SourceBackend):
             self._source_company_name(connection),
         )
         return self.public_connection(connection)
+
+    def list_connections(self):
+        """Backfill only missing display names through source-managed auth."""
+        connections = super().list_connections()
+        known_names = self._load_company_names()
+        for item in connections:
+            if item.get("company_name"):
+                # Migrate a legacy non-sensitive display name into the current
+                # metadata file so future startups avoid another lookup.
+                if item["connection_id"] not in known_names:
+                    self._save_company_name(
+                        item["connection_id"], str(item["company_name"])
+                    )
+                    known_names[item["connection_id"]] = str(item["company_name"])
+                continue
+            try:
+                connection = self.service.get_account_connection(
+                    item["connection_id"], owner_id=source_backend_module.OWNER_ID
+                )
+                company_name = self._source_company_name(connection)
+                self._save_company_name(item["connection_id"], company_name)
+                known_names[item["connection_id"]] = company_name
+                item["company_name"] = company_name
+            except Exception as error:
+                if self.logger is not None:
+                    self.logger.warning(
+                        "company_name_backfill_failed connection_ref=%s error_type=%s",
+                        str(item["connection_id"])[-8:],
+                        type(error).__name__,
+                    )
+        return connections
 
     def cancel_active_jobs_for_exit(self) -> int:
         """Cancel local source jobs without deleting any persisted invoice data.

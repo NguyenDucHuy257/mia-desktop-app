@@ -14,6 +14,7 @@ class OfflineRuntimeManager {
     this.maxRestarts = options.maxRestarts ?? 2;
     this.startupRpcTimeoutMs = options.startupRpcTimeoutMs ?? STARTUP_RPC_TIMEOUT_MS;
     this.sourceJobsObserved = false;
+    this.sessionResetPending = true;
   }
 
   start() {
@@ -133,7 +134,11 @@ class OfflineRuntimeManager {
       await client.stop();
       throw new Error('Unsupported offline runtime protocol.');
     }
-    await client.call('storage.initialize', { data_dir: this.options.dataDirectory }, startupOptions);
+    await client.call('storage.initialize', {
+      data_dir: this.options.dataDirectory,
+      reset_desktop_session: this.sessionResetPending,
+    }, startupOptions);
+    this.sessionResetPending = false;
     this.client = client;
     return health;
   }

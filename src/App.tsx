@@ -12,6 +12,8 @@ import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
 
+const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
+
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
   html: 'HTML Downloader',
@@ -53,7 +55,7 @@ export default function App() {
   const [connectionId, setConnectionId] = useState('');
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
-  const [exportFolder, setExportFolder] = useState('C:\\MIACrawl\\Export\\PDF\\T10_2023');
+  const [exportFolder, setExportFolder] = useState(DEFAULT_EXPORT_FOLDER);
   const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
@@ -62,6 +64,19 @@ export default function App() {
   const deleteQueue = useRef<string[]>([]);
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
+  const preferenceWrite = useRef<Promise<void>>(Promise.resolve());
+
+  function updateExportFolder(value: string) {
+    setExportFolder(value);
+    const preferences = window.miaRuntime?.preferences;
+    if (!preferences) return;
+    preferenceWrite.current = preferenceWrite.current
+      .catch(() => undefined)
+      .then(async () => {
+        const current = await preferences.get();
+        await preferences.set({ ...current, exportFolder: value });
+      });
+  }
 
   async function refreshAccounts() {
     try {
@@ -116,7 +131,12 @@ export default function App() {
     void drainDeleteQueue();
   }
 
-  useEffect(() => { void refreshAccounts(); }, []);
+  useEffect(() => {
+    void refreshAccounts();
+    void window.miaRuntime?.preferences?.get()
+      .then((preferences) => setExportFolder(preferences.exportFolder || DEFAULT_EXPORT_FOLDER))
+      .catch(() => undefined);
+  }, []);
 
   function navigate(value: NavigationKey) {
     setActive(value);
@@ -150,16 +170,16 @@ export default function App() {
             connectionId={connectionId}
             selectedAccountIds={selectedAccountIds}
             exportFolder={exportFolder}
-            onExportFolder={setExportFolder}
+            onExportFolder={updateExportFolder}
             onAddAccount={() => setView('add-account')}
             onDeleteAccount={async (id) => { deleteAccount(id); }}
             onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])}
             onSelectAccounts={setSelectedAccountIds}
             onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
           />
-        ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-          : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-            : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+        ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+          : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+            : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
               : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />

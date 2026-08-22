@@ -23,6 +23,10 @@ function isTerminalStatus(status?: string | null) {
   return Boolean(status && TERMINAL_JOB_STATUSES.has(status as JobStatusResponse['status']));
 }
 
+export function currentSessionJobRecords(records: PersistedJob[]) {
+  return records.filter((record) => record.status && !isTerminalStatus(record.status));
+}
+
 export function jobFailureMessage(code?: string) {
   if (code === 'invalid_source_credentials') return 'Tên đăng nhập hoặc mật khẩu không đúng.';
   if (code === 'source_account_locked') return 'Tài khoản đã bị khóa vì nhập sai thông tin quá số lần quy định.';
@@ -304,18 +308,16 @@ export function useBatchJobLifecycle() {
     const token = generation.current;
     const jobs = window.miaRuntime?.jobs;
     if (!jobs) return stopTimers;
-    const hydrate = typeof jobs.latestAll === 'function'
-      ? jobs.latestAll()
-      : typeof jobs.resumeAll === 'function'
-        ? jobs.resumeAll()
-        : jobs.resume().then((record) => record ? [record] : []);
+    const hydrate = typeof jobs.resumeAll === 'function'
+      ? jobs.resumeAll()
+      : jobs.resume().then((record) => record ? [record] : []);
     void hydrate.then((records) => {
       if (token !== generation.current) return;
       const restored: Record<string, BatchItem> = {};
-      const activeRecords = records.filter((record) => record.status && !isTerminalStatus(record.status));
-      for (const record of records) {
+      const activeRecords = currentSessionJobRecords(records);
+      for (const record of activeRecords) {
         restored[record.connection_id] = { connectionId: record.connection_id, record };
-        if (record.job_id && record.status && !isTerminalStatus(record.status)) {
+        if (record.job_id) {
           void poll(record.job_id, record.connection_id, 0, token);
         }
       }
@@ -325,7 +327,7 @@ export function useBatchJobLifecycle() {
         setActive(true);
         batchConnectionIds.current = new Set(activeRecords.map((record) => record.connection_id));
       }
-      diagnosticLog('job_state_hydrated', { account_count: records.length, active_count: activeRecords.length });
+      diagnosticLog('job_state_hydrated', { account_count: activeRecords.length, active_count: activeRecords.length });
     }).catch((error) => diagnosticLog('job_state_hydrate_failed', { code: (error as { code?: string })?.code }, 'warn'));
     return stopTimers;
   }, [poll, stopTimers, updateItems]);

@@ -64,6 +64,75 @@ class ProductionBackendTests(unittest.TestCase):
         )
         portal.get_company_info.assert_called_once_with()
 
+    def test_reused_import_reconnects_and_verifies_the_submitted_password(self):
+        backend = object.__new__(ProductionBackend)
+        existing = SimpleNamespace(connection_id="conn_existing", username="0100000000")
+        reconnected = SimpleNamespace(connection_id="conn_existing", username="0100000000")
+        backend.service = Mock()
+        backend.service.create_account_connection.return_value = (existing, True)
+        backend.service.reconnect_account_connection.return_value = reconnected
+        backend._source_company_name = Mock(return_value="Verified Company")
+        backend._save_company_name = Mock()
+        backend.public_connection = Mock(return_value={"connection_id": "conn_existing"})
+
+        result = backend.create_connection("0100000000", "submitted-password")
+
+        self.assertEqual(result["connection_id"], "conn_existing")
+        reconnect_body = backend.service.reconnect_account_connection.call_args.args[1]
+        self.assertEqual(reconnect_body.username, "0100000000")
+        self.assertEqual(reconnect_body.password.get_secret_value(), "submitted-password")
+        backend._source_company_name.assert_called_once_with(reconnected)
+        backend._save_company_name.assert_called_once_with(
+            "conn_existing", "Verified Company"
+        )
+
+    def test_invalid_new_import_is_revoked_and_not_reported_as_success(self):
+        backend = object.__new__(ProductionBackend)
+        created = SimpleNamespace(connection_id="conn_invalid", username="0100000000")
+        backend.service = Mock()
+        backend.service.create_account_connection.return_value = (created, False)
+        backend._source_company_name = Mock(side_effect=RuntimeError("invalid_source_credentials"))
+        backend._save_company_name = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "invalid_source_credentials"):
+            backend.create_connection("0100000000", "wrong-password")
+
+        backend.service.revoke_account_connection.assert_called_once_with(
+            "conn_invalid", owner_id="mia-desktop-local"
+        )
+        backend._save_company_name.assert_not_called()
+
+    def test_account_list_backfills_only_missing_names_and_isolates_failures(self):
+        backend = object.__new__(ProductionBackend)
+        backend.service = Mock()
+        backend.logger = Mock()
+        backend._load_company_names = Mock(return_value={"conn_named": "Cached Company"})
+        backend._save_company_name = Mock()
+        backend._source_company_name = Mock(
+            side_effect=["Backfilled Company", RuntimeError("auth failed")]
+        )
+        records = [
+            {"connection_id": "conn_named", "company_name": "Cached Company"},
+            {"connection_id": "conn_missing", "company_name": None},
+            {"connection_id": "conn_failed", "company_name": None},
+        ]
+        backend.service.get_account_connection.side_effect = [
+            SimpleNamespace(connection_id="conn_missing"),
+            SimpleNamespace(connection_id="conn_failed"),
+        ]
+
+        with patch("mia_backend.SourceBackend.list_connections", return_value=records):
+            result = backend.list_connections()
+
+        self.assertEqual(result[0]["company_name"], "Cached Company")
+        self.assertEqual(result[1]["company_name"], "Backfilled Company")
+        self.assertIsNone(result[2]["company_name"])
+        self.assertEqual(backend._source_company_name.call_count, 2)
+        backend._save_company_name.assert_called_once_with(
+            "conn_missing", "Backfilled Company"
+        )
+        backend.logger.warning.assert_called_once()
+
     def test_source_account_connection_and_job_engine_own_durable_state(self):
         with tempfile.TemporaryDirectory() as directory:
             backend, connection = self._create_backend_and_connection(directory)

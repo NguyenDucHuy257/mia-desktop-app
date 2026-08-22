@@ -204,7 +204,11 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         return {"accepted": True}, True
 
     if method == "storage.initialize":
-        if not isinstance(params, dict) or not isinstance(params.get("data_dir"), str):
+        if (
+            not isinstance(params, dict)
+            or not isinstance(params.get("data_dir"), str)
+            or not isinstance(params.get("reset_desktop_session", False), bool)
+        ):
             raise RpcError(-32602, "invalid_params")
         data_dir = Path(params["data_dir"])
         if not data_dir.is_absolute():
@@ -216,6 +220,13 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             logger = configure_logging(
                 data_dir / "logs", os.environ.get("MIA_RUNTIME_LOG_LEVEL", "INFO")
             )
+            if params.get("reset_desktop_session"):
+                from mia_backend import cancel_stale_jobs_for_desktop_session
+
+                cancelled = cancel_stale_jobs_for_desktop_session(data_dir, logger)
+                logger.info(
+                    "desktop_session_reset active_jobs_cancelled=%s", cancelled
+                )
             # mia.sqlite3 remains migration/artifact compatibility storage only.
             # No legacy crawler/thread is constructed from it.
             crawler = None
