@@ -377,6 +377,39 @@ test('settings persist scheduler limits and logs are filtered after main-process
   await expect(page.locator('.utility-log-list')).toContainText('retry_scheduled');
 });
 
+test('bulk Excel progress stays determinate inside the toolbar button', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_local', username: '0100000000', company_name: 'Công ty Runtime', status: 'ready', token_generation: 0, created_at: 'now', updated_at: 'now', reused: false };
+    let progressListener: ((value: Record<string, unknown>) => void) | undefined;
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      jobs: { resume: async () => null, resumeAll: async () => [], latestAll: async () => [], start: async () => ({}), status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        selectDirectory: async () => 'C:\\MIA',
+        onExportProgress: (listener: (value: Record<string, unknown>) => void) => { progressListener = listener; return () => { progressListener = undefined; }; },
+        export: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          progressListener?.({ status: 'running', scope: 'details', phase: 'write_rows', processed: 43, total: 100, percent: 43 });
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          progressListener?.({ status: 'completed', scope: 'details', phase: 'completed', processed: 100, total: 100, percent: 100 });
+          return { count: 1, files: ['C:\\MIA\\result.xlsx'] };
+        },
+      },
+    } });
+  });
+  await page.goto('/');
+  const exportButton = page.getByRole('button', { name: 'Tải kết quả tất cả' });
+  await expect(exportButton).toBeEnabled();
+  await exportButton.click();
+  const progressButton = page.locator('.invoice-export-all-button');
+  await expect(progressButton).toContainText('1/1');
+  await expect(progressButton).toContainText('43%');
+  await expect(progressButton).toHaveAttribute('aria-valuenow', '43');
+  await expect(page.locator('.invoice-export-all-wrap .result-export-progress')).toHaveCount(0);
+  await expect(page.locator('.stop-button .stop-button-icon')).toHaveCount(1);
+});
+
 test('artifact default frames use direct Figma exports as visual baselines', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.evaluate(() => document.fonts.ready);

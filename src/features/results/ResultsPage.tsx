@@ -313,7 +313,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       </div>
       <div className="results-export" ref={exportRoot}>
         <button
-          className="results-export-trigger results-export-trigger--gold"
+          className="results-export-trigger"
           type="button"
           aria-expanded={exportOpen}
           disabled={resultExports.active}
@@ -323,7 +323,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           <svg className="results-export-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
           <span>{resultExportWorking ? `Đang tạo Excel… ${Math.round(resultExports.percent)}%` : 'Tải xuống kết quả'}</span>
         </button>
-        {exportOpen ? <div className="results-export-popover results-export-popover--gold" role="dialog" aria-label="Chọn nội dung tải xuống">
+        {exportOpen ? <div className="results-export-popover" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
           <label><input type="checkbox" checked={exportScopes.includes('overview')} disabled={resultExports.active} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
           <label><input type="checkbox" checked={exportScopes.includes('details')} disabled={resultExports.active} onChange={() => toggleExportScope('details')} /> Chi tiết</label>

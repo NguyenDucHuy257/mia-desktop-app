@@ -51,11 +51,11 @@
   min-width: 177px;
   height: 40px;
   padding: 0 16px;
-  border: 1px solid #2563eb;
+  border: 1px solid #8caedb;
   border-radius: 10px;
   outline: 0;
-  background: #2563eb;
-  color: #fff;
+  background: #e8f0fc;
+  color: #315f9f;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -63,7 +63,7 @@
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 3px 10px rgb(37 99 235 / 20%);
+  box-shadow: none;
 }
 
 .results-export-trigger img {
@@ -73,8 +73,8 @@
 }
 
 .results-export-trigger:focus-visible {
-  border-color: #1d4ed8;
-  box-shadow: 0 0 0 3px rgb(59 130 246 / 24%), 0 4px 12px rgb(37 99 235 / 22%);
+  border-color: #6f9bd6;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 14%);
 }
 
 .results-export-popover {
@@ -540,16 +540,17 @@
 }
 
 .results-page--figma .results-export-trigger:hover {
-  border-color: #1d4ed8;
-  background: #1d4ed8;
-  box-shadow: 0 6px 16px rgb(29 78 216 / 26%);
+  border-color: #6f9bd6;
+  background: #dce9fb;
+  color: #1d4f91;
+  box-shadow: none;
   transform: translateY(-1px);
 }
 
 .results-page--figma .results-export-trigger:active {
-  border-color: #1e40af;
-  background: #1e40af;
-  box-shadow: 0 2px 7px rgb(30 64 175 / 24%);
+  border-color: #5f8dca;
+  background: #d4e3f7;
+  box-shadow: none;
   transform: translateY(0) scale(.98);
 }
 

@@ -5,7 +5,6 @@ import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
-import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
@@ -13,7 +12,6 @@ import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
-import { ResultExportProgressBar } from '../results/ResultExportProgressBar';
 import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
@@ -261,6 +259,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     const sourceError = job?.error?.message;
     const inlineError = item?.error;
     const phase = item?.phase;
+    const accountNeedsAuth = ['auth_failed', 'suspended'].includes(account.status);
     const status: RowStatus = phase === 'stopped'
       ? 'stopped'
       : inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
@@ -276,8 +275,10 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
                 : runtimeStatus === 'cancelled'
                   ? 'stopped'
                   : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
-                    ? 'completed'
-                    : 'ready';
+                  ? 'completed'
+                    : accountNeedsAuth
+                      ? 'failed'
+                      : 'ready';
 
     const progress = Number(job?.overall_percent ?? 0);
     const progressLabel = phase === 'stopped' || runtimeStatus === 'cancelled'
@@ -289,7 +290,9 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           : phase === 'queued'
             ? 'Chờ đến lượt xử lý…'
             : status === 'failed'
-              ? inlineError ?? sourceError ?? errorCode ?? 'Job xử lý thất bại.'
+              ? inlineError ?? sourceError ?? errorCode ?? (accountNeedsAuth
+                ? 'Cần xác thực lại tài khoản.'
+                : 'Job xử lý thất bại.')
               : status === 'ready'
                 ? 'Chưa đồng bộ'
                 : formatSourceJobProgress(job);
@@ -304,7 +307,11 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       progress,
       progressLabel,
       monthProgress,
-      failureHint: status === 'failed' ? jobFailureHint(errorCode) : undefined,
+      failureHint: status === 'failed'
+        ? accountNeedsAuth && !errorCode
+          ? 'Vui lòng nhập lại MST và mật khẩu.'
+          : jobFailureHint(errorCode)
+        : undefined,
       actionsReady: Boolean(job?.job_id),
     };
   });
@@ -365,14 +372,31 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           </div>
           <div className="invoice-filter-actions">
             <div className="invoice-export-all-wrap">
-              <button className="invoice-export-all-button" type="button" disabled={resultExports.active || selectedAccountIds.length === 0} onClick={() => void exportAllResults()}>
-                {bulkExportWorking
-                  ? `Đang tạo Excel ${resultExports.accountIndex}/${resultExports.accountTotal}`
+              <button
+                className="invoice-export-all-button"
+                type="button"
+                data-exporting={bulkExportWorking}
+                disabled={resultExports.active || selectedAccountIds.length === 0}
+                aria-label={bulkExportWorking
+                  ? `Tiến trình tải kết quả ${resultExports.accountIndex}/${resultExports.accountTotal}, ${Math.round(resultExports.percent)}%`
                   : 'Tải kết quả tất cả'}
+                aria-valuemin={bulkExportWorking ? 0 : undefined}
+                aria-valuemax={bulkExportWorking ? 100 : undefined}
+                aria-valuenow={bulkExportWorking ? Math.round(resultExports.percent) : undefined}
+                onClick={() => void exportAllResults()}
+              >
+                {bulkExportWorking ? (
+                  <>
+                    <span className="invoice-export-button-fill" style={{ width: `${Math.max(0, Math.min(100, resultExports.percent))}%` }} />
+                    <span className="invoice-export-button-progress">
+                      <strong>{resultExports.accountIndex}/{resultExports.accountTotal}</strong>
+                      <strong>{Math.round(resultExports.percent)}%</strong>
+                    </span>
+                  </>
+                ) : <><DownloadIcon /><span>Tải kết quả tất cả</span></>}
               </button>
-              {bulkExportWorking ? <ResultExportProgressBar lifecycle={resultExports} /> : null}
             </div>
-            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><StopIcon /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
           </div>
         </div>
         <div className="data-card">
@@ -386,7 +410,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
               return <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
                 {account ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <span>{row.taxCode}</span>
-                <strong className="company-name">{row.company}</strong>
+                <strong className="company-name" title={row.company}>{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
                 {account ? <span className="row-action-group">
@@ -405,6 +429,14 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
     </div>
   );
+}
+
+function DownloadIcon() {
+  return <svg className="invoice-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" /></svg>;
+}
+
+function StopIcon() {
+  return <svg className="stop-button-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><rect x="4" y="4" width="10" height="10" rx="1.5" /></svg>;
 }
 
 function OptionCheck({ checked, label, disabled, title, onChange }: { checked: boolean; label: string; disabled?: boolean; title?: string; onChange?(): void }) {
