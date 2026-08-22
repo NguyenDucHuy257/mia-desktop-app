@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
+import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import pdfProgressIcon from '../../assets/figma/pdf-progress.svg';
 import pdfStopIcon from '../../assets/figma/pdf-stop.svg';
 import pdfFolderIcon from '../../assets/figma/pdf-folder.svg';
@@ -25,7 +26,7 @@ const demoRows = [
   { id: 'HD-2023-004', date: '12/10/2023', direction: 'sold', state: 'error' },
 ] as const;
 
-export function ArtifactDownloaderPage({ kind, folder, connectionIds, accounts }: { kind: ArtifactKind; folder: string; onFolder(value: string): void; connectionIds: string[]; accounts: AccountConnection[] }) {
+export function ArtifactDownloaderPage({ kind, folder, onFolder, connectionIds, accounts }: { kind: ArtifactKind; folder: string; onFolder(value: string): void; connectionIds: string[]; accounts: AccountConnection[] }) {
   const [direction, setDirection] = useState<Direction>('all');
   const [company, setCompany] = useState('all');
   const [dateFrom, setDateFrom] = useState('2023-10-01');
@@ -71,6 +72,11 @@ export function ArtifactDownloaderPage({ kind, folder, connectionIds, accounts }
     setPage(1);
   }
 
+  async function chooseFolder() {
+    const selected = await window.miaRuntime?.artifacts?.selectDirectory();
+    if (selected) onFolder(selected);
+  }
+
   useEffect(() => {
     if (!pendingExport) return;
     const jobs = Object.values(artifactJobs);
@@ -93,7 +99,7 @@ export function ArtifactDownloaderPage({ kind, folder, connectionIds, accounts }
 
   async function exportSelected() {
     if (!window.miaRuntime?.artifacts?.export) { setMessage(`Đã thêm ${rows.length} file ${name} vào hàng đợi tải.`); return; }
-    if (!folder.trim()) { setMessage('Vui lòng chọn thư mục lưu ở tab PDF.'); return; }
+    if (!folder.trim()) { setMessage('Vui lòng chọn thư mục lưu trữ.'); return; }
     if (!connectionIds.length) { setMessage('Vui lòng chọn ít nhất một tài khoản ở tab Hóa đơn.'); return; }
     if (rows.length) { await exportLocalFiles(); return; }
     const directions = direction === 'all' ? ['purchase', 'sold'] as const : [direction];
@@ -104,12 +110,12 @@ export function ArtifactDownloaderPage({ kind, folder, connectionIds, accounts }
     })));
   }
 
-
   return <section className="artifact-page" data-node-id={kind === 'xml' ? '1:654' : '104:22'} aria-labelledby={`${kind}-title`}>
     <header className="artifact-header">
       <h1 id={`${kind}-title`}>Công cụ tải {name}</h1>
       <p>Quản lý và tải file {name} hóa đơn điện tử.</p>
     </header>
+    <StorageFolderPicker className="artifact-storage-folder" value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel={`Thư mục lưu trữ ${name}`} />
     <ArtifactToolbar direction={direction} onDirection={(value) => { setDirection(value); resetCursor(); }} company={company} onCompany={(value) => { setCompany(value); resetCursor(); }} accounts={accounts} demo={demo} dateFrom={dateFrom} dateTo={dateTo} onDateFrom={(value) => { setDateFrom(value); resetCursor(); }} onDateTo={(value) => { setDateTo(value); resetCursor(); }} />
     {!demo ? <label className="artifact-search">Tìm hóa đơn<input aria-label={`Tìm kiếm ${name}`} value={search} onChange={(event) => { setSearch(event.target.value); resetCursor(); }} /></label> : null}
     <div className="artifact-summary">
@@ -144,7 +150,6 @@ function ArtifactToolbar({ direction, onDirection, company, onCompany, accounts 
     </div>
   </div>;
 }
-
 
 function ArtifactPager({ count, page, onPage }: { count: number; page: number; onPage(value: number): void }) {
   return <footer className="artifact-pager"><span>Hiển thị {count ? (page - 1) * 50 + 1 : 0} - {Math.min(page * 50, 128)} trong tổng số 128 hóa đơn</span><div><span>Chọn trang:</span><button aria-label="Trang trước" disabled={page === 1} onClick={() => onPage(page - 1)}><img src={artifactPreviousIcon} alt="" /></button>{[1, 2, 3].map((value) => <button key={value} data-active={page === value} onClick={() => onPage(value)}>{value}</button>)}<span>...</span><button data-active={page === 3} onClick={() => onPage(3)}>3</button><button aria-label="Trang sau" disabled={page === 3} onClick={() => onPage(page + 1)}><img src={artifactNextIcon} alt="" /></button></div></footer>;
@@ -206,7 +211,7 @@ export function PdfDownloaderPage({ folder, onFolder, connectionIds, accounts }:
     <div className="pdf-container">
       <header><h1 id="pdf-title">Chuyển đổi PDF Hàng Loạt</h1><p>Chuyển đổi từ HTML → PDF</p></header>
       <div className="pdf-config">
-        <label>THƯ MỤC LƯU TRỮ<div><input aria-label="Thư mục lưu trữ" value={folder} onChange={(event) => onFolder(event.target.value)} /><button type="button" aria-label="Chọn thư mục" onClick={() => void chooseFolder()}>▱</button></div></label>
+        <StorageFolderPicker className="pdf-storage-folder" value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Thư mục lưu trữ PDF" />
         <ArtifactToolbar direction={direction} onDirection={setDirection} company={company} onCompany={setCompany} accounts={accounts} demo={demo} dateFrom={dateFrom} dateTo={dateTo} onDateFrom={setDateFrom} onDateTo={setDateTo} />
       </div>
       <button className="pdf-start" type="button" disabled={!folder.trim()} onClick={() => { if (!running) void startPdfExport(); }}>⇩ Tải HTML hàng loạt</button>
