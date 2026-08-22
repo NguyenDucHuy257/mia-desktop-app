@@ -70,6 +70,9 @@ export interface ArtifactExportRequest {
   date_to?: string;
   direction?: 'purchase' | 'sold' | null;
   search?: string;
+  column_filters?: Record<string, string>;
+  exclude_business_keys?: string[];
+  filter_scope?: 'overview' | 'details';
 }
 export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: 'purchase' | 'sold' | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
 export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: 'purchase' | 'sold' | null; size: number; updated_at: number }
@@ -82,10 +85,14 @@ export interface ResultQuery {
   direction?: 'purchase' | 'sold' | null;
   date_from?: string;
   date_to?: string;
+  column_filters?: Record<string, string>;
+  exclude_business_keys?: string[];
+  include_meta?: boolean;
 }
 export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }
 export interface DetailResult { detail_id: number; direction: 'purchase' | 'sold'; business_key: string; line_key: string; payload: Record<string, unknown> }
-export interface LocalResultPage<T> { items: T[]; pagination: { limit: number; has_more: boolean; next_cursor: string | null } }
+export interface ResultMeta { total_rows: number; total_invoices: number; columns: string[]; totals: Record<string, number> }
+export interface LocalResultPage<T> { items: T[]; pagination: { limit: number; has_more: boolean; next_cursor: string | null }; meta?: ResultMeta }
 
 export interface PersistedJob {
   job_id: string | null;
@@ -97,6 +104,7 @@ export interface PersistedJob {
   status?: string;
   stage?: string | null;
   overall_percent?: number;
+  invoice_progress?: JobStatusResponse['invoice_progress'];
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];
   event_sequence?: number;

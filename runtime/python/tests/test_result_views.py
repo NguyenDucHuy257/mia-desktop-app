@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,85 +7,26 @@ from unittest.mock import Mock, patch
 from openpyxl import load_workbook
 
 import mia_runtime
-from mia_backend import BUSINESS_TIMEZONE, DesktopInvoiceCrawlPipeline, ProductionBackend
+from mia_backend import OWNER_ID, ProductionBackend
 
 
-class RefreshPolicyTests(unittest.TestCase):
-    @staticmethod
-    def pipeline(now=datetime(2026, 8, 21, 12, 0, tzinfo=BUSINESS_TIMEZONE)):
-        pipeline = object.__new__(DesktopInvoiceCrawlPipeline)
-        pipeline.clock = lambda: now
-        return pipeline
+class FakeOverviewReader:
+    def __init__(self, items):
+        self.items = list(items)
 
-    @staticmethod
-    def parameters(date_from, date_to, *, force_refresh=False):
+    def overview_page(self, _job, *, limit, cursor):
+        start = int(cursor or 0)
+        visible = self.items[start:start + limit]
+        end = start + len(visible)
+        has_more = end < len(self.items)
         return {
-            "date_from": date_from,
-            "date_to": date_to,
-            "directions": ["purchase", "sold"],
-            "query_types": ["query", "sco-query"],
-            "force_refresh": force_refresh,
-            "refresh_recent_months": True,
+            "items": visible,
+            "pagination": {
+                "limit": limit,
+                "has_more": has_more,
+                "next_cursor": str(end) if has_more else None,
+            },
         }
-
-    def test_old_historical_range_uses_verified_cache_when_fresh_download_is_off(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2023-10-01", "2023-10-31")
-        self.assertIsNone(pipeline._latest_month_range(parameters))
-        self.assertEqual(pipeline._latest_month_force_slices(parameters), frozenset())
-
-    def test_previous_and_current_calendar_month_are_always_forced(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2026-06-01", "2026-08-31")
-        self.assertEqual(
-            pipeline._latest_month_range(parameters),
-            (date(2026, 7, 1), date(2026, 8, 31)),
-        )
-        slices = pipeline._latest_month_force_slices(parameters)
-        expected = {
-            (direction, query_type, begin, end)
-            for direction in ("purchase", "sold")
-            for query_type in ("query", "sco-query")
-            for begin, end in (
-                (date(2026, 7, 1), date(2026, 7, 31)),
-                (date(2026, 8, 1), date(2026, 8, 31)),
-            )
-        }
-        self.assertEqual(slices, frozenset(expected))
-        self.assertFalse(any(item[2].month == 6 for item in slices))
-
-    def test_partial_recent_range_only_forces_selected_days(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2026-07-15", "2026-08-10")
-        self.assertEqual(
-            pipeline._latest_month_range(parameters),
-            (date(2026, 7, 15), date(2026, 8, 10)),
-        )
-        slices = pipeline._latest_month_force_slices(parameters)
-        self.assertIn(
-            ("purchase", "query", date(2026, 7, 15), date(2026, 7, 31)),
-            slices,
-        )
-        self.assertIn(
-            ("purchase", "query", date(2026, 8, 1), date(2026, 8, 10)),
-            slices,
-        )
-
-    def test_fresh_download_checkbox_delegates_to_full_production_force_refresh(self):
-        pipeline = self.pipeline()
-        parameters = self.parameters("2023-01-01", "2026-08-31", force_refresh=True)
-        # Production CoveragePlanner sees force_refresh=True and refreshes every
-        # selected slice. The desktop recent-month hook must not narrow it.
-        self.assertIsNone(pipeline._latest_month_range(parameters))
-        self.assertEqual(pipeline._latest_month_force_slices(parameters), frozenset())
-
-    def test_january_policy_refreshes_previous_december_and_current_january(self):
-        pipeline = self.pipeline(datetime(2027, 1, 10, 12, 0, tzinfo=BUSINESS_TIMEZONE))
-        parameters = self.parameters("2026-12-01", "2027-01-31")
-        self.assertEqual(
-            pipeline._latest_month_range(parameters),
-            (date(2026, 12, 1), date(2027, 1, 31)),
-        )
 
 
 class ResultViewTests(unittest.TestCase):
@@ -95,6 +35,8 @@ class ResultViewTests(unittest.TestCase):
         backend.data_root = Path("source-data")
         job = SimpleNamespace(
             job_id="job-latest",
+            owner_id=OWNER_ID,
+            account_key="account-1",
             created_at="2026-08-20T10:00:00+00:00",
             updated_at="2026-08-20T10:00:00+00:00",
             company_tax_code="0100000000",
@@ -109,44 +51,82 @@ class ResultViewTests(unittest.TestCase):
         backend.repository = SimpleNamespace(list_jobs_for_reconciliation=lambda: [job])
         return backend, job
 
-    def test_result_range_overrides_latest_job_range_and_reads_all_invoice_types(self):
+    def test_invoice_progress_sums_all_months_in_current_module(self):
+        job = SimpleNamespace(
+            current_stage="detail",
+            progress_state={
+                "current_stage": "detail",
+                "modules": {
+                    "overview": {"status": "completed", "months": [{"processed": 20, "planned": 20}]},
+                    "detail": {
+                        "status": "running",
+                        "months": [
+                            {"processed": 12, "planned": 20},
+                            {"processed": 8, "planned": 30},
+                        ],
+                    },
+                },
+            },
+        )
+        self.assertEqual(
+            ProductionBackend._invoice_progress(job),
+            {"processed": 20, "planned": 50},
+        )
+
+    def test_result_filters_totals_columns_and_exclusions_cover_all_pages(self):
         backend, _ = self.backend_with_job()
-        reader = Mock()
-        reader.overview_page.return_value = {
-            "items": [{
-                "id": 7,
-                "direction": "sold",
-                "nbmst": "0300000000",
-                "khhdon": "AA/26E",
-                "shdon": "12",
-                "khmshdon": "1",
-            }],
-            "pagination": {"has_more": False, "next_cursor": None},
-        }
+        source_items = [
+            {
+                "id": 1, "direction": "purchase", "nbmst": "0300000000",
+                "khhdon": "AA/26E", "shdon": "1", "khmshdon": "1",
+                "attributes": {"nmten": "Alpha", "tgtcthue": 1000, "tgtthue": 100},
+            },
+            {
+                "id": 2, "direction": "purchase", "nbmst": "0300000000",
+                "khhdon": "AA/26E", "shdon": "2", "khmshdon": "1",
+                "attributes": {"nmten": "Beta", "tgtcthue": 2000, "tgtthue": 200},
+            },
+            {
+                "id": 3, "direction": "sold", "nbmst": "0400000000",
+                "khhdon": "BB/26E", "shdon": "3", "khmshdon": "1",
+                "attributes": {"nmten": "Alpha Service", "tgtcthue": 500, "tgtthue": 50},
+            },
+        ]
+        reader = FakeOverviewReader(source_items)
 
-        def replace_job(job, *, parameters):
-            return SimpleNamespace(**{
-                **vars(job),
-                "parameters": parameters,
-            })
-
-        with patch("mia_backend.JobResultReader", return_value=reader), patch(
-            "mia_backend.replace", side_effect=replace_job,
-        ):
+        with patch("mia_backend.JobResultReader", return_value=reader):
             result = backend.results("overview", {
                 "connection_id": "account-1",
                 "date_from": "2026-02-01",
                 "date_to": "2026-02-28",
                 "direction": None,
-                "limit": 50,
+                "limit": 1,
+                "column_filters": {"nmten": "alpha"},
+                "include_meta": True,
             })
 
-        read_job = reader.overview_page.call_args.args[0]
-        self.assertEqual(read_job.parameters["date_from"], "2026-02-01")
-        self.assertEqual(read_job.parameters["date_to"], "2026-02-28")
-        self.assertEqual(read_job.parameters["directions"], ["purchase", "sold"])
-        self.assertEqual(read_job.parameters["query_types"], ["query", "sco-query"])
-        self.assertEqual(result["items"][0]["direction"], "sold")
+        self.assertEqual(len(result["items"]), 1)
+        self.assertTrue(result["pagination"]["has_more"])
+        self.assertEqual(result["meta"]["total_rows"], 2)
+        self.assertEqual(result["meta"]["total_invoices"], 2)
+        self.assertIn("nmten", result["meta"]["columns"])
+        self.assertEqual(result["meta"]["totals"]["tgtcthue"], 1500)
+        self.assertEqual(result["meta"]["totals"]["tgtthue"], 150)
+        self.assertNotIn("attributes", result["items"][0]["payload"])
+        self.assertEqual(result["items"][0]["payload"]["nmten"], "Alpha")
+
+        excluded = result["items"][0]["business_key"]
+        with patch("mia_backend.JobResultReader", return_value=FakeOverviewReader(source_items)):
+            filtered = backend.results("overview", {
+                "connection_id": "account-1",
+                "limit": 50,
+                "column_filters": {"nmten": "alpha"},
+                "exclude_business_keys": [excluded],
+                "include_meta": True,
+            })
+        self.assertEqual(filtered["meta"]["total_rows"], 1)
+        self.assertEqual(filtered["meta"]["totals"]["tgtcthue"], 500)
+        self.assertTrue(all(item["business_key"] != excluded for item in filtered["items"]))
 
     def test_result_dispatch_initializes_production_backend_after_restart(self):
         previous = (
@@ -195,11 +175,11 @@ class ResultViewTests(unittest.TestCase):
                 mia_runtime.production_backend,
             ) = previous
 
-    def test_result_workbook_can_include_overview_and_detail_sheets(self):
+    def test_result_workbook_applies_filters_only_to_current_scope_and_excludes_invoices(self):
         backend, _ = self.backend_with_job()
         backend._all_result_rows = Mock(side_effect=[
             [{"direction": "purchase", "business_key": "A", "payload": {"shdon": "1"}}],
-            [{"direction": "purchase", "business_key": "A", "line_key": "1", "payload": {"thhdvu": "Dịch vụ"}}],
+            [{"direction": "purchase", "business_key": "A", "line_key": "1", "payload": {"ten": "Dịch vụ"}}],
         ])
         with tempfile.TemporaryDirectory() as directory:
             result = backend.export_results({
@@ -210,12 +190,21 @@ class ResultViewTests(unittest.TestCase):
                 "date_to": "2026-02-28",
                 "direction": None,
                 "search": "",
+                "column_filters": {"ten": "dịch vụ"},
+                "filter_scope": "details",
+                "exclude_business_keys": ["DROP-ME"],
             })
             target = Path(result["files"][0])
             self.assertTrue(target.is_file())
             workbook = load_workbook(target, read_only=True)
             self.assertEqual(workbook.sheetnames, ["Tong quan", "Chi tiet"])
             workbook.close()
+
+        overview_query = backend._all_result_rows.call_args_list[0].args[1]
+        detail_query = backend._all_result_rows.call_args_list[1].args[1]
+        self.assertEqual(overview_query["column_filters"], {})
+        self.assertEqual(detail_query["column_filters"], {"ten": "dịch vụ"})
+        self.assertEqual(detail_query["exclude_business_keys"], ["DROP-ME"])
 
 
 if __name__ == "__main__":

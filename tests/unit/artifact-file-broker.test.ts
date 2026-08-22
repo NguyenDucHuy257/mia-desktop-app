@@ -23,7 +23,7 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
   });
 
-  it('validates filtered result workbook export separately from normal artifacts', () => {
+  it('validates filtered result workbook export and download-only exclusions', () => {
     const destination = path.resolve(tmpdir(), 'MIA-results');
     expect(validateExportRequest({
       destination,
@@ -34,6 +34,9 @@ describe('artifact filesystem boundary', () => {
       date_to: '2026-08-31',
       direction: 'purchase',
       search: '000123',
+      column_filters: { nmten: 'Công ty A', dgia: '1.000' },
+      exclude_business_keys: ['010|AA|1|1', '010|AA|1|1'],
+      filter_scope: 'details',
     })).toMatchObject({
       destination,
       connection_ids: ['conn_1'],
@@ -43,9 +46,20 @@ describe('artifact filesystem boundary', () => {
       date_to: '2026-08-31',
       direction: 'purchase',
       search: '000123',
+      column_filters: { nmten: 'Công ty A', dgia: '1.000' },
+      exclude_business_keys: ['010|AA|1|1'],
+      filter_scope: 'details',
     });
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-08-01', date_to: '2026-08-31', filter_scope: 'invalid' })).toThrow();
+  });
+
+  it('does not accept result-only exclusions on normal artifact copy requests', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    expect(() => validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['xml'], exclude_business_keys: ['invoice-1'],
+    })).toThrow();
   });
 
   it('sanitizes artifact list filters and date bounds', () => {

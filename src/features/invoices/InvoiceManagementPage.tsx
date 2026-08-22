@@ -27,9 +27,9 @@ interface InvoiceRow {
 const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 
 const rows: InvoiceRow[] = [
-  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'completed', actionsReady: true },
+  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: '128/128 hóa đơn', actionsReady: true },
   { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'invalid_source_credentials' },
-  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Tháng 08/2026: 45/120 HĐ' },
+  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37.5, progressLabel: '45/120 hóa đơn' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
     company: `Công ty CP Đầu tư ${letter}`,
@@ -48,11 +48,6 @@ const statusLabels: Record<RowStatus, string> = {
   ready: 'Sẵn sàng',
 };
 
-function formatMonthKey(value?: string | null) {
-  const match = String(value ?? '').match(/^(\d{4})-(\d{2})$/);
-  return match ? `${match[2]}/${match[1]}` : value || '—';
-}
-
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
   return <span className="selection-box" data-checked={checked || indeterminate}>{indeterminate ? '−' : checked ? '✓' : ''}</span>;
 }
@@ -66,7 +61,7 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   }
   return (
     <div className="progress-cell" data-status={row.status}>
-      <div className="progress-copy"><span>{row.progressLabel}</span><span>{Math.round(row.progress)}%</span></div>
+      <div className="progress-copy"><span>{row.progressLabel}</span></div>
       <div className="progress-track"><span style={{ width: `${Math.max(0, Math.min(100, row.progress))}%` }} /></div>
     </div>
   );
@@ -195,11 +190,7 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
     const item = batchItems[account.connection_id];
     const job = item?.status ?? item?.record;
     const runtimeStatus = job?.status;
-    const currentMonth = job?.current_month;
     const sourceError = job?.error;
-    const sourceMessage = typeof item?.summary?.work?.message === 'string'
-      ? item.summary.work.message
-      : null;
     const inlineError = item?.error;
     const status: RowStatus = inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
       ? 'failed'
@@ -210,14 +201,14 @@ export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, se
           : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
             ? 'completed'
             : 'ready';
-    const progress = status === 'completed' ? 100 : Number(job?.overall_percent ?? 0);
+    const processed = Math.max(0, Number(job?.invoice_progress?.processed ?? 0));
+    const planned = Math.max(0, Number(job?.invoice_progress?.planned ?? 0));
+    const progress = planned > 0 ? Math.min(100, processed * 100 / planned) : status === 'completed' ? 100 : 0;
     const progressLabel = status === 'failed'
       ? inlineError ?? sourceError?.message ?? sourceError?.code ?? runtimeStatus ?? 'failed'
       : status === 'ready'
         ? '—'
-        : currentMonth
-          ? `Tháng ${formatMonthKey(currentMonth.key)}: ${currentMonth.processed}/${currentMonth.planned} HĐ`
-          : sourceMessage ?? job?.stage ?? runtimeStatus ?? '—';
+        : `${status === 'completed' && planned > 0 ? planned : processed}/${planned} hóa đơn`;
     return {
       taxCode: account.username,
       company: account.company_name || '—',

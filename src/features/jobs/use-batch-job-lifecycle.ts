@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CreateJobRequest, JobStatusResponse, JobSummaryResponse } from '../../lib/api/contracts';
+import type { CreateJobRequest, JobStatusResponse } from '../../lib/api/contracts';
 import type { PersistedJob } from '../../lib/runtime-bridge';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
 import { DEFAULT_BATCH_CONCURRENCY, normalizeBatch } from './batch-scheduler';
 
-const POLL_MS = 3_000;
+const POLL_MS = 1_000;
 const MAX_RETRIES = 5;
 
 export interface BatchItem {
   connectionId: string;
   record?: PersistedJob;
   status?: JobStatusResponse;
-  summary?: JobSummaryResponse;
   error?: string;
   errorCode?: string;
 }
@@ -82,16 +81,6 @@ export function useBatchJobLifecycle() {
     if (token !== generation.current || !window.miaRuntime?.jobs) return;
     try {
       const status = await window.miaRuntime.jobs.status(jobId);
-      let summary: JobSummaryResponse | undefined;
-      try {
-        summary = await window.miaRuntime.jobs.summary(jobId);
-      } catch (summaryError) {
-        diagnosticLog('job_summary_poll_failed', {
-          job_id: jobId,
-          connection_id: connectionId,
-          code: (summaryError as { code?: string })?.code,
-        }, 'warn');
-      }
       if (token !== generation.current) return;
       setItems((current) => ({
         ...current,
@@ -99,23 +88,17 @@ export function useBatchJobLifecycle() {
           ...current[connectionId],
           connectionId,
           status,
-          summary: summary ?? current[connectionId]?.summary,
           error: undefined,
           errorCode: undefined,
         },
       }));
-      const workMessage = typeof summary?.work?.message === 'string' ? summary.work.message : null;
       const fingerprint = JSON.stringify([
         status.status,
         status.stage,
-        status.overall_percent,
-        status.current_month?.key,
-        status.current_month?.processed,
-        status.current_month?.planned,
-        status.current_month?.percent,
+        status.invoice_progress?.processed,
+        status.invoice_progress?.planned,
         status.error?.code,
         status.error?.message,
-        workMessage,
       ]);
       if (lastLoggedStatus.current.get(jobId) !== fingerprint) {
         lastLoggedStatus.current.set(jobId, fingerprint);
@@ -124,9 +107,7 @@ export function useBatchJobLifecycle() {
           connection_id: connectionId,
           status: status.status,
           stage: status.stage,
-          overall_percent: status.overall_percent,
-          current_month: status.current_month,
-          source_message: workMessage,
+          invoice_progress: status.invoice_progress,
           error_code: status.error?.code,
         }, status.status === 'failed' ? 'error' : 'info');
       }

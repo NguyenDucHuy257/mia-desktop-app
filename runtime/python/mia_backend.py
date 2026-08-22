@@ -12,6 +12,7 @@ import sys
 from contextlib import closing
 from dataclasses import replace
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,11 @@ from app.services.invoice_pdf_export_service import InvoicePdfExportService
 
 OWNER_ID = "mia-desktop-local"
 WORKER_ID = "slot-direct"
+RESULT_META_PAGE_SIZE = 200
+RESULT_TOTAL_FIELDS = frozenset({
+    "tgtcthue", "tgtthue", "ttcktmai", "tgtcktmai", "tgtphi", "tgtttbso",
+    "tgia", "dgia", "stckhau", "tsuat", "thtien", "tthue",
+})
 
 
 class ProductionBackend:
@@ -259,10 +265,197 @@ class ProductionBackend:
         return max(candidates, key=lambda item: (item.created_at, item.job_id)) if candidates else None
 
     @staticmethod
-    def _empty_result_page(limit: int) -> dict[str, Any]:
-        return {
+    def _empty_result_page(limit: int, *, include_meta: bool = False) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "items": [],
             "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
+        }
+        if include_meta:
+            result["meta"] = {
+                "total_rows": 0,
+                "total_invoices": 0,
+                "columns": [],
+                "totals": {},
+            }
+        return result
+
+    @staticmethod
+    def _flatten_result_payload(value: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(value)
+        attributes = payload.pop("attributes", None)
+        if isinstance(attributes, dict):
+            for key, item in attributes.items():
+                payload.setdefault(str(key), item)
+        return payload
+
+    @classmethod
+    def _result_row(cls, kind: str, item: dict[str, Any]) -> dict[str, Any]:
+        payload = cls._flatten_result_payload(item)
+        serialized = json.dumps(payload, ensure_ascii=False, default=str, sort_keys=True)
+        parts = [
+            str(payload.get(name, ""))
+            for name in ("nbmst", "khhdon", "shdon", "khmshdon")
+        ]
+        business_key = "|".join(parts)
+        raw_id = payload.get("id")
+        identifier = (
+            int(raw_id)
+            if raw_id is not None
+            else int(hashlib.sha256(serialized.encode()).hexdigest()[:12], 16)
+        )
+        row: dict[str, Any] = {
+            "direction": payload.get("direction", "purchase"),
+            "business_key": business_key,
+            "payload": payload,
+        }
+        if kind == "overview":
+            row["overview_id"] = identifier
+        else:
+            row["detail_id"] = identifier
+            row["line_key"] = str(payload.get("stt", identifier))
+        return row
+
+    @staticmethod
+    def _result_cell_value(row: dict[str, Any], key: str) -> Any:
+        if key == "__direction":
+            direction = str(row.get("direction") or "")
+            label = "Mua vào" if direction == "purchase" else "Bán ra" if direction == "sold" else ""
+            return f"{direction} {label}".strip()
+        if key == "__business_key":
+            return row.get("business_key", "")
+        if key == "__line_key":
+            return row.get("line_key", "")
+        payload = row.get("payload") or {}
+        if key in payload:
+            return payload.get(key)
+        folded = key.casefold()
+        return next((value for name, value in payload.items() if str(name).casefold() == folded), "")
+
+    @staticmethod
+    def _contains_filter(value: Any, needle: str) -> bool:
+        text = json.dumps(value, ensure_ascii=False, default=str) if isinstance(value, (dict, list, tuple)) else str(value if value is not None else "")
+        folded_text = text.casefold()
+        folded_needle = needle.casefold().strip()
+        if not folded_needle:
+            return True
+        if folded_needle in folded_text:
+            return True
+        compact_text = "".join(character for character in folded_text if character.isalnum())
+        compact_needle = "".join(character for character in folded_needle if character.isalnum())
+        return bool(compact_needle) and compact_needle in compact_text
+
+    @classmethod
+    def _row_matches(
+        cls,
+        row: dict[str, Any],
+        search: str,
+        column_filters: dict[str, str],
+        excluded_business_keys: set[str],
+    ) -> bool:
+        if row.get("business_key") in excluded_business_keys:
+            return False
+        if search:
+            searchable = {
+                "direction": cls._result_cell_value(row, "__direction"),
+                "business_key": row.get("business_key"),
+                "line_key": row.get("line_key"),
+                "payload": row.get("payload"),
+            }
+            if not cls._contains_filter(searchable, search):
+                return False
+        return all(
+            cls._contains_filter(cls._result_cell_value(row, key), value)
+            for key, value in column_filters.items()
+            if str(value).strip()
+        )
+
+    @staticmethod
+    def _number_value(value: Any) -> Decimal | None:
+        if isinstance(value, bool) or value in (None, ""):
+            return None
+        if isinstance(value, (int, float, Decimal)):
+            try:
+                return Decimal(str(value))
+            except (InvalidOperation, ValueError):
+                return None
+        text = str(value).strip().replace("\u00a0", "").replace(" ", "")
+        if text.endswith("%"):
+            text = text[:-1]
+        if not text:
+            return None
+        if "," in text and "." in text:
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
+            else:
+                text = text.replace(",", "")
+        elif "," in text:
+            text = text.replace(",", ".")
+        try:
+            return Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None
+
+    @staticmethod
+    def _json_number(value: Decimal) -> int | float:
+        integral = value.to_integral_value()
+        return int(integral) if value == integral else float(value)
+
+    def _read_result_page(self, kind: str, reader: JobResultReader, job, *, limit: int, cursor):
+        return (
+            reader.overview_page(job, limit=limit, cursor=cursor)
+            if kind == "overview"
+            else reader.detail_page(job, limit=limit, cursor=cursor)
+        )
+
+    def _result_metadata(
+        self,
+        kind: str,
+        reader: JobResultReader,
+        job,
+        *,
+        search: str,
+        column_filters: dict[str, str],
+        excluded_business_keys: set[str],
+    ) -> dict[str, Any]:
+        cursor = None
+        seen_cursors: set[str] = set()
+        total_rows = 0
+        invoice_keys: set[str] = set()
+        columns: list[str] = []
+        seen_columns: set[str] = set()
+        totals: dict[str, Decimal] = {}
+        while True:
+            page = self._read_result_page(
+                kind, reader, job, limit=RESULT_META_PAGE_SIZE, cursor=cursor
+            )
+            for item in page["items"]:
+                row = self._result_row(kind, item)
+                if not self._row_matches(row, search, column_filters, excluded_business_keys):
+                    continue
+                total_rows += 1
+                if row.get("business_key"):
+                    invoice_keys.add(str(row["business_key"]))
+                for key, value in (row.get("payload") or {}).items():
+                    name = str(key)
+                    if name not in seen_columns:
+                        seen_columns.add(name)
+                        columns.append(name)
+                    if name.casefold() in RESULT_TOTAL_FIELDS:
+                        number = self._number_value(value)
+                        if number is not None:
+                            totals[name] = totals.get(name, Decimal("0")) + number
+            next_cursor = page["pagination"].get("next_cursor")
+            if not page["pagination"].get("has_more") or not next_cursor:
+                break
+            if next_cursor in seen_cursors:
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        return {
+            "total_rows": total_rows,
+            "total_invoices": len(invoice_keys),
+            "columns": columns,
+            "totals": {key: self._json_number(value) for key, value in totals.items()},
         }
 
     def results(self, kind: str, query: dict[str, Any]) -> dict[str, Any]:
@@ -271,9 +464,10 @@ class ProductionBackend:
         limit = int(query.get("limit", 50))
         if not 1 <= limit <= 200:
             raise ValueError("invalid_result_limit")
+        include_meta = bool(query.get("include_meta"))
         base_job = self._result_job(str(query["connection_id"]))
         if base_job is None:
-            return self._empty_result_page(limit)
+            return self._empty_result_page(limit, include_meta=include_meta)
 
         date_from = str(query.get("date_from") or base_job.parameters["date_from"])
         date_to = str(query.get("date_to") or base_job.parameters["date_to"])
@@ -282,9 +476,20 @@ class ProductionBackend:
         direction = query.get("direction")
         if direction not in (None, "purchase", "sold"):
             raise ValueError("invalid_result_direction")
+        raw_filters = query.get("column_filters") or {}
+        if not isinstance(raw_filters, dict):
+            raise ValueError("invalid_result_filters")
+        column_filters = {
+            str(key): str(value).strip()
+            for key, value in raw_filters.items()
+            if str(value).strip()
+        }
+        excluded_business_keys = {
+            str(value) for value in (query.get("exclude_business_keys") or ()) if str(value)
+        }
 
-        # Read-only desktop range/search view over the source DB. The data model
-        # and cursor/page implementation remain JobResultReader from source.
+        # Read-only desktop range/search/filter view over the source DB. The data
+        # model and keyset cursor implementation remain JobResultReader from source.
         job = replace(base_job, parameters={
             **base_job.parameters,
             "date_from": date_from,
@@ -299,52 +504,45 @@ class ProductionBackend:
         search = str(query.get("search") or "").strip().casefold()
         output: list[dict[str, Any]] = []
         has_more = False
+        next_cursor = None
+        seen_cursors: set[str] = set()
         while len(output) < limit:
-            page = (
-                reader.overview_page(job, limit=max(1, limit - len(output)), cursor=cursor)
-                if kind == "overview"
-                else reader.detail_page(job, limit=max(1, limit - len(output)), cursor=cursor)
+            page = self._read_result_page(
+                kind, reader, job, limit=max(1, limit - len(output)), cursor=cursor
             )
             for item in page["items"]:
-                serialized = json.dumps(item, ensure_ascii=False, default=str)
-                if search and search not in serialized.casefold():
-                    continue
-                parts = [
-                    str(item.get(name, ""))
-                    for name in ("nbmst", "khhdon", "shdon", "khmshdon")
-                ]
-                business_key = "|".join(parts)
-                raw_id = item.get("id")
-                identifier = (
-                    int(raw_id)
-                    if raw_id is not None
-                    else int(hashlib.sha256(serialized.encode()).hexdigest()[:12], 16)
-                )
-                row = {
-                    "direction": item.get("direction", "purchase"),
-                    "business_key": business_key,
-                    "payload": item,
-                }
-                if kind == "overview":
-                    row["overview_id"] = identifier
-                else:
-                    row["detail_id"] = identifier
-                    row["line_key"] = str(item.get("stt", identifier))
-                output.append(row)
-                if len(output) >= limit:
-                    break
-            cursor = page["pagination"]["next_cursor"]
-            has_more = bool(page["pagination"]["has_more"])
-            if not has_more or not cursor:
+                row = self._result_row(kind, item)
+                if self._row_matches(row, search, column_filters, excluded_business_keys):
+                    output.append(row)
+            next_cursor = page["pagination"].get("next_cursor")
+            has_more = bool(page["pagination"].get("has_more") and next_cursor)
+            if len(output) >= limit or not has_more:
                 break
-        return {
+            if str(next_cursor) in seen_cursors:
+                has_more = False
+                next_cursor = None
+                break
+            seen_cursors.add(str(next_cursor))
+            cursor = next_cursor
+
+        result: dict[str, Any] = {
             "items": output[:limit],
             "pagination": {
                 "limit": limit,
                 "has_more": has_more,
-                "next_cursor": cursor if has_more else None,
+                "next_cursor": next_cursor if has_more else None,
             },
         }
+        if include_meta:
+            result["meta"] = self._result_metadata(
+                kind,
+                reader,
+                job,
+                search=search,
+                column_filters=column_filters,
+                excluded_business_keys=excluded_business_keys,
+            )
+        return result
 
     def export_results(self, value: dict[str, Any]) -> dict[str, Any]:
         destination = Path(value["destination"])
@@ -371,11 +569,18 @@ class ProductionBackend:
             "date_to": date_to,
             "direction": value.get("direction"),
             "search": str(value.get("search") or ""),
+            "exclude_business_keys": list(value.get("exclude_business_keys") or ()),
         }
+        filter_scope = value.get("filter_scope")
         workbook = Workbook()
         workbook.remove(workbook.active)
         for scope in scopes:
-            rows = self._all_result_rows(scope, query)
+            scope_query = {
+                **query,
+                "column_filters": dict(value.get("column_filters") or {})
+                if filter_scope in (None, scope) else {},
+            }
+            rows = self._all_result_rows(scope, scope_query)
             sheet = workbook.create_sheet("Tong quan" if scope == "overview" else "Chi tiet")
             self._write_result_sheet(sheet, rows, include_line=scope == "details")
 
@@ -401,7 +606,12 @@ class ProductionBackend:
         rows: list[dict[str, Any]] = []
         cursor = None
         while True:
-            page = self.results(scope, {**query, "cursor": cursor, "limit": 200})
+            page = self.results(scope, {
+                **query,
+                "cursor": cursor,
+                "limit": 200,
+                "include_meta": False,
+            })
             rows.extend(page["items"])
             if not page["pagination"]["has_more"] or not page["pagination"]["next_cursor"]:
                 return rows
@@ -485,10 +695,51 @@ class ProductionBackend:
                     )
 
     @staticmethod
+    def _invoice_progress(job) -> dict[str, int]:
+        state = getattr(job, "progress_state", None)
+        if not isinstance(state, dict):
+            return {"processed": 0, "planned": 0}
+        modules = state.get("modules")
+        if not isinstance(modules, dict):
+            return {"processed": 0, "planned": 0}
+        stage = state.get("current_stage") or getattr(job, "current_stage", None)
+        module = modules.get(stage) if stage in modules else None
+        if not isinstance(module, dict):
+            running = next((
+                value for value in modules.values()
+                if isinstance(value, dict) and value.get("status") == "running"
+            ), None)
+            if isinstance(running, dict):
+                module = running
+            else:
+                ordered = list(modules.values())
+                module = next((
+                    value for value in reversed(ordered)
+                    if isinstance(value, dict) and value.get("status") == "completed"
+                ), None)
+        if not isinstance(module, dict):
+            return {"processed": 0, "planned": 0}
+        months = module.get("months") or []
+        planned = sum(
+            max(0, int(month.get("planned") or 0))
+            for month in months if isinstance(month, dict)
+        )
+        processed = sum(
+            max(0, int(month.get("processed") or 0))
+            for month in months if isinstance(month, dict)
+        )
+        if module.get("status") == "completed" and planned > 0:
+            processed = max(processed, planned)
+        if planned > 0:
+            processed = min(processed, planned)
+        return {"processed": processed, "planned": planned}
+
+    @staticmethod
     def public_job(job) -> dict[str, Any]:
         status = _job_status(job).model_dump()
         return {
             **status,
+            "invoice_progress": ProductionBackend._invoice_progress(job),
             "connection_id": str(job.parameters.get("connection_id") or job.account_key),
             "intent": {
                 "connection_id": str(job.parameters.get("connection_id") or job.account_key),
