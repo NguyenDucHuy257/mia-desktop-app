@@ -86,7 +86,21 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
                     # This changes no portal, retry, cache or naming rule.
                     payload = {**payload, "export_xml": True, "export_html": True}
                 self._set_current_source_unit(_stage, payload)
-                return _original(job, payload, *args, **kwargs)
+                try:
+                    outcome = _original(job, payload, *args, **kwargs)
+                except Exception:
+                    # Preserve the source retry/lease decision. The current item
+                    # remains running; the terminal job status lets the desktop
+                    # present it as failed only if the source gives up.
+                    raise
+                if _stage == "ensure_xml":
+                    state = (
+                        "failed"
+                        if isinstance(outcome, dict) and outcome.get("outcome") == "unavailable"
+                        else "completed"
+                    )
+                    self._complete_current_artifact(payload, state)
+                return outcome
 
             setattr(self.core, name, wrapped)
         return originals
@@ -119,8 +133,35 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         self._state["current_query_type"] = str(query_type) if query_type else None
         if current_artifact is not None:
             self._state["current_artifact"] = current_artifact
+            progress = self._state.setdefault("artifact_progress", {"items": {}})
+            items = progress.setdefault("items", {})
+            key = self._artifact_key(current_artifact)
+            items[key] = {"xml": "running", "html": "running"}
+            progress["current_key"] = key
         # Persist only when the source changes logical unit. Item/month progress
         # continues to use the source pipeline's own persistence throttle.
+        self._persist(force=True)
+
+    @staticmethod
+    def _artifact_key(payload):
+        return "|".join(str(payload.get(name) or "") for name in (
+            "direction", "query_type", "nbmst", "khhdon", "shdon", "khmshdon",
+        ))
+
+    def _complete_current_artifact(self, payload, state):
+        if not isinstance(payload, dict) or not hasattr(self, "_state"):
+            return
+        progress = self._state.setdefault("artifact_progress", {"items": {}})
+        items = progress.setdefault("items", {})
+        key = self._artifact_key(payload)
+        previous = items.get(key) or {}
+        items[key] = {"xml": state, "html": state}
+        progress["current_key"] = key
+        if previous.get("xml") not in {"completed", "failed"}:
+            progress["processed"] = int(progress.get("processed") or 0) + 1
+        if state == "completed" and previous.get("xml") != "completed":
+            progress["completed_xml"] = int(progress.get("completed_xml") or 0) + 1
+            progress["completed_html"] = int(progress.get("completed_html") or 0) + 1
         self._persist(force=True)
 
     @staticmethod

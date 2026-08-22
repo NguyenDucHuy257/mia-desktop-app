@@ -56,14 +56,15 @@
 .xml-html-progress > span > i { height: 100%; display: block; border-radius: inherit; background: #16a34a; transition: width 180ms ease; }
 
 .xml-html-state { min-height: 150px; border: 1px dashed #d6d6cf; border-radius: 12px; display: grid; place-items: center; color: #62625b; }
-.xml-html-table { min-height: 210px; flex: 1 1 0; overflow-x: auto; overflow-y: auto; border: 1px solid #dce3ea; border-radius: 10px; scrollbar-color: #4f8fd8 #f3f6f9; }
+.xml-html-table { min-height: 210px; flex: 1 1 0; overflow-x: auto; overflow-y: auto; border: 1px solid #dce3ea; border-radius: 10px; scrollbar-gutter: stable; scrollbar-color: #4f8fd8 #f3f6f9; }
 .xml-html-table::-webkit-scrollbar { width: 12px; height: 12px; }
 .xml-html-table::-webkit-scrollbar-thumb { border: 2px solid #fff; border-radius: 999px; background: linear-gradient(90deg, #3b82f6, #38a7d8 48%, #d6ad42); }
-.xml-html-row { width: max-content; min-width: 100%; min-height: 42px; display: grid; align-items: stretch; border-bottom: 1px solid #e8edf2; background: #fff; }
+.xml-html-row { width: 100%; min-width: 1345px; min-height: 42px; box-sizing: border-box; display: grid; align-items: stretch; border-bottom: 1px solid #e8edf2; background: #fff; }
 .xml-html-row--head { position: sticky; top: 0; z-index: 2; background: #f4f7fa; font-weight: 700; }
 .xml-html-row > span { min-width: 0; padding: 10px 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .xml-html-row > span:first-child { text-align: center; }
 .xml-html-amount { text-align: right; font-variant-numeric: tabular-nums; }
+.xml-html-row span[data-progress="Chưa xử lý"] { color: #667085; font-weight: 600; }
 .xml-html-row span[data-progress="Hoàn tất"] { color: #166534; font-weight: 700; }
 .xml-html-row span[data-progress="Đang tải"] { color: #2563b8; font-weight: 700; }
 .xml-html-row span[data-progress="Lỗi"] { color: #b91c1c; font-weight: 700; }

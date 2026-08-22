@@ -17,6 +17,7 @@ interface DateRangePickerProps {
   className?: string;
   fromLabel?: string;
   toLabel?: string;
+  disabled?: boolean;
 }
 
 function datePartAtPointer(input: HTMLInputElement, clientX: number): DatePart {
@@ -53,7 +54,7 @@ function selectDatePart(input: HTMLInputElement, part: DatePart) {
   input.setSelectionRange(range[0], range[1]);
 }
 
-export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fromLabel = 'Từ ngày', toLabel = 'Đến ngày' }: DateRangePickerProps) {
+export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fromLabel = 'Từ ngày', toLabel = 'Đến ngày', disabled = false }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [fromText, setFromText] = useState(displayDate(dateFrom));
   const [toText, setToText] = useState(displayDate(dateTo));
@@ -75,6 +76,7 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
 
   useEffect(() => { setFromText(displayDate(dateFrom)); }, [dateFrom]);
   useEffect(() => { setToText(displayDate(dateTo)); }, [dateTo]);
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
 
   function apply() {
     const nextFrom = parseDateText(fromText);
@@ -115,7 +117,7 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
   }
 
   return <div ref={root} className={`date-range-control ${className}`.trim()}>
-    <button className="date-range-trigger" type="button" aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((value) => !value)}>
+    <button className="date-range-trigger" type="button" disabled={disabled} aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((value) => !value)}>
       <img src={calendarIcon} alt="" /><span><small>KHOẢNG THỜI GIAN</small><strong>{displayDate(dateFrom)} - {displayDate(dateTo)}</strong></span>
     </button>
     {open ? <div className="date-range-popover" role="dialog" aria-label="Chọn khoảng thời gian">

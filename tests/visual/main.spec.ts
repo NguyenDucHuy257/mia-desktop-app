@@ -551,7 +551,7 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
     const rows = Array.from({ length: 51 }, (_, index) => ({
       row_id: index + 1, direction: 'purchase', fields: {
         tdlap: '20/08/2026', khmshdon: '1', khhdon: 'AA/26E', shdon: String(index + 1),
-        nbmst: `010000${String(index).padStart(4, '0')}`, nbten: `Đối tác ${index + 1}`,
+        nbmst: `010000${String(index).padStart(4, '0')}`, nbten: index === 0 ? `Đối tác ${'rất dài '.repeat(30)}` : `Đối tác ${index + 1}`,
         tgtttbso: index * 1000, tthai: 'Hóa đơn mới',
       },
     }));
@@ -560,7 +560,7 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
       jobs: { resume: async () => null, resumeAll: async () => [], latestAll: async () => [], start: async () => ({}), status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       results: { overview: async ({ cursor }: { cursor?: string | null }) => ({ items: cursor ? rows.slice(50) : rows.slice(0, 50), total_count: 51, pagination: { limit: 50, has_more: !cursor, next_cursor: cursor ? null : 'page-2' } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
-      artifacts: { list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
+      artifacts: { targets: async () => ({ keys: [], total: 0 }), cancel: async () => ({ cancelled: true }), list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
     } });
   });
   await page.goto('/');
@@ -575,6 +575,11 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
   await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(50);
   const grids = await page.locator('.xml-html-row').evaluateAll((rows) => rows.slice(0, 3).map((row) => getComputedStyle(row).gridTemplateColumns));
   expect(new Set(grids).size).toBe(1);
+  const columnEdges = await page.locator('.xml-html-row').evaluateAll((rows) => rows.slice(0, 3).map((row) => Array.from(row.children).map((cell) => {
+    const box = cell.getBoundingClientRect(); return [Math.round(box.x), Math.round(box.width)];
+  })));
+  expect(columnEdges[1]).toEqual(columnEdges[0]);
+  expect(columnEdges[2]).toEqual(columnEdges[0]);
   await expect(page.getByText('Tổng 51 hàng · tối đa 50 hàng/trang')).toBeVisible();
   const download = page.getByRole('button', { name: 'Tải xuống kết quả' });
   await expect(download).toHaveCSS('background-color', 'rgb(37, 99, 184)');
@@ -583,6 +588,7 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
   await expect(download).toHaveCSS('color', 'rgb(255, 255, 255)');
   await page.mouse.down();
   await expect(download).toHaveCSS('color', 'rgb(255, 255, 255)');
+  await page.mouse.move(0, 0);
   await page.mouse.up();
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(1);
@@ -607,7 +613,7 @@ test('XML HTML empty data requires explicit overview synchronization', async ({ 
       },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       results: { overview: async () => ({ items: synced ? [{ row_id: 1, direction: 'purchase', fields: { tdlap: '20/08/2026', khmshdon: '1', khhdon: 'AA/26E', shdon: '1', nbmst: '0101', nbten: 'Đối tác', tgtttbso: 1000, tthai: 'Hóa đơn mới' } }] : [], total_count: synced ? 1 : 0, pagination: { limit: 50, has_more: false, next_cursor: null } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
-      artifacts: { list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
+      artifacts: { targets: async () => ({ keys: [], total: 0 }), cancel: async () => ({ cancelled: true }), list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
     } });
   });
   await page.goto('/');
@@ -621,4 +627,60 @@ test('XML HTML empty data requires explicit overview synchronization', async ({ 
   const starts = await page.evaluate(() => (window as typeof window & { xmlHtmlSyncStarts: Array<Record<string, unknown>> }).xmlHtmlSyncStarts);
   expect(starts).toHaveLength(1);
   expect(starts[0]).toMatchObject({ connection_id: 'conn_sync', scopes: ['overview'], data_types: ['invoice'] });
+});
+
+test('XML HTML source outcomes update counters and row substates live', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_progress', username: '0100000000', company_name: 'Công ty Progress', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    const rows = ['1', '2'].map((number, index) => ({
+      row_id: index + 1, direction: 'purchase', fields: {
+        tdlap: '20/08/2026', khmshdon: '1', khhdon: 'AA/26E', shdon: number,
+        nbmst: '0101', nbten: `Đối tác ${number}`, tgtttbso: 1000, tthai: 'Hóa đơn mới',
+      },
+    }));
+    const keys = rows.map((row) => `purchase|query|${row.fields.nbmst}|${row.fields.khhdon}|${row.fields.shdon}|${row.fields.khmshdon}`);
+    let polls = 0;
+    const status = () => {
+      polls += 1;
+      const items = polls === 1
+        ? { [keys[0]]: { xml: 'running', html: 'running' } }
+        : polls === 2
+          ? { [keys[0]]: { xml: 'completed', html: 'completed' }, [keys[1]]: { xml: 'running', html: 'running' } }
+          : { [keys[0]]: { xml: 'completed', html: 'completed' }, [keys[1]]: { xml: 'completed', html: 'completed' } };
+      return {
+        job_id: 'job_progress', status: polls >= 3 ? 'completed' : 'running', stage: 'ensure_xml', overall_percent: polls * 30,
+        current_month: null, updated_at: String(polls), error: null,
+        artifact_progress: { current_key: keys[Math.min(polls - 1, 1)], processed: Math.max(0, polls - 1), completed_xml: Math.max(0, polls - 1), completed_html: Math.max(0, polls - 1), items },
+      };
+    };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      jobs: {
+        resume: async () => null, resumeAll: async () => [], latestAll: async () => [],
+        start: async (intent: unknown) => ({ record: { job_id: 'job_progress', connection_id: account.connection_id, intent, idempotency_key: 'progress', created_at: 'now', updated_at: 'now', status: 'queued' }, accepted: { job_id: 'job_progress', status: 'queued', current_stage: null } }),
+        status: async () => status(), summary: async () => ({}), cancel: async () => ({ ...status(), status: 'cancelled' }), clear: async () => undefined,
+      },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      results: { overview: async () => ({ items: rows, total_count: 2, pagination: { limit: 50, has_more: false, next_cursor: null } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
+      artifacts: {
+        targets: async () => ({ keys, total: keys.length }), export: async () => ({ count: 4, files: ['1.xml', '1.html', '2.xml', '2.html'] }), cancel: async () => ({ cancelled: true }),
+        list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+        onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined,
+      },
+    } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'XML/HTML', exact: true }).click();
+  await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Tải xuống kết quả' }).click();
+
+  await expect(page.locator('.xml-html-progress small')).toHaveText('XML 0/2 · HTML 0/2');
+  await expect(page.locator('[data-progress="Đang tải"]')).toHaveCount(1);
+  await expect(page.locator('[data-progress="Chưa xử lý"]')).toHaveCount(1);
+
+  await expect(page.locator('.xml-html-progress small')).toHaveText('XML 1/2 · HTML 1/2', { timeout: 5_000 });
+  await expect(page.locator('[data-progress="Hoàn tất"]')).toHaveCount(1);
+  await expect(page.locator('[data-progress="Đang tải"]')).toHaveCount(1);
+
+  await expect(page.locator('[data-progress="Hoàn tất"]')).toHaveCount(2, { timeout: 5_000 });
 });

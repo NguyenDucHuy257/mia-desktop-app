@@ -4,6 +4,8 @@ import type { ArtifactExportRequest, RuntimeArtifactProgress } from '../../lib/r
 import { useBatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 
 export type InvoiceArtifactKind = 'xml' | 'html';
+export type InvoiceArtifactState = 'pending' | 'running' | 'completed' | 'failed';
+export type InvoiceArtifactStates = Record<string, Record<InvoiceArtifactKind, InvoiceArtifactState>>;
 export type ArtifactBatchPhase = 'idle' | 'sync' | 'source' | 'copy' | 'completed' | 'failed' | 'stopping';
 
 export interface XmlHtmlFilterRequest {
@@ -25,12 +27,30 @@ export interface XmlHtmlSyncRequest extends XmlHtmlFilterRequest {
   forceRefresh: boolean;
 }
 
-export function phaseWeightedPercent(sourcePercent: number, copyPercent: number, kindCount: number) {
-  const copies = Math.max(1, kindCount);
-  return Math.max(0, Math.min(100, (
-    Math.max(0, Math.min(100, sourcePercent))
-    + Math.max(0, Math.min(100, copyPercent)) * copies
-  ) / (1 + copies)));
+export function actualArtifactPercent(
+  sourceInvoicesTerminal: number, copied: number, invoiceTotal: number, kindCount: number,
+) {
+  const safeInvoices = Math.max(0, invoiceTotal);
+  const total = safeInvoices + safeInvoices * Math.max(1, kindCount);
+  if (!total) return 0;
+  return Math.max(0, Math.min(99.9, (Math.max(0, sourceInvoicesTerminal) + Math.max(0, copied)) / total * 100));
+}
+
+export function completedArtifactKeys(states: InvoiceArtifactStates, targets: Iterable<string>) {
+  const keys = [...targets];
+  return {
+    xml: new Set(keys.filter((key) => states[key]?.xml === 'completed')),
+    html: new Set(keys.filter((key) => states[key]?.html === 'completed')),
+  };
+}
+
+export function settleRunningArtifactStates(states: InvoiceArtifactStates, cancelled: boolean) {
+  return Object.fromEntries(Object.entries(states).map(([key, item]) => [
+    key,
+    Object.fromEntries(Object.entries(item).map(([kind, state]) => [
+      kind, state === 'running' ? (cancelled ? 'pending' : 'failed') : state,
+    ])) as Record<InvoiceArtifactKind, InvoiceArtifactState>,
+  ])) as InvoiceArtifactStates;
 }
 
 function sourceIntent(value: XmlHtmlFilterRequest, overrides: Partial<CreateJobRequest>): CreateJobRequest {
@@ -54,38 +74,71 @@ export function useXmlHtmlDownloadLifecycle() {
   const [phase, setPhase] = useState<ArtifactBatchPhase>('idle');
   const [syncRevision, setSyncRevision] = useState(0);
   const [copyProgress, setCopyProgress] = useState<RuntimeArtifactProgress>({ status: 'running', processed: 0, total: 0, percent: 0 });
-  const [completedKeys, setCompletedKeys] = useState<Record<InvoiceArtifactKind, Set<string>>>({ xml: new Set(), html: new Set() });
+  const [artifactStates, setArtifactStates] = useState<InvoiceArtifactStates>({});
+  const [targetKeys, setTargetKeys] = useState(new Set<string>());
   const [message, setMessage] = useState<string | null>(null);
   const [failedCount, setFailedCount] = useState(0);
   const exportStarted = useRef(false);
   const lastCopied = useRef(0);
+  const currentCopy = useRef<{ key: string; kind: InvoiceArtifactKind } | null>(null);
   const activeRef = useRef(false);
+  const startGeneration = useRef(0);
+  const sourceStarted = useRef(false);
 
   const connectionId = operation === 'sync' ? syncRequest?.connectionId : request?.connectionId;
   const item = connectionId ? jobs.items[connectionId] : undefined;
   const job = item?.status ?? item?.record;
   const sourcePercent = Number(job?.overall_percent ?? 0);
+  const selectedKinds = request?.kinds ?? [];
+  const sourceTerminal = [...targetKeys].filter((key) => selectedKinds.every(
+    (kind) => ['completed', 'failed'].includes(artifactStates[key]?.[kind]),
+  )).length;
   const percent = phase === 'completed' || phase === 'failed'
     ? 100
-    : phase === 'copy'
-      ? phaseWeightedPercent(100, copyProgress.percent, request?.kinds.length ?? 1)
-      : phase === 'source'
-        ? phaseWeightedPercent(sourcePercent, 0, request?.kinds.length ?? 1)
-        : sourcePercent;
+    : actualArtifactPercent(
+      sourceTerminal, phase === 'copy' ? copyProgress.processed : 0,
+      targetKeys.size, selectedKinds.length,
+    );
+
+  const completedKeys = useMemo(
+    () => completedArtifactKeys(artifactStates, targetKeys),
+    [artifactStates, targetKeys],
+  );
 
   useEffect(() => window.miaRuntime?.artifacts?.onInvoiceProgress((progress) => {
     setCopyProgress(progress);
+    if (progress.artifact_key && (progress.kind === 'xml' || progress.kind === 'html')) {
+      currentCopy.current = { key: progress.artifact_key, kind: progress.kind };
+    }
     if (progress.processed > lastCopied.current && progress.artifact_key && (progress.kind === 'xml' || progress.kind === 'html')) {
       const kind = progress.kind;
-      setCompletedKeys((current) => ({ ...current, [kind]: new Set([...current[kind], progress.artifact_key!]) }));
+      const key = progress.artifact_key;
+      setArtifactStates((current) => current[key]
+        ? { ...current, [key]: { ...current[key], [kind]: 'completed' } }
+        : current);
     }
     lastCopied.current = Math.max(lastCopied.current, progress.processed);
   }), []);
 
   useEffect(() => {
+    if (operation !== 'download' || !job?.artifact_progress?.items) return;
+    setArtifactStates((current) => {
+      const next = { ...current };
+      for (const key of targetKeys) {
+        const source = job.artifact_progress?.items[key];
+        if (!source || !next[key]) continue;
+        next[key] = { ...next[key] };
+        for (const kind of selectedKinds) next[key][kind] = source[kind];
+      }
+      return next;
+    });
+  }, [job?.artifact_progress, operation, selectedKinds, targetKeys]);
+
+  useEffect(() => {
     if (!job?.status) return;
     if (['failed', 'cancelled', 'abandoned'].includes(job.status)) {
       activeRef.current = false;
+      setArtifactStates((current) => settleRunningArtifactStates(current, job.status === 'cancelled'));
       setPhase('failed');
       setMessage(job.status === 'cancelled'
         ? operation === 'sync' ? 'Đã dừng đồng bộ dữ liệu.' : 'Đã dừng tải XML/HTML.'
@@ -124,6 +177,12 @@ export function useXmlHtmlDownloadLifecycle() {
         : `Đã tải ${result.count} file XML/HTML vào thư mục lưu trữ.`);
     }).catch((error: { code?: string; message?: string }) => {
       activeRef.current = false;
+      const failedCopy = currentCopy.current;
+      if (failedCopy && error.code !== 'artifact_cancelled') {
+        setArtifactStates((current) => current[failedCopy.key]
+          ? { ...current, [failedCopy.key]: { ...current[failedCopy.key], [failedCopy.kind]: 'failed' } }
+          : current);
+      }
       setPhase('failed');
       setMessage(error.code === 'artifact_cancelled'
         ? 'Đã dừng tải XML/HTML.'
@@ -148,16 +207,45 @@ export function useXmlHtmlDownloadLifecycle() {
   const start = useCallback((value: XmlHtmlDownloadRequest) => {
     if (activeRef.current || jobs.active) return false;
     activeRef.current = true;
+    const token = ++startGeneration.current;
+    sourceStarted.current = false;
     exportStarted.current = false;
     lastCopied.current = 0;
-    setCompletedKeys({ xml: new Set(), html: new Set() });
+    currentCopy.current = null;
+    setArtifactStates({});
+    setTargetKeys(new Set());
     setRequest(value);
     setOperation('download');
     setMessage(null);
     setFailedCount(0);
     setCopyProgress({ status: 'running', processed: 0, total: 0, percent: 0 });
     setPhase('source');
-    jobs.startMany([sourceIntent(value, { scopes: ['overview', 'detail'], data_types: value.kinds })]);
+    const exportRequest: ArtifactExportRequest = {
+      destination: value.destination, connection_ids: [value.connectionId], kinds: value.kinds,
+      date_from: value.dateFrom, date_to: value.dateTo, direction: value.direction,
+      query_type: value.queryType, search: value.search,
+    };
+    void window.miaRuntime!.artifacts.targets(exportRequest).then((snapshot) => {
+      if (token !== startGeneration.current || !activeRef.current) return;
+      if (!snapshot.total) {
+        activeRef.current = false;
+        setPhase('failed');
+        setMessage('Không tồn tại hóa đơn phù hợp để tải XML/HTML.');
+        return;
+      }
+      const keys = new Set(snapshot.keys);
+      const pending = Object.fromEntries(snapshot.keys.map((key) => [key, { xml: 'pending', html: 'pending' }])) as InvoiceArtifactStates;
+      setTargetKeys(keys);
+      setArtifactStates(pending);
+      setRequest({ ...value, totalRows: snapshot.total });
+      sourceStarted.current = true;
+      jobs.startMany([sourceIntent(value, { scopes: ['overview', 'detail'], data_types: value.kinds })]);
+    }).catch(() => {
+      if (token !== startGeneration.current) return;
+      activeRef.current = false;
+      setPhase('failed');
+      setMessage('Không thể xác định danh sách hóa đơn cần tải.');
+    });
     return true;
   }, [jobs.active, jobs.startMany]);
 
@@ -165,7 +253,12 @@ export function useXmlHtmlDownloadLifecycle() {
     if (!['sync', 'source', 'copy'].includes(phase)) return;
     setPhase('stopping');
     if (phase === 'copy') await window.miaRuntime?.artifacts?.cancel();
-    else await jobs.cancelAll();
+    else if (phase === 'source' && !sourceStarted.current) {
+      startGeneration.current += 1;
+      activeRef.current = false;
+      setPhase('failed');
+      setMessage('Đã dừng tải XML/HTML.');
+    } else await jobs.cancelAll();
   }, [jobs.cancelAll, phase]);
 
   const active = ['sync', 'source', 'copy', 'stopping'].includes(phase);
@@ -175,9 +268,9 @@ export function useXmlHtmlDownloadLifecycle() {
     downloadActive: active && operation === 'download',
     canStop: phase === 'sync' || phase === 'source' || phase === 'copy',
     phase, percent, sourcePercent, request, syncRequest, job, copyProgress,
-    completedKeys, failedCount, syncRevision, message, start, startSync, stop,
+    artifactStates, targetKeys, completedKeys, failedCount, syncRevision, message, start, startSync, stop,
     clearMessage: () => setMessage(null),
-  }), [active, completedKeys, copyProgress, failedCount, job, message, operation, percent, phase, request, sourcePercent, start, startSync, stop, syncRequest, syncRevision]);
+  }), [active, artifactStates, completedKeys, copyProgress, failedCount, job, message, operation, percent, phase, request, sourcePercent, start, startSync, stop, syncRequest, syncRevision, targetKeys]);
 }
 
 export type XmlHtmlDownloadLifecycle = ReturnType<typeof useXmlHtmlDownloadLifecycle>;

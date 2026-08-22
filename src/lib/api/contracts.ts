@@ -62,6 +62,13 @@ export interface JobStatusResponse {
     shdon: string;
     khmshdon: string;
   } | null;
+  artifact_progress?: {
+    current_key: string;
+    processed: number;
+    completed_xml: number;
+    completed_html: number;
+    items: Record<string, { xml: 'running' | 'completed' | 'failed'; html: 'running' | 'completed' | 'failed' }>;
+  } | null;
   /** Raw source progress_state.message token used as presentation input. */
   message?: string | null;
   event_sequence?: number;

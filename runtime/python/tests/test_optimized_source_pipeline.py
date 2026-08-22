@@ -154,7 +154,9 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         observed = []
         pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
         pipeline.core = SimpleNamespace(
-            run_xml_unit=lambda _job, payload: observed.append(dict(payload))
+            run_xml_unit=lambda _job, payload: (
+                observed.append(dict(payload)) or {"outcome": "reused_verified"}
+            )
         )
         pipeline._state = {}
         pipeline._desktop_current_unit = None
@@ -170,12 +172,43 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         self.assertTrue(observed[0]["export_xml"])
         self.assertTrue(observed[0]["export_html"])
         self.assertEqual(pipeline._state["current_artifact"]["shdon"], "12")
+        first_key = "purchase|query|0101|AA/26E|12|1"
+        self.assertEqual(
+            pipeline._state["artifact_progress"]["items"][first_key],
+            {"xml": "completed", "html": "completed"},
+        )
+        self.assertEqual(pipeline._state["artifact_progress"]["completed_xml"], 1)
+        self.assertEqual(pipeline._state["artifact_progress"]["completed_html"], 1)
 
         pipeline.core.run_xml_unit(object(), {
             "direction": "purchase", "query_type": "query", "nbmst": "0101",
             "khhdon": "AA/26E", "shdon": "13", "khmshdon": "1",
         })
         self.assertEqual(pipeline._state["current_artifact"]["shdon"], "13")
+        self.assertEqual(pipeline._state["artifact_progress"]["processed"], 2)
+
+    def test_xml_wrapper_records_unavailable_as_failed_without_success_increment(self):
+        pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+        pipeline.core = SimpleNamespace(
+            run_xml_unit=lambda _job, _payload: {"outcome": "unavailable"}
+        )
+        pipeline._state = {}
+        pipeline._desktop_current_unit = None
+        pipeline._persist = lambda **_kwargs: None
+        pipeline._install_unit_progress_wrappers()
+
+        pipeline.core.run_xml_unit(object(), {
+            "direction": "sold", "query_type": "query", "nbmst": "0101",
+            "khhdon": "BB/26E", "shdon": "7", "khmshdon": "1",
+        })
+
+        progress = pipeline._state["artifact_progress"]
+        self.assertEqual(
+            progress["items"]["sold|query|0101|BB/26E|7|1"],
+            {"xml": "failed", "html": "failed"},
+        )
+        self.assertEqual(progress.get("completed_xml", 0), 0)
+        self.assertEqual(progress.get("completed_html", 0), 0)
 
 
 if __name__ == "__main__":

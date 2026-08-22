@@ -142,6 +142,11 @@ function createArtifactBroker(getRuntime) {
       const task = await getRuntime().invoke('artifacts.export.cancel', { task_id: activeTaskId });
       return { cancelled: task.status === 'cancelling' || task.status === 'cancelled' };
     }),
+    targets: (value) => runBrokerCommand(() => {
+      const request = validateExportRequest(value);
+      if (!request.kinds.every((kind) => kind === 'xml' || kind === 'html')) throw new TypeError('invalid_artifact_kind');
+      return getRuntime().invoke('artifacts.targets', request);
+    }),
     list: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.list', validateListRequest(value))),
   });
 }

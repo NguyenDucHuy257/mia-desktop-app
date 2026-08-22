@@ -338,6 +338,26 @@ class ProductionBackend(SourceBackend):
                 for key, value in current_artifact.items()
                 if key in allowed and value is not None
             }
+        artifact_progress = state.get("artifact_progress")
+        if isinstance(artifact_progress, dict):
+            safe_items = {}
+            for key, item in (artifact_progress.get("items") or {}).items():
+                if not isinstance(key, str) or len(key) > 512 or not isinstance(item, dict):
+                    continue
+                xml_state = item.get("xml")
+                html_state = item.get("html")
+                if xml_state not in {"running", "completed", "failed"}:
+                    continue
+                if html_state not in {"running", "completed", "failed"}:
+                    continue
+                safe_items[key] = {"xml": xml_state, "html": html_state}
+            payload["artifact_progress"] = {
+                "current_key": str(artifact_progress.get("current_key") or "")[:512],
+                "processed": max(0, int(artifact_progress.get("processed") or 0)),
+                "completed_xml": max(0, int(artifact_progress.get("completed_xml") or 0)),
+                "completed_html": max(0, int(artifact_progress.get("completed_html") or 0)),
+                "items": safe_items,
+            }
         return payload
 
     def results(self, kind, query):

@@ -39,6 +39,7 @@ export interface MiaRuntimeBridge {
     selectDirectory(): Promise<string | null>;
     export(request: ArtifactExportRequest): Promise<{ count: number; files: string[] }>;
     cancel(): Promise<{ cancelled: boolean }>;
+    targets(request: ArtifactExportRequest): Promise<{ keys: string[]; total: number }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     openDirectory(directory: string): Promise<boolean>;
     onExportProgress(listener: (progress: RuntimeExportProgress) => void): () => void;
@@ -147,6 +148,7 @@ export interface PersistedJob {
     shdon: string;
     khmshdon: string;
   } | null;
+  artifact_progress?: JobStatusResponse['artifact_progress'];
   message?: string | null;
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];

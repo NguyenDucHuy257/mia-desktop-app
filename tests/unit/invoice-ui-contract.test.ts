@@ -86,5 +86,8 @@ describe('invoice result control presentation', () => {
     expect(styles).toContain('font-size: 12px !important');
     expect(styles).toContain('width: clamp(245px, 25vw, 390px)');
     expect(styles).toContain('background: #f0fdf4');
+    expect(styles).toContain('scrollbar-gutter: stable');
+    expect(styles).toContain('width: 100%; min-width: 1345px');
+    expect(page).toContain('title={cell === 8 ? undefined : String(value)}');
   });
 });

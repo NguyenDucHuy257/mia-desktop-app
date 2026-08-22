@@ -508,6 +508,16 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         ).start()
         return {"task_id": task_id, "status": "running"}, False
 
+    if method == "artifacts.targets":
+        if data_directory is None or storage is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            value = dict(params)
+            keys = _production_backend().artifact_keys_for_export(value)
+            return {"keys": sorted(keys), "total": len(keys)}, False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+
     if method == "artifacts.export.status":
         return _artifact_task_view(str(params.get("task_id") or "")), False
 

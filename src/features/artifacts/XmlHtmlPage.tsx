@@ -12,6 +12,7 @@ import type { AccountConnection, InvoiceDirection, InvoiceQueryType } from '../.
 import type { LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { InvoiceArtifactKind, XmlHtmlDownloadLifecycle } from './use-xml-html-download-lifecycle';
+import type { InvoiceArtifactState } from './use-xml-html-download-lifecycle';
 import '../../styles/xml-html.css';
 
 const PAGE_SIZE = 50;
@@ -29,19 +30,14 @@ export function artifactRowKey(row: OverviewResult, queryType: InvoiceQueryType)
 }
 export type XmlHtmlRowStatus = 'Chưa xử lý' | 'Đang tải' | 'Hoàn tất' | 'Lỗi';
 export function resolveArtifactRowStatus(value: {
-  key: string;
   selectedKinds: InvoiceArtifactKind[];
-  persistedComplete: boolean;
-  completedKeys: Record<InvoiceArtifactKind, Set<string>>;
+  states?: Record<InvoiceArtifactKind, InvoiceArtifactState>;
   batchRelevant: boolean;
-  terminal: boolean;
-  downloadActive: boolean;
-  activeKeys: Set<string>;
 }): XmlHtmlRowStatus {
-  const batchComplete = value.selectedKinds.every((kind) => value.completedKeys[kind].has(value.key));
-  if (value.persistedComplete || batchComplete) return 'Hoàn tất';
-  if (value.batchRelevant && value.terminal) return 'Lỗi';
-  if (value.batchRelevant && value.downloadActive && value.activeKeys.has(value.key)) return 'Đang tải';
+  if (!value.batchRelevant || !value.states) return 'Chưa xử lý';
+  if (value.selectedKinds.some((kind) => value.states?.[kind] === 'failed')) return 'Lỗi';
+  if (value.selectedKinds.every((kind) => value.states?.[kind] === 'completed')) return 'Hoàn tất';
+  if (value.selectedKinds.some((kind) => value.states?.[kind] === 'running')) return 'Đang tải';
   return 'Chưa xử lý';
 }
 export function artifactCounterText(
@@ -50,11 +46,6 @@ export function artifactCounterText(
 ) {
   return kinds.map((kind) => `${kind.toUpperCase()} ${completedKeys[kind].size}/${total}`).join(' · ');
 }
-function sourceFileStem(row: OverviewResult) {
-  return [row.fields.khmshdon, row.fields.khhdon, row.fields.shdon, row.fields.nbmst]
-    .map((value) => text(value).trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')).join('_');
-}
-
 function StopIcon() {
   return <svg className="stop-button-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="4" y="4" width="10" height="10" rx="1.5" /></svg>;
 }
@@ -84,7 +75,6 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
   const [pagination, setPagination] = useState<LocalResultPage<OverviewResult>['pagination'] | null>(null);
   const [page, setPage] = useState(1);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [availableFiles, setAvailableFiles] = useState(new Set<string>());
   const [feedback, setFeedback] = useState('');
   const cache = useRef(new Map<number, LocalResultPage<OverviewResult>>());
   const cursors = useRef(new Map<number, string | null>([[1, null]]));
@@ -121,32 +111,12 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
     } catch { if (token === generation.current) setState('error'); }
   }, [connectionId, query]);
 
-  const refreshArtifacts = useCallback(async () => {
-    if (!connectionId || !window.miaRuntime?.artifacts) return;
-    const found = new Set<string>();
-    await Promise.all(kinds.map(async (kind) => {
-      let cursor: string | null = null;
-      do {
-        const result = await window.miaRuntime!.artifacts.list({
-          connection_ids: [connectionId], kind, direction: direction || null, query_type: queryType,
-          search: debouncedSearch, cursor, limit: 200, date_from: dateFrom, date_to: dateTo,
-        });
-        for (const item of result.items) found.add(`${kind}:${item.filename}`);
-        cursor = result.pagination.has_more ? result.pagination.next_cursor : null;
-      } while (cursor);
-    }));
-    setAvailableFiles(found);
-  }, [connectionId, dateFrom, dateTo, debouncedSearch, direction, kinds, queryType]);
-
   const resetAndLoad = useCallback(() => {
     const token = ++generation.current;
     cache.current.clear(); cursors.current.clear(); cursors.current.set(1, null); setPage(1);
-    void loadPage(1, token); void refreshArtifacts();
-  }, [loadPage, refreshArtifacts]);
+    void loadPage(1, token);
+  }, [loadPage]);
   useEffect(resetAndLoad, [resetAndLoad, lifecycle.syncRevision]);
-  useEffect(() => {
-    if (!lifecycle.active || lifecycle.request?.connectionId === connectionId) void refreshArtifacts();
-  }, [connectionId, lifecycle.active, lifecycle.copyProgress.processed, lifecycle.job?.event_sequence, lifecycle.request?.connectionId, refreshArtifacts]);
 
   function toggleKind(kind: InvoiceArtifactKind) {
     setKinds((current) => current.includes(kind) ? current.filter((value) => value !== kind) : [...current, kind]);
@@ -170,24 +140,15 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const tokens = paginationTokens(totalPages, page);
-  const currentArtifact = lifecycle.job?.current_artifact;
-  const currentKey = currentArtifact
-    ? [currentArtifact.direction, currentArtifact.query_type, currentArtifact.nbmst, currentArtifact.khhdon, currentArtifact.shdon, currentArtifact.khmshdon].join('|')
-    : null;
-  const copyKey = lifecycle.copyProgress.artifact_key;
   const batchOnCurrentAccount = lifecycle.request?.connectionId === connectionId;
   const selectedBatchKinds = batchOnCurrentAccount ? lifecycle.request?.kinds ?? kinds : kinds;
 
   function progressFor(row: OverviewResult) {
     const key = artifactRowKey(row, queryType);
-    const stem = sourceFileStem(row);
-    const persistedComplete = selectedBatchKinds.every((kind) => availableFiles.has(`${kind}:${stem}.${kind}`));
     return resolveArtifactRowStatus({
-      key, selectedKinds: selectedBatchKinds, persistedComplete,
-      completedKeys: lifecycle.completedKeys, batchRelevant: batchOnCurrentAccount,
-      terminal: ['completed', 'failed'].includes(lifecycle.phase),
-      downloadActive: lifecycle.downloadActive,
-      activeKeys: new Set([currentKey, copyKey].filter((value): value is string => Boolean(value))),
+      selectedKinds: selectedBatchKinds,
+      states: lifecycle.artifactStates[key],
+      batchRelevant: batchOnCurrentAccount && lifecycle.targetKeys.has(key),
     });
   }
 
@@ -203,17 +164,17 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
 
     <section className="xml-html-control-block" aria-label="Thiết lập XML HTML">
       <div className="xml-html-control-row">
-        <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
-        <select className="xml-html-company" aria-label="Chọn công ty" title={accounts.find((account) => account.connection_id === connectionId)?.company_name || ''} value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{accounts.map((account) => <option key={account.connection_id} value={account.connection_id}>{account.company_name || account.username}</option>)}</select>
-        <select className="xml-html-query-type" aria-label="Loại hóa đơn" value={queryType} onChange={(event) => setQueryType(event.target.value as InvoiceQueryType)}><option value="query">Hóa đơn điện tử</option><option value="sco-query">Máy tính tiền</option></select>
-        <select className="xml-html-direction" aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as InvoiceDirection | '')}><option value="">Mua vào và Bán ra</option><option value="purchase">Mua vào</option><option value="sold">Bán ra</option></select>
-        <label className="xml-html-refresh"><input type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" /><span data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>Tải mới dữ liệu</label>
+        <DateRangePicker disabled={lifecycle.active} dateFrom={dateFrom} dateTo={dateTo} onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
+        <select disabled={lifecycle.active} className="xml-html-company" aria-label="Chọn công ty" title={accounts.find((account) => account.connection_id === connectionId)?.company_name || ''} value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{accounts.map((account) => <option key={account.connection_id} value={account.connection_id}>{account.company_name || account.username}</option>)}</select>
+        <select disabled={lifecycle.active} className="xml-html-query-type" aria-label="Loại hóa đơn" value={queryType} onChange={(event) => setQueryType(event.target.value as InvoiceQueryType)}><option value="query">Hóa đơn điện tử</option><option value="sco-query">Máy tính tiền</option></select>
+        <select disabled={lifecycle.active} className="xml-html-direction" aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as InvoiceDirection | '')}><option value="">Mua vào và Bán ra</option><option value="purchase">Mua vào</option><option value="sold">Bán ra</option></select>
+        <label className="xml-html-refresh"><input disabled={lifecycle.active} type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" /><span data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>Tải mới dữ liệu</label>
         <button className="xml-html-sync" type="button" disabled={lifecycle.active} onClick={syncOverview}><img src={syncIcon} alt="" />{lifecycle.syncActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}</button>
       </div>
       <div className="xml-html-control-row xml-html-control-row--storage">
         <StorageFolderPicker value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Thư mục lưu trữ XML/HTML" />
-        <div className="xml-html-kind-options" aria-label="Định dạng tải xuống">{(['xml', 'html'] as const).map((kind) => <label key={kind} data-active={kinds.includes(kind)}><input type="checkbox" checked={kinds.includes(kind)} onChange={() => toggleKind(kind)} /><span>{kind.toUpperCase()}</span></label>)}</div>
-        <input className="xml-html-search" aria-label="Tìm kiếm hóa đơn" placeholder="Số HĐ, ký hiệu, MST..." value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className="xml-html-kind-options" aria-label="Định dạng tải xuống">{(['xml', 'html'] as const).map((kind) => <label key={kind} data-active={kinds.includes(kind)}><input disabled={lifecycle.active} type="checkbox" checked={kinds.includes(kind)} onChange={() => toggleKind(kind)} /><span>{kind.toUpperCase()}</span></label>)}</div>
+        <input disabled={lifecycle.active} className="xml-html-search" aria-label="Tìm kiếm hóa đơn" placeholder="Số HĐ, ký hiệu, MST..." value={search} onChange={(event) => setSearch(event.target.value)} />
       </div>
     </section>
 
@@ -230,7 +191,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
     {state === 'ready' && !items.length ? <div className="xml-html-state">Không tồn tại hóa đơn trong thời gian này.</div> : null}
     {items.length ? <div className="xml-html-table" tabIndex={0} aria-label="Danh sách hóa đơn XML HTML">
       <div className="xml-html-row xml-html-row--head" style={{ gridTemplateColumns: XML_HTML_GRID }}><span>STT</span><span>Ngày hóa đơn</span><span>Ký hiệu</span><span>Số hóa đơn</span><span>MST đối tác</span><span>Đối tác</span><span>Tổng tiền</span><span>Trạng thái</span><span>Tiến trình</span></div>
-      {items.map((row, index) => { const f = row.fields; const purchase = row.direction === 'purchase'; const partner = text(purchase ? f.nbten : f.nmten); const values = [(page - 1) * PAGE_SIZE + index + 1, text(f.tdlap || f.nlap), text(f.khhdon), text(f.shdon), text(purchase ? f.nbmst : f.nmmst), partner, money(f.tgtttbso || f.tgtttbchu), text(f.tthai), progressFor(row)]; return <div className="xml-html-row" style={{ gridTemplateColumns: XML_HTML_GRID }} key={`${row.direction}:${row.row_id}`}>{values.map((value, cell) => <span key={cell} className={cell === 6 ? 'xml-html-amount' : undefined} data-progress={cell === 8 ? String(value) : undefined} title={String(value)}>{value}</span>)}</div>; })}
+      {items.map((row, index) => { const f = row.fields; const purchase = row.direction === 'purchase'; const partner = text(purchase ? f.nbten : f.nmten); const values = [(page - 1) * PAGE_SIZE + index + 1, text(f.tdlap || f.nlap), text(f.khhdon), text(f.shdon), text(purchase ? f.nbmst : f.nmmst), partner, money(f.tgtttbso || f.tgtttbchu), text(f.tthai), progressFor(row)]; return <div className="xml-html-row" style={{ gridTemplateColumns: XML_HTML_GRID }} key={`${row.direction}:${row.row_id}`}>{values.map((value, cell) => <span key={cell} className={cell === 6 ? 'xml-html-amount' : undefined} data-progress={cell === 8 ? String(value) : undefined} title={cell === 8 ? undefined : String(value)}>{value}</span>)}</div>; })}
     </div> : null}
     {(items.length > 0 || page > 1) ? <footer className="artifact-pager"><span>Tổng {totalCount} hàng · tối đa {PAGE_SIZE} hàng/trang</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1 || state === 'loading'} onClick={() => void loadPage(page - 1)}><img src={previousIcon} alt="" /></button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`e-${index}`}>...</span> : <button type="button" key={token} data-active={page === token} onClick={() => void loadPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={!pagination?.has_more || state === 'loading'} onClick={() => void loadPage(page + 1)}><img src={nextIcon} alt="" /></button></div></footer> : null}
     {(feedback || lifecycle.message) ? <NoticeDialog kind={lifecycle.phase === 'completed' && lifecycle.failedCount === 0 ? 'success' : 'notice'} message={feedback || lifecycle.message || ''} onClose={() => { setFeedback(''); lifecycle.clearMessage(); }} /> : null}

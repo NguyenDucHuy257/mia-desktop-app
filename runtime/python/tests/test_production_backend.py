@@ -213,6 +213,17 @@ class ProductionBackendTests(unittest.TestCase):
                 "current_stage": "auth",
                 "current_month": None,
                 "message": "auth:captcha_fetched",
+                "artifact_progress": {
+                    "current_key": "purchase|query|0101|AA|1|1",
+                    "processed": 1,
+                    "completed_xml": 1,
+                    "completed_html": 1,
+                    "items": {
+                        "purchase|query|0101|AA|1|1": {
+                            "xml": "completed", "html": "completed",
+                        },
+                    },
+                },
             },
             current_stage="auth",
             last_error_code="source_rate_limited",
@@ -229,6 +240,11 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(value["overall_percent"], 5)
         self.assertEqual(value["error"]["code"], "source_rate_limited")
         self.assertEqual(value["error"]["message"], "source_rate_limited")
+        self.assertEqual(value["artifact_progress"]["completed_xml"], 1)
+        self.assertEqual(
+            value["artifact_progress"]["items"]["purchase|query|0101|AA|1|1"]["html"],
+            "completed",
+        )
         # HTTP API retryability classification is intentionally not part of the
         # local JSON-RPC contract. Desktop owns polling/retry behavior itself.
         self.assertFalse(value["error"]["retryable"])

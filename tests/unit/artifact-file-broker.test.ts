@@ -124,6 +124,19 @@ describe('artifact filesystem boundary', () => {
     ]);
   });
 
+  it('snapshots every filtered artifact target before the source job starts', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-targets');
+    const runtime = { invoke: vi.fn().mockResolvedValue({ keys: ['purchase|query|0101|AA|1|1'], total: 1 }) };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.targets({
+      destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'],
+      date_from: '2026-08-01', date_to: '2026-08-31', direction: 'purchase',
+      query_type: 'query', search: 'AA',
+    })).resolves.toMatchObject({ ok: true, data: { total: 1 } });
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.targets', expect.objectContaining({ search: 'AA' }));
+  });
+
   it('forwards stop to the active local artifact task', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-packages-cancel');
     let cancelled = false;

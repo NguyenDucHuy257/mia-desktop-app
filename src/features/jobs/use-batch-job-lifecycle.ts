@@ -254,6 +254,9 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         status.current_month?.processed,
         status.current_month?.planned,
         status.current_month?.percent,
+        status.artifact_progress?.processed,
+        status.artifact_progress?.completed_xml,
+        status.artifact_progress?.completed_html,
         status.error?.code,
       ]);
       if (lastLoggedStatus.current.get(jobId) !== fingerprint) {
@@ -265,6 +268,9 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
           stage: status.stage,
           overall_percent: status.overall_percent,
           current_month: status.current_month,
+          artifact_processed: status.artifact_progress?.processed,
+          artifact_completed_xml: status.artifact_progress?.completed_xml,
+          artifact_completed_html: status.artifact_progress?.completed_html,
           error_code: status.error?.code,
         }, status.status === 'failed' ? 'error' : 'info');
       }
