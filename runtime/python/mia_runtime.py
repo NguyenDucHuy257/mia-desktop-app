@@ -192,17 +192,26 @@ def _copy_artifacts(
         raise RpcError(-32011, "storage_not_initialized")
     backend = _production_backend()
     backend.prepare_artifacts(value)
-    if set(value.get("kinds") or ()).intersection({"xml", "html"}):
-        value["_artifact_keys"] = backend.artifact_keys_for_export(value)
 
     def artifact_progress(event: dict[str, Any]) -> None:
         write_message({
             "jsonrpc": "2.0", "method": "artifact.progress", "params": event,
         })
 
+    if set(value.get("kinds") or ()).intersection({"xml", "html"}):
+        source_result = backend.ensure_invoice_packages(
+            value,
+            progress_callback=artifact_progress,
+            cancel_callback=cancel_event.is_set if cancel_event is not None else None,
+        )
+        value["_artifact_keys"] = source_result["keys"]
+
+    def copy_progress(event: dict[str, Any]) -> None:
+        artifact_progress({**event, "phase": "copy"})
+
     result = ArtifactExporter(storage, data_directory).export(
         value,
-        progress_callback=artifact_progress,
+        progress_callback=copy_progress,
         cancel_callback=cancel_event.is_set if cancel_event is not None else None,
     )
     if not result.get("count"):

@@ -101,8 +101,8 @@ describe('PythonRuntimeClient', () => {
     expect(validateRuntimeNotification({ jsonrpc: '2.0', method: 'artifact.progress', params: {
       status: 'running', processed: 3, total: 8, percent: 37.5,
       artifact_key: 'purchase|query|0101|AA/26E|12|1',
-      kind: 'html',
-    }})).toMatchObject({ processed: 3, total: 8, percent: 37.5 });
+      kind: 'html', phase: 'source', state: 'completed',
+    }})).toMatchObject({ processed: 3, total: 8, percent: 37.5, phase: 'source', state: 'completed' });
     expect(validateRuntimeNotification({ jsonrpc: '2.0', method: 'artifact.progress', params: {
       status: 'running', processed: 3, total: 8, percent: 37.5,
       filesystem_path: 'C:\\secret\\invoice.xml',

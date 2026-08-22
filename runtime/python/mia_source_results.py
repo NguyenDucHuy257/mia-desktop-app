@@ -476,6 +476,39 @@ def _all_overview_fields(
         cursor = str(pagination["next_cursor"])
 
 
+def read_artifact_targets(backend, query: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return source Overview identities for one filtered artifact batch.
+
+    This internal adapter deliberately uses the same result context and search
+    matching as the Results table, but retains the canonical source date fields
+    required by package persistence.  It never exposes these payloads to the
+    renderer.
+    """
+    context = _result_context(backend, query)
+    if context is None:
+        return []
+    search = str(query.get("search") or "").strip().casefold()
+    targets: list[dict[str, Any]] = []
+    for direction in context["directions"]:
+        for query_type in context["query_types"]:
+            for fields in _all_overview_fields(context, direction, query_type, search):
+                target = {
+                    "direction": direction,
+                    "query_type": query_type,
+                    "nbmst": str(fields.get("nbmst") or ""),
+                    "khhdon": str(fields.get("khhdon") or ""),
+                    "shdon": str(fields.get("shdon") or ""),
+                    "khmshdon": str(fields.get("khmshdon") or ""),
+                    "nlap": fields.get("nlap") or fields.get("tdlap"),
+                    "nlap_date": fields.get("nlap_date"),
+                }
+                target["artifact_key"] = "|".join(str(target[name]) for name in (
+                    "direction", "query_type", "nbmst", "khhdon", "shdon", "khmshdon",
+                ))
+                targets.append(target)
+    return targets
+
+
 def _available_path(destination: Path, filename: str) -> Path:
     candidate = destination / filename
     stem = Path(filename).stem

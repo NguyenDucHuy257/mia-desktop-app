@@ -107,6 +107,37 @@ class ResultExportErrorTests(unittest.TestCase):
 
 
 class ArtifactExportTaskTests(unittest.TestCase):
+    def test_xml_export_ensures_source_packages_before_local_copy(self):
+        previous = mia_runtime.storage, mia_runtime.data_directory
+        backend = Mock()
+        backend.ensure_invoice_packages.return_value = {
+            "keys": {"purchase|query|0101|AA|1|1"}, "targets": 1,
+            "processed": 2, "failed": 0,
+        }
+        exporter = Mock()
+        exporter.export.return_value = {"count": 2, "files": ["a.xml", "a.html"]}
+        value = {
+            "destination": str(Path(tempfile.gettempdir())),
+            "connection_ids": ["conn_1"], "kinds": ["xml", "html"],
+            "date_from": "2026-08-01", "date_to": "2026-08-31",
+            "direction": "purchase", "query_type": "query", "search": "",
+        }
+        try:
+            mia_runtime.storage = Mock()
+            mia_runtime.data_directory = Path(tempfile.gettempdir())
+            with patch.object(mia_runtime, "_production_backend", return_value=backend), patch(
+                "mia_artifacts.ArtifactExporter", return_value=exporter
+            ), patch.object(mia_runtime, "write_message"):
+                result = mia_runtime._copy_artifacts(value, threading.Event())
+
+            backend.prepare_artifacts.assert_called_once()
+            backend.ensure_invoice_packages.assert_called_once()
+            self.assertEqual(value["_artifact_keys"], {"purchase|query|0101|AA|1|1"})
+            exporter.export.assert_called_once()
+            self.assertEqual(result["count"], 2)
+        finally:
+            mia_runtime.storage, mia_runtime.data_directory = previous
+
     def test_local_artifact_task_can_be_cancelled_over_json_rpc(self):
         previous = (
             mia_runtime.storage,

@@ -287,34 +287,61 @@ class ProductionBackendTests(unittest.TestCase):
 
     def test_artifact_export_keys_cover_every_filtered_overview_page(self):
         backend = object.__new__(ProductionBackend)
-        pages = [
-            {
-                "items": [{"direction": "purchase", "fields": {
-                    "nbmst": "0101", "khhdon": "AA", "shdon": "1", "khmshdon": "1",
-                }}],
-                "pagination": {"has_more": True, "next_cursor": "page-2"},
-            },
-            {
-                "items": [{"direction": "sold", "fields": {
-                    "nbmst": "0102", "khhdon": "BB", "shdon": "2", "khmshdon": "2",
-                }}],
-                "pagination": {"has_more": False, "next_cursor": None},
-            },
+        targets = [
+            {"artifact_key": "purchase|query|0101|AA|1|1"},
+            {"artifact_key": "sold|query|0102|BB|2|2"},
         ]
-        backend.results = Mock(side_effect=pages)
-
-        keys = backend.artifact_keys_for_export({
-            "connection_ids": ["conn_1"], "date_from": "2026-08-01",
-            "date_to": "2026-08-31", "direction": None,
-            "query_type": "query", "search": "đối tác",
-        })
+        with patch("mia_source_results.read_artifact_targets", return_value=targets) as reader:
+            keys = backend.artifact_keys_for_export({
+                "connection_ids": ["conn_1"], "date_from": "2026-08-01",
+                "date_to": "2026-08-31", "direction": None,
+                "query_type": "query", "search": "đối tác",
+            })
 
         self.assertEqual(keys, {
             "purchase|query|0101|AA|1|1", "sold|query|0102|BB|2|2",
         })
-        self.assertEqual(backend.results.call_count, 2)
-        self.assertEqual(backend.results.call_args_list[0].args[0], "overview")
-        self.assertEqual(backend.results.call_args_list[1].args[1]["cursor"], "page-2")
+        reader.assert_called_once()
+        self.assertEqual(reader.call_args.args[1]["query_type"], "query")
+        self.assertEqual(reader.call_args.args[1]["search"], "đối tác")
+
+    def test_invoice_package_batch_uses_overview_targets_without_creating_a_job(self):
+        backend = object.__new__(ProductionBackend)
+        target = {
+            "artifact_key": "purchase|query|0101|AA|1|1",
+            "direction": "purchase", "query_type": "query", "nbmst": "0101",
+            "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+            "nlap": "2026-08-01", "nlap_date": "2026-08-01",
+        }
+        backend.artifact_targets_for_export = Mock(return_value=[target])
+        backend.accounts = Mock()
+        backend.accounts.session_hash.return_value = (Mock(), "session-hash")
+        backend._result_job = Mock(return_value=SimpleNamespace(parameters={"scope": "overview"}))
+        backend.handler = Mock()
+        backend.handler.run_xml_unit.return_value = {"outcome": "downloaded"}
+        backend.logger = Mock()
+        events = []
+        request = {
+            "connection_ids": ["conn_1"], "kinds": ["xml", "html"],
+            "date_from": "2026-08-01", "date_to": "2026-08-31",
+            "direction": "purchase", "query_type": "query", "search": "",
+        }
+
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={"session_hash": "session-hash"})):
+            result = backend.ensure_invoice_packages(request, progress_callback=events.append)
+
+        backend.handler.authenticate_job.assert_called_once()
+        backend.handler.run_xml_unit.assert_called_once()
+        payload = backend.handler.run_xml_unit.call_args.args[1]
+        self.assertEqual(payload["nbmst"], "0101")
+        self.assertTrue(payload["export_xml"])
+        self.assertTrue(payload["export_html"])
+        self.assertEqual(result["keys"], {target["artifact_key"]})
+        self.assertEqual(
+            [(event["kind"], event["state"]) for event in events],
+            [("xml", "running"), ("html", "running"),
+             ("xml", "completed"), ("html", "completed")],
+        )
 
 
 if __name__ == "__main__":

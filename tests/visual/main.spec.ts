@@ -639,33 +639,33 @@ test('XML HTML source outcomes update counters and row substates live', async ({
       },
     }));
     const keys = rows.map((row) => `purchase|query|${row.fields.nbmst}|${row.fields.khhdon}|${row.fields.shdon}|${row.fields.khmshdon}`);
-    let polls = 0;
-    const status = () => {
-      polls += 1;
-      const items = polls === 1
-        ? { [keys[0]]: { xml: 'running', html: 'running' } }
-        : polls === 2
-          ? { [keys[0]]: { xml: 'completed', html: 'completed' }, [keys[1]]: { xml: 'running', html: 'running' } }
-          : { [keys[0]]: { xml: 'completed', html: 'completed' }, [keys[1]]: { xml: 'completed', html: 'completed' } };
-      return {
-        job_id: 'job_progress', status: polls >= 3 ? 'completed' : 'running', stage: 'ensure_xml', overall_percent: polls * 30,
-        current_month: null, updated_at: String(polls), error: null,
-        artifact_progress: { current_key: keys[Math.min(polls - 1, 1)], processed: Math.max(0, polls - 1), completed_xml: Math.max(0, polls - 1), completed_html: Math.max(0, polls - 1), items },
-      };
-    };
+    let artifactListener: ((value: Record<string, unknown>) => void) | null = null;
     Object.defineProperty(window, 'miaRuntime', { value: {
       accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
       jobs: {
         resume: async () => null, resumeAll: async () => [], latestAll: async () => [],
         start: async (intent: unknown) => ({ record: { job_id: 'job_progress', connection_id: account.connection_id, intent, idempotency_key: 'progress', created_at: 'now', updated_at: 'now', status: 'queued' }, accepted: { job_id: 'job_progress', status: 'queued', current_stage: null } }),
-        status: async () => status(), summary: async () => ({}), cancel: async () => ({ ...status(), status: 'cancelled' }), clear: async () => undefined,
+        status: async () => ({ status: 'queued' }), summary: async () => ({}), cancel: async () => ({ status: 'cancelled' }), clear: async () => undefined,
       },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       results: { overview: async () => ({ items: rows, total_count: 2, pagination: { limit: 50, has_more: false, next_cursor: null } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
       artifacts: {
-        targets: async () => ({ keys, total: keys.length }), export: async () => ({ count: 4, files: ['1.xml', '1.html', '2.xml', '2.html'] }), cancel: async () => ({ cancelled: true }),
+        targets: async () => ({ keys, total: keys.length }), export: async () => {
+          let processed = 0;
+          const emit = (artifactKey: string, kind: 'xml' | 'html', state: 'running' | 'completed') => artifactListener?.({
+            status: 'running', phase: 'source', state, processed, total: 4,
+            percent: processed / 4 * 100, artifact_key: artifactKey, kind,
+          });
+          for (const key of keys) {
+            emit(key, 'xml', 'running'); emit(key, 'html', 'running');
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            processed += 1; emit(key, 'xml', 'completed');
+            processed += 1; emit(key, 'html', 'completed');
+          }
+          return { count: 4, files: ['1.xml', '1.html', '2.xml', '2.html'] };
+        }, cancel: async () => ({ cancelled: true }),
         list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
-        onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined,
+        onInvoiceProgress: (listener: (value: Record<string, unknown>) => void) => { artifactListener = listener; return () => { artifactListener = null; }; }, onExportProgress: () => () => undefined,
       },
     } });
   });

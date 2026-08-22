@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 import types
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,7 +24,7 @@ if str(VENDOR_ROOT) not in sys.path:
 
 from mia_local_job_repository import create_local_job_repository
 from mia_local_source_models import install_source_model_shim
-from mia_local_worker import LocalWorkerLoop
+from mia_local_worker import LocalWorkerLoop, SOURCE_EXECUTION_LOCK
 
 
 # The upstream service imports Pydantic DTOs because its normal transport is
@@ -385,24 +387,119 @@ class ProductionBackend(SourceBackend):
             "search": str(value.get("search") or ""),
             "limit": 50,
         }
-        keys = set()
-        cursor = None
-        while True:
-            page = self.results("overview", {**query, "cursor": cursor})
-            for row in page.get("items") or ():
-                fields = row.get("fields") or {}
-                keys.add("|".join((
-                    str(row.get("direction") or ""),
-                    str(value.get("query_type") or ""),
-                    str(fields.get("nbmst") or ""),
-                    str(fields.get("khhdon") or ""),
-                    str(fields.get("shdon") or ""),
-                    str(fields.get("khmshdon") or ""),
-                )))
-            pagination = page.get("pagination") or {}
-            cursor = pagination.get("next_cursor")
-            if not pagination.get("has_more") or not cursor:
-                return keys
+        return {item["artifact_key"] for item in self.artifact_targets_for_export(value)}
+
+    def artifact_targets_for_export(self, value):
+        """Materialize filtered Overview identities without querying the portal."""
+        connection_ids = value.get("connection_ids") or ()
+        if len(connection_ids) != 1:
+            return []
+        query_type = str(value.get("query_type") or "")
+        if query_type not in {"query", "sco-query"}:
+            raise ValueError("invalid_artifact_query_type")
+        query = {
+            "connection_id": str(connection_ids[0]),
+            "date_from": value.get("date_from"),
+            "date_to": value.get("date_to"),
+            "direction": value.get("direction"),
+            "query_type": query_type,
+            "search": str(value.get("search") or ""),
+        }
+        from mia_source_results import read_artifact_targets
+        return read_artifact_targets(self, query)
+
+    def ensure_invoice_packages(
+        self, value, *, progress_callback=None, cancel_callback=None
+    ):
+        """Fetch source XML packages from persisted Overview identities only.
+
+        This thin desktop orchestration calls the vendored source handler for
+        authentication, cache verification, retry, ZIP extraction and SQLite
+        persistence.  It does not create a crawl job and therefore cannot run
+        Overview or Detail.  The shared execution lock keeps it serialized with
+        the one source worker.
+        """
+        kinds = tuple(dict.fromkeys(value.get("kinds") or ()))
+        if not kinds or set(kinds) - {"xml", "html"}:
+            raise ValueError("invalid_artifact_kind")
+        targets = self.artifact_targets_for_export(value)
+        if not targets:
+            return {"processed": 0, "failed": 0, "targets": 0, "keys": set()}
+        connection_id = str((value.get("connection_ids") or ())[0])
+        _, session_hash = self.accounts.session_hash(
+            connection_id, owner_id=source_backend_module.OWNER_ID
+        )
+        base_job = self._result_job(connection_id)
+        if base_job is None:
+            raise ValueError("result_job_not_found")
+        job = replace(base_job, parameters={
+            **base_job.parameters,
+            "connection_id": connection_id,
+            "session_hash": session_hash,
+            "date_from": str(value.get("date_from")),
+            "date_to": str(value.get("date_to")),
+        })
+        total = len(targets) * len(kinds)
+        processed = failed = 0
+        outcomes = {"downloaded": 0, "reused_verified": 0, "unavailable": 0, "failed": 0}
+        batch_started = time.perf_counter()
+
+        def emit(target, kind, state):
+            if progress_callback:
+                progress_callback({
+                    "status": "running", "phase": "source", "state": state,
+                    "processed": processed, "total": total,
+                    "percent": (processed / total * 100) if total else 100,
+                    "artifact_key": target["artifact_key"], "kind": kind,
+                })
+
+        with SOURCE_EXECUTION_LOCK:
+            if cancel_callback and cancel_callback():
+                raise ValueError("artifact_cancelled")
+            self.handler.authenticate_job(job)
+            for target_index, target in enumerate(targets, start=1):
+                if cancel_callback and cancel_callback():
+                    raise ValueError("artifact_cancelled")
+                for kind in kinds:
+                    emit(target, kind, "running")
+                payload = {
+                    **target,
+                    "session_hash": session_hash,
+                    "date_from": str(value.get("date_from")),
+                    "date_to": str(value.get("date_to")),
+                    "export_xml": "xml" in kinds,
+                    "export_html": "html" in kinds,
+                }
+                try:
+                    outcome = self.handler.run_xml_unit(job, payload) or {}
+                    outcome_name = str(outcome.get("outcome") or "downloaded")
+                    state = "failed" if outcome_name == "unavailable" else "completed"
+                    outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
+                except Exception as error:
+                    state = "failed"
+                    outcomes["failed"] += 1
+                    if self.logger is not None:
+                        self.logger.warning(
+                            "artifact_source_item_failed item=%s/%s error_type=%s",
+                            target_index, len(targets), type(error).__name__,
+                        )
+                for kind in kinds:
+                    processed += 1
+                    if state == "failed":
+                        failed += 1
+                    emit(target, kind, state)
+        if self.logger is not None:
+            self.logger.info(
+                "artifact_source_batch_complete targets=%s kinds=%s downloaded=%s "
+                "reused=%s unavailable=%s failed=%s duration_ms=%.1f",
+                len(targets), len(kinds), outcomes["downloaded"],
+                outcomes["reused_verified"], outcomes["unavailable"],
+                outcomes["failed"], (time.perf_counter() - batch_started) * 1000,
+            )
+        return {
+            "processed": processed, "failed": failed, "targets": len(targets),
+            "keys": {target["artifact_key"] for target in targets},
+        }
 
     def export_results(self, value, *, progress_callback=None):
         """Build source-native Excel and preserve only safe failure categories."""

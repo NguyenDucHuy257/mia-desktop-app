@@ -15,6 +15,13 @@ import time
 
 logger = logging.getLogger("mia.job_engine")
 
+# Source portal work has one execution lane in the desktop process.  The local
+# worker holds this lock for a complete source job; the XML/HTML artifact
+# adapter uses the same lock while it calls the source package handler.  This
+# prevents a queued crawl and an artifact batch from sharing a managed portal
+# session concurrently without introducing another crawler worker.
+SOURCE_EXECUTION_LOCK = threading.Lock()
+
 
 class LocalWorkerLoop:
     """Run one sequential source supervisor until the desktop runtime stops."""
@@ -47,7 +54,8 @@ class LocalWorkerLoop:
                 if time.monotonic() >= next_orphan_scan:
                     self.supervisor.repository.recover_expired_leases()
                     next_orphan_scan = time.monotonic() + self.orphan_scan_seconds
-                result = self.supervisor.run_once()
+                with SOURCE_EXECUTION_LOCK:
+                    result = self.supervisor.run_once()
             except Exception as exc:
                 logger.exception(
                     "job_engine event=local_worker_iteration_failed worker_id=%s error_code=%s",

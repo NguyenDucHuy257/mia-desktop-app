@@ -157,7 +157,7 @@ class ArtifactExporter:
                     sources.extend((item, None, kind) for item in self._job_artifact_paths(account_id, kind))
         total = len(sources)
         if progress_callback:
-            progress_callback({"status": "running", "processed": 0, "total": total, "percent": 0})
+            progress_callback({"status": "running", "state": "running", "processed": 0, "total": total, "percent": 0})
         for processed, (source, artifact_key, kind) in enumerate(sources, start=1):
             if cancel_callback and cancel_callback():
                 raise ValueError("artifact_cancelled")
@@ -168,6 +168,7 @@ class ArtifactExporter:
                     "percent": ((processed - 1) / total * 100) if total else 100,
                     "artifact_key": artifact_key,
                     "kind": kind,
+                    "state": "running",
                 })
             target = self._copy_path_atomically(destination, source)
             outputs.append(str(target))
@@ -179,9 +180,10 @@ class ArtifactExporter:
                     "percent": (processed / total * 100) if total else 100,
                     "artifact_key": artifact_key,
                     "kind": kind,
+                    "state": "completed",
                 })
         if progress_callback:
-            progress_callback({"status": "completed", "processed": total, "total": total, "percent": 100})
+            progress_callback({"status": "completed", "state": "completed", "processed": total, "total": total, "percent": 100})
         return {"count": len(outputs), "files": outputs}
 
     def _source_package_paths(
