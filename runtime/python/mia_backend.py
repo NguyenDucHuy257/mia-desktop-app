@@ -194,6 +194,22 @@ class ProductionBackend(SourceBackend):
             self.cancel_active_jobs_for_exit()
         SourceBackend.close(self)
 
+    def _result_job(self, connection_id: str):
+        """Resolve result metadata without making terminal jobs recoverable.
+
+        Source reconciliation deliberately omits failed/cancelled jobs. Desktop
+        Results must still read invoice rows that were committed before a user
+        stopped a batch or exited the app, so use the local repository's
+        read-only latest-job lookup across all terminal states. The returned job
+        is used only to locate the source DB and project date/direction metadata.
+        """
+        lookup = getattr(self.repository, "latest_invoice_job_for_account", None)
+        if callable(lookup):
+            job = lookup(connection_id, owner_id=source_backend_module.OWNER_ID)
+            if job is not None:
+                return job
+        return SourceBackend._result_job(self, connection_id)
+
     @staticmethod
     def public_job(job):
         # Upstream JobRecord timestamps are strings. Keep the source record
