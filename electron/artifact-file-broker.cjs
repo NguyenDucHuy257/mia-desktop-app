@@ -86,9 +86,21 @@ function validateListRequest(value) {
   return { connection_ids: base.connection_ids, kind: value.kind, direction: value.direction ?? null, search: value.search ?? '', cursor: value.cursor ?? null, limit, date_from: value.date_from ?? null, date_to: value.date_to ?? null };
 }
 
+async function invokeArtifactExport(getRuntime, value) {
+  const result = await getRuntime().invoke(
+    'artifacts.export',
+    validateExportRequest(value),
+    { timeoutMs: 30 * 60 * 1000 },
+  );
+  if (result && typeof result === 'object' && typeof result.error_code === 'string' && result.error_code) {
+    throw new Error(result.error_code);
+  }
+  return result;
+}
+
 function createArtifactBroker(getRuntime) {
   return Object.freeze({
-    export: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.export', validateExportRequest(value), { timeoutMs: 30 * 60 * 1000 })),
+    export: (value) => runBrokerCommand(() => invokeArtifactExport(getRuntime, value)),
     list: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.list', validateListRequest(value))),
   });
 }
