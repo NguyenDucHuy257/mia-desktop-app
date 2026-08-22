@@ -114,7 +114,9 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
     cache.current.clear(); cursors.current.clear(); cursors.current.set(1, null); setPage(1);
     void loadPage(1, token); void refreshArtifacts();
   }, [loadPage, refreshArtifacts]);
-  useEffect(() => { if (!lifecycle.active) void refreshArtifacts(); }, [lifecycle.active, lifecycle.copyProgress.processed, refreshArtifacts]);
+  useEffect(() => {
+    if (!lifecycle.active || lifecycle.request?.connectionId === connectionId) void refreshArtifacts();
+  }, [connectionId, lifecycle.active, lifecycle.copyProgress.processed, lifecycle.job?.event_sequence, lifecycle.request?.connectionId, refreshArtifacts]);
 
   function toggleKind(kind: InvoiceArtifactKind) {
     setKinds((current) => current.includes(kind) ? current.filter((value) => value !== kind) : [...current, kind]);
@@ -139,6 +141,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder,
     const stem = sourceFileStem(row);
     const complete = kinds.every((kind) => availableFiles.has(`${kind}:${stem}.${kind}`));
     if (complete) return 'Hoàn thành';
+    if (lifecycle.request?.connectionId === connectionId && ['completed', 'failed'].includes(lifecycle.phase)) return 'Lỗi';
     if (!lifecycle.active || lifecycle.request?.connectionId !== connectionId) return 'Chưa tải';
     if (currentArtifact && key === [currentArtifact.direction, currentArtifact.query_type, currentArtifact.nbmst, currentArtifact.khhdon, currentArtifact.shdon, currentArtifact.khmshdon].join('|')) return 'Đang tải từ nguồn';
     if (copyKey === key) return 'Đang lưu vào thư mục';

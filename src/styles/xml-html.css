@@ -29,4 +29,5 @@
 .xml-html-row > span { min-width: 0; padding: 11px 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .xml-html-row span[data-progress="Hoàn thành"] { color: #166534; font-weight: 700; }
 .xml-html-row span[data-progress^="Đang"] { color: #2563b8; font-weight: 700; }
+.xml-html-row span[data-progress="Lỗi"] { color: #b91c1c; font-weight: 700; }
 .xml-html-page .artifact-pager { flex: 0 0 50px; border-radius: 8px; }
