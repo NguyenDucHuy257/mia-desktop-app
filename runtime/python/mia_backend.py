@@ -81,6 +81,8 @@ def _transport_datetime(value):
 
 _RESULT_EXPORT_VALUE_ERRORS = {
     "result_export_empty",
+    "result_export_no_overview_data",
+    "result_export_no_detail_data",
     "result_job_not_found",
     "invalid_artifact_directory",
     "invalid_result_export_range",
@@ -259,6 +261,12 @@ class ProductionBackend(SourceBackend):
             return _export_error("result_export_template_missing")
         except ValueError as error:
             code = str(error)
+            if code == "result_export_empty":
+                scopes = set(value.get("result_scopes") or ())
+                if scopes == {"overview"}:
+                    code = "result_export_no_overview_data"
+                elif scopes == {"details"}:
+                    code = "result_export_no_detail_data"
             if code in _RESULT_EXPORT_VALUE_ERRORS:
                 return _export_error(code)
             raise
