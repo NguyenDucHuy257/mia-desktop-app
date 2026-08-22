@@ -141,6 +141,6 @@ export function formatResultValue(key: string, value: unknown) {
   return String(value);
 }
 
-export function formatTotalValue(key: string, value: number | undefined) {
+export function formatTotalValue(_key: string, value: number | undefined) {
   return value === undefined ? '' : numberFormatter.format(value);
 }
