@@ -46,6 +46,7 @@ class PythonRuntimeClient {
     this.defaultTimeoutMs = options.defaultTimeoutMs || 5000;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs || 1000;
     this.maxMessageBytes = options.maxMessageBytes || DEFAULT_MAX_MESSAGE_BYTES;
+    this.logger = options.logger;
     this.child = undefined;
     this.nextId = 1;
     this.pending = new Map();
@@ -57,9 +58,8 @@ class PythonRuntimeClient {
   async start() {
     if (this.child) return;
     const executable = this.runtimeExecutable || this.pythonExecutable;
-    // Ignore Python-specific environment variables while retaining the normal
-    // per-user site-packages used by the documented Windows development setup.
     const args = this.runtimeExecutable ? [] : ['-E', '-u', this.runtimeScript];
+    this.logger?.info('python_runtime_spawn', { executable, packaged: Boolean(this.runtimeExecutable), cwd: this.runtimeExecutable ? path.dirname(this.runtimeExecutable) : path.dirname(this.runtimeScript) });
     const child = spawn(executable, args, {
       cwd: this.runtimeExecutable ? path.dirname(this.runtimeExecutable) : path.dirname(this.runtimeScript),
       env: runtimeEnvironment(process.env, this.extraEnv),
@@ -70,16 +70,26 @@ class PythonRuntimeClient {
     this.child = child;
     this.stopping = false;
     child.stdout.on('data', (chunk) => this.#handleStdout(chunk));
-    child.stderr.on('data', () => {});
-    child.once('error', (error) => this.#handleExit(new RuntimeProtocolError('runtime_spawn_failed', error.message)));
+    child.stderr.on('data', (chunk) => {
+      const message = chunk.toString('utf8').trim();
+      if (message) this.logger?.error('python_runtime_stderr', { message });
+    });
+    child.once('error', (error) => {
+      this.logger?.error('python_runtime_process_error', { name: error?.name, message: error?.message, stack: error?.stack });
+      this.#handleExit(new RuntimeProtocolError('runtime_spawn_failed', error.message));
+    });
     child.once('close', (code, signal) => {
+      this.logger?.warn('python_runtime_closed', { code, signal, stopping: this.stopping });
       this.#handleExit(new RuntimeProtocolError(
         'runtime_exited',
         `Runtime exited unexpectedly (code=${code ?? 'n/a'}, signal=${signal ?? 'n/a'}).`,
       ));
     });
     await new Promise((resolve, reject) => {
-      child.once('spawn', resolve);
+      child.once('spawn', () => {
+        this.logger?.info('python_runtime_spawned', { pid: child.pid });
+        resolve();
+      });
       child.once('error', reject);
     });
   }
@@ -100,13 +110,15 @@ class PythonRuntimeClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.logger?.warn('python_runtime_timeout', { method, request_id: id, timeout_ms: timeoutMs });
         reject(new RuntimeProtocolError('runtime_timeout', 'Runtime request timed out.'));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method });
       this.child.stdin.write(encoded, (error) => {
         if (!error) return;
         clearTimeout(timer);
         this.pending.delete(id);
+        this.logger?.error('python_runtime_write_failed', { method, request_id: id, message: error.message });
         reject(new RuntimeProtocolError('runtime_write_failed', 'Could not write to runtime.'));
       });
     });
@@ -168,6 +180,7 @@ class PythonRuntimeClient {
     clearTimeout(pending.timer);
     this.pending.delete(message.id);
     if (message.error) {
+      this.logger?.warn('python_runtime_rpc_error', { method: pending.method, request_id: message.id, code: message.error.code, message: message.error.message });
       pending.reject(new RuntimeProtocolError(message.error.code, message.error.message || 'Runtime request failed.'));
     } else if (Object.hasOwn(message, 'result')) {
       pending.resolve(message.result);
@@ -177,6 +190,7 @@ class PythonRuntimeClient {
   }
 
   #protocolFailure(code, message) {
+    this.logger?.error('python_runtime_protocol_failure', { code, message });
     const error = new RuntimeProtocolError(code, message);
     this.#rejectPending(error);
     this.terminate();

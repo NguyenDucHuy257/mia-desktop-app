@@ -49,6 +49,10 @@ export interface JobStatusResponse {
   status: JobStatus;
   stage: string | null;
   overall_percent: number;
+  invoice_progress?: {
+    processed: number;
+    planned: number;
+  };
   event_sequence?: number;
   current_month: null | {
     key: string;

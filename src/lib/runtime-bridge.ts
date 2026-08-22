@@ -28,6 +28,7 @@ export interface MiaRuntimeBridge {
   jobs: {
     resume(): Promise<PersistedJob | null>;
     resumeAll(): Promise<PersistedJob[]>;
+    latestAll(): Promise<PersistedJob[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;
@@ -36,12 +37,15 @@ export interface MiaRuntimeBridge {
   };
   artifacts: {
     selectDirectory(): Promise<string | null>;
-    export(request: { destination: string; connection_ids: string[]; kinds: Array<'xml' | 'html' | 'pdf' | 'excel'> }): Promise<{ count: number; files: string[] }>;
+    export(request: ArtifactExportRequest): Promise<{ count: number; files: string[] }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     openDirectory(directory: string): Promise<boolean>;
   };
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
-  logs: { list(): Promise<string[]> };
+  logs: {
+    list(): Promise<string[]>;
+    write(level: 'info' | 'warn' | 'error', event: string, fields?: Record<string, unknown>): Promise<boolean>;
+  };
   updates: {
     status(): Promise<UpdateStatus>;
     check(): Promise<UpdateStatus>;
@@ -57,13 +61,38 @@ export interface MiaRuntimeBridge {
 
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
 export interface LocalPreferences { concurrency: number; retries: number }
+export interface ArtifactExportRequest {
+  destination: string;
+  connection_ids: string[];
+  kinds: Array<'xml' | 'html' | 'pdf' | 'excel'>;
+  result_scopes?: Array<'overview' | 'details'>;
+  date_from?: string;
+  date_to?: string;
+  direction?: 'purchase' | 'sold' | null;
+  search?: string;
+  column_filters?: Record<string, string>;
+  exclude_business_keys?: string[];
+  filter_scope?: 'overview' | 'details';
+}
 export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: 'purchase' | 'sold' | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
 export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: 'purchase' | 'sold' | null; size: number; updated_at: number }
 
-export interface ResultQuery { connection_id: string; cursor?: string | null; limit?: number; search?: string; direction?: 'purchase' | 'sold' | null }
+export interface ResultQuery {
+  connection_id: string;
+  cursor?: string | null;
+  limit?: number;
+  search?: string;
+  direction?: 'purchase' | 'sold' | null;
+  date_from?: string;
+  date_to?: string;
+  column_filters?: Record<string, string>;
+  exclude_business_keys?: string[];
+  include_meta?: boolean;
+}
 export interface OverviewResult { overview_id: number; direction: 'purchase' | 'sold'; business_key: string; payload: Record<string, unknown> }
 export interface DetailResult { detail_id: number; direction: 'purchase' | 'sold'; business_key: string; line_key: string; payload: Record<string, unknown> }
-export interface LocalResultPage<T> { items: T[]; pagination: { limit: number; has_more: boolean; next_cursor: string | null } }
+export interface ResultMeta { total_rows: number; total_invoices: number; columns: string[]; totals: Record<string, number> }
+export interface LocalResultPage<T> { items: T[]; pagination: { limit: number; has_more: boolean; next_cursor: string | null }; meta?: ResultMeta }
 
 export interface PersistedJob {
   job_id: string | null;
@@ -75,6 +104,7 @@ export interface PersistedJob {
   status?: string;
   stage?: string | null;
   overall_percent?: number;
+  invoice_progress?: JobStatusResponse['invoice_progress'];
   current_month?: JobStatusResponse['current_month'];
   error?: JobStatusResponse['error'];
   event_sequence?: number;

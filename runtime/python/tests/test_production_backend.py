@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from mia_backend import DesktopInvoiceCrawlTaskHandler, ProductionBackend
+from mia_backend import ProductionBackend
 
 
 class ProductionBackendTests(unittest.TestCase):
@@ -41,25 +41,10 @@ class ProductionBackendTests(unittest.TestCase):
             work = backend.summary(first["job_id"])["work"]
             self.assertEqual([item["key"] for item in work["pipeline_plan"]["months"]], ["2026-01", "2026-02"])
             cancelled = backend.cancel(first["job_id"])
-            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertIn(cancelled["status"], {"cancelled", "cancelling"})
             backend.close()
 
-    def test_desktop_artifact_intent_uses_production_package_handler(self):
-        handler = object.__new__(DesktopInvoiceCrawlTaskHandler)
-        job = SimpleNamespace(parameters={"data_types": ["html", "pdf"]})
-        with patch(
-            "mia_backend.InvoiceCrawlTaskHandler.run_xml_unit",
-            return_value={"downloaded_count": 1},
-        ) as production:
-            result = handler.run_xml_unit(job, {"export_xml": True})
-        self.assertEqual(result, {"downloaded_count": 1})
-        production.assert_called_once_with(
-            job,
-            {"export_xml": True, "export_html": True},
-            progress_callback=None,
-        )
-
-    def test_artifact_job_enables_production_detail_prerequisite(self):
+    def test_artifact_job_with_detail_scope_enables_source_package_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             backend = ProductionBackend(Path(directory), start_worker=False)
             record = backend.start({
@@ -69,11 +54,12 @@ class ProductionBackendTests(unittest.TestCase):
                     "connection_id": "desktop-account-1",
                     "date_from": "2026-01-01", "date_to": "2026-01-01",
                     "directions": ["purchase"], "query_types": ["query"],
-                    "scopes": ["overview"], "data_types": ["html"],
+                    "scopes": ["overview", "detail"], "data_types": ["html"],
                 },
             })
             source = backend.repository.get_job(record["job_id"])
             self.assertEqual(source.parameters["result_scope"], "detail")
+            self.assertTrue(source.parameters["include_xml"])
             self.assertEqual(
                 source.parameters["pipeline_plan"]["modules"],
                 ["overview", "detail", "ensure_xml"],

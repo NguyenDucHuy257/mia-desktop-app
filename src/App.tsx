@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell, type NavigationKey } from './components/AppShell';
 import { AddAccountPage } from './features/accounts/AddAccountPage';
 import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage';
 import { createAccountConnectionGateway } from './features/accounts/account-gateway';
+import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
 import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
+import './styles/delete-progress.css';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
@@ -16,6 +18,32 @@ const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   settings: 'Cài đặt',
 };
 
+type DeleteProgress = {
+  active: boolean;
+  total: number;
+  completed: number;
+  failed: number;
+};
+
+function DeleteProgressPopup({ progress }: { progress: DeleteProgress }) {
+  if (!progress.active || progress.total < 1) return null;
+  const current = Math.min(progress.completed + progress.failed + 1, progress.total);
+  return (
+    <div className="delete-progress-popup" role="status" aria-live="polite">
+      <span className="delete-progress-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" focusable="false">
+          <path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z" />
+        </svg>
+      </span>
+      <span className="delete-progress-copy">
+        <strong>Đang xóa {current}/{progress.total} tài khoản</strong>
+        <span>Đang dọn job, log, cơ sở dữ liệu và dữ liệu tải xuống…</span>
+      </span>
+      <span className="delete-progress-spinner" aria-hidden="true" />
+    </div>
+  );
+}
+
 export default function App() {
   const [active, setActive] = useState<NavigationKey>('invoices');
   const [view, setView] = useState<'navigation' | 'add-account' | 'results'>('navigation');
@@ -23,21 +51,70 @@ export default function App() {
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const [exportFolder, setExportFolder] = useState('C:\\MIACrawl\\Export\\PDF\\T10_2023');
+  const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
+  const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
+  const invoiceJobs = useBatchJobLifecycle();
+  const deleteQueue = useRef<string[]>([]);
+  const deletingIds = useRef(new Set<string>());
+  const deleteWorkerActive = useRef(false);
 
   async function refreshAccounts() {
     try {
       const items = await gateway.list();
-      setAccounts(items);
-      setConnectionId((current) => current || items[0]?.connection_id || '');
+      const visibleItems = items.filter((item) => !deletingIds.current.has(item.connection_id));
+      setAccounts(visibleItems);
+      setConnectionId((current) => current || visibleItems[0]?.connection_id || '');
       setSelectedAccountIds((current) => {
-        const available = new Set(items.map((item) => item.connection_id));
+        const available = new Set(visibleItems.map((item) => item.connection_id));
         const retained = current.filter((id) => available.has(id));
-        return retained.length ? retained : items[0] ? [items[0].connection_id] : [];
+        return retained.length ? retained : visibleItems[0] ? [visibleItems[0].connection_id] : [];
       });
     } catch {
       setAccounts(null);
     }
+  }
+
+  async function drainDeleteQueue() {
+    if (deleteWorkerActive.current) return;
+    deleteWorkerActive.current = true;
+    try {
+      while (deleteQueue.current.length > 0) {
+        const id = deleteQueue.current[0];
+        try {
+          await gateway.revoke(id);
+          setDeleteProgress((current) => ({ ...current, completed: current.completed + 1 }));
+        } catch {
+          setDeleteProgress((current) => ({ ...current, failed: current.failed + 1 }));
+        } finally {
+          deleteQueue.current.shift();
+          deletingIds.current.delete(id);
+        }
+      }
+      await refreshAccounts();
+    } finally {
+      deleteWorkerActive.current = false;
+      setDeleteProgress((current) => ({ ...current, active: false }));
+      // A delete may have been queued between the last loop check and the final
+      // state update. Start another drain rather than leaving it stranded.
+      if (deleteQueue.current.length > 0) void drainDeleteQueue();
+    }
+  }
+
+  function deleteAccount(id: string) {
+    if (deletingIds.current.has(id)) return;
+    deletingIds.current.add(id);
+    deleteQueue.current.push(id);
+
+    // Optimistic presentation: remove the row before destructive filesystem/DB
+    // cleanup starts. The runtime remains the authority for the actual purge.
+    setAccounts((current) => current?.filter((item) => item.connection_id !== id) ?? current);
+    setSelectedAccountIds((current) => current.filter((value) => value !== id));
+    setConnectionId((current) => current === id ? '' : current);
+    setDeleteProgress((current) => current.active
+      ? { ...current, total: current.total + 1 }
+      : { active: true, total: 1, completed: 0, failed: 0 });
+    void drainDeleteQueue();
   }
 
   useEffect(() => { void refreshAccounts(); }, []);
@@ -48,21 +125,29 @@ export default function App() {
   }
 
   return (
-    <AppShell
-      active={active}
-      onNavigate={navigate}
-      showTopbar={view === 'navigation' && active === 'invoices'}
-    >
-      {view === 'add-account' ? (
-        <AddAccountPage gateway={gateway} onBack={() => setView('navigation')} onConnectionCreated={(id) => { setConnectionId(id); void refreshAccounts(); }} />
-      ) : view === 'results' ? (
-        <ResultsPage connectionId={connectionId} onBack={() => setView('navigation')} />
-      ) : active === 'invoices' ? (
-        <InvoiceManagementPage accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} exportFolder={exportFolder} onExportFolder={setExportFolder} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { await gateway.revoke(id); if (connectionId === id) setConnectionId(''); await refreshAccounts(); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id) => { setConnectionId(id); setView('results'); }} />
-      ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-        : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-          : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-            : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
-    </AppShell>
+    <>
+      <AppShell
+        active={active}
+        onNavigate={navigate}
+        showTopbar={view === 'navigation' && active === 'invoices'}
+      >
+        {view === 'add-account' ? (
+          <AddAccountPage gateway={gateway} onBack={() => setView('navigation')} onConnectionCreated={(id) => { setConnectionId(id); void refreshAccounts(); }} />
+        ) : view === 'results' ? (
+          <ResultsPage
+            connectionId={connectionId}
+            initialDateFrom={resultRange?.dateFrom}
+            initialDateTo={resultRange?.dateTo}
+            onBack={() => setView('navigation')}
+          />
+        ) : active === 'invoices' ? (
+          <InvoiceManagementPage jobLifecycle={invoiceJobs} accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} exportFolder={exportFolder} onExportFolder={setExportFolder} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { deleteAccount(id); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }} />
+        ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+          : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+            : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+              : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
+      </AppShell>
+      <DeleteProgressPopup progress={deleteProgress} />
+    </>
   );
 }

@@ -29,4 +29,18 @@ describe('account connection IPC broker', () => {
     expect(result.ok).toBe(true);
     expect(JSON.stringify(result)).not.toContain('not-returned');
   });
+
+  it('returns a specific message for rejected portal credentials', async () => {
+    const broker = createAccountConnectionBroker(() => ({
+      createConnection: vi.fn().mockRejectedValue(new Error('invalid_source_credentials')),
+    }));
+    const result = await broker.create({ username: '0101234567', password: 'wrong-password' });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'invalid_source_credentials',
+        message: 'Tên đăng nhập hoặc mật khẩu không đúng.',
+      },
+    });
+  });
 });

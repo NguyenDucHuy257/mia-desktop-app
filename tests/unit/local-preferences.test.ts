@@ -20,14 +20,18 @@ describe('local preferences and logs', () => {
     expect(() => validatePreferences({ concurrency: 0, retries: 9 })).toThrow('invalid_concurrency');
   });
 
-  it('redacts identifiers and credential-like values before returning logs', async () => {
+  it('redacts identifiers and credential-like values and preserves the log source', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'mia-logs-'));
     directories.push(directory);
     const logDirectory = path.join(directory, 'offline-runtime', 'logs');
     await mkdir(logDirectory, { recursive: true });
     await writeFile(path.join(logDirectory, 'runtime.log'), 'account 0101234567 token=secret-value\nnormal event\n');
     const lines = await readSanitizedLogs(directory);
-    expect(lines).toEqual(['account [redacted-id] token=[redacted]', 'normal event']);
+    expect(lines).toEqual([
+      '[runtime] account [redacted-id] token=[redacted]',
+      '[runtime] normal event',
+    ]);
+    expect(lines.every((line: string) => line.startsWith('[runtime] '))).toBe(true);
     expect(lines.join(' ')).not.toContain('0101234567');
     expect(lines.join(' ')).not.toContain('secret-value');
   });

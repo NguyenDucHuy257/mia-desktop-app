@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { createJobLifecycleBroker, idempotencyKey, validateIntent, validateJobId } = require('../../electron/job-lifecycle-broker.cjs');
+const { JOB_POLICY_NAMESPACE, createJobLifecycleBroker, idempotencyKey, validateIntent, validateJobId } = require('../../electron/job-lifecycle-broker.cjs');
 
 const intent = {
   connection_id: 'conn_123456', date_from: '2026-01-01', date_to: '2026-01-31',
@@ -12,6 +12,8 @@ const intent = {
 describe('offline job lifecycle IPC broker', () => {
   it('normalizes allowlisted options and rejects empty, extra or unsafe input', () => {
     expect(validateIntent(intent)).toEqual(intent);
+    expect(validateIntent({ ...intent, force_refresh: true })).toEqual({ ...intent, force_refresh: true });
+    expect(() => validateIntent({ ...intent, force_refresh: 'yes' })).toThrow();
     expect(() => validateIntent({ ...intent, detail_limit: 1 })).toThrow();
     expect(() => validateIntent({ ...intent, date_from: '2026-02-01' })).toThrow();
     expect(() => validateIntent({ ...intent, directions: [] })).toThrow();
@@ -22,17 +24,20 @@ describe('offline job lifecycle IPC broker', () => {
   it('derives the same idempotency key for equivalent normalized intents', () => {
     const reordered = { ...intent, directions: ['sold', 'purchase'], scopes: ['detail', 'overview'] };
     const canonical = validateIntent(reordered);
+    expect(JOB_POLICY_NAMESPACE).toBe('desktop-v4');
     expect(idempotencyKey(canonical)).toBe(idempotencyKey(validateIntent({ ...reordered, directions: ['purchase', 'sold'], scopes: ['overview', 'detail'] })));
+    expect(idempotencyKey(validateIntent({ ...intent, force_refresh: true }))).not.toBe(idempotencyKey(validateIntent({ ...intent, force_refresh: false })));
   });
 
   it('sends only validated data to the offline runtime', async () => {
     const invoke = vi.fn(async (method: string) => method === 'accounts.secret'
       ? { username: 'masked', encrypted_password: Buffer.from('cipher').toString('base64') }
       : { job_id: 'job_1', status: 'queued', stage: 'queued' });
-    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(intent);
+    const freshIntent = { ...intent, force_refresh: true };
+    const result = await createJobLifecycleBroker(() => ({ invoke }), () => 'now', { decrypt: () => 'memory-only' }).start(freshIntent);
     expect(result).toMatchObject({ ok: true, data: { record: { job_id: 'job_1' }, accepted: { status: 'queued' } } });
     expect(invoke).toHaveBeenCalledWith('source.jobs.start', expect.objectContaining({
-        intent, idempotency_key: expect.stringMatching(/^desktop-v2-[a-f0-9]{64}$/),
+        intent: freshIntent, idempotency_key: expect.stringMatching(/^desktop-v4-[a-f0-9]{64}$/),
     }), { timeoutMs: 15000 });
   });
 
@@ -70,12 +75,13 @@ describe('offline job lifecycle IPC broker', () => {
     expect(invoke.mock.calls.filter(([method, params]) => method === 'source.jobs.start' && params.idempotency_key?.endsWith('-attempt-2'))).toHaveLength(2);
   });
 
-  it.each(['resume', 'resumeAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
+  it.each(['resume', 'resumeAll', 'latestAll', 'status', 'summary', 'cancel', 'clear'])('routes %s through the runtime allowlist', async (method) => {
     const invoke = vi.fn().mockResolvedValue(null);
     const broker = createJobLifecycleBroker(() => ({ invoke }), () => 'now');
-    await broker[method](...(method === 'resume' || method === 'clear' ? [] : ['job_1']));
+    await broker[method](...(method === 'resume' || method === 'resumeAll' || method === 'latestAll' || method === 'clear' ? [] : ['job_1']));
     if (method === 'clear') expect(invoke).not.toHaveBeenCalled();
     else if (method === 'resume' || method === 'resumeAll') expect(invoke).toHaveBeenCalledWith('source.jobs.resume_all');
+    else if (method === 'latestAll') expect(invoke).toHaveBeenCalledWith('source.jobs.latest');
     else expect(invoke).toHaveBeenCalledWith(`source.jobs.${method}`, expect.any(Object));
   });
 

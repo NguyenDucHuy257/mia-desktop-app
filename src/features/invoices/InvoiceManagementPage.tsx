@@ -1,15 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
+import { readLastSyncDateRange } from '../../components/date-input-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
 import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
-import { useBatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import { diagnosticLog } from '../../lib/diagnostic-logger';
+import type { BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
+import '../../styles/invoice-refresh.css';
 
-type RowStatus = 'completed' | 'failed' | 'processing' | 'pending';
+type RowStatus = 'completed' | 'failed' | 'processing' | 'pending' | 'ready';
 
 interface InvoiceRow {
   taxCode: string;
@@ -18,27 +21,31 @@ interface InvoiceRow {
   selected: boolean;
   progress: number;
   progressLabel: string;
+  actionsReady?: boolean;
 }
 
+const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
+
 const rows: InvoiceRow[] = [
-  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải 150/150 HĐ' },
-  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT' },
-  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Đang tải 45/120 HĐ...' },
+  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: '128/128 hóa đơn', actionsReady: true },
+  { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'invalid_source_credentials' },
+  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37.5, progressLabel: '45/120 hóa đơn' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
     company: `Công ty CP Đầu tư ${letter}`,
-    status: 'pending' as const,
+    status: 'ready' as const,
     selected: false,
     progress: 0,
-    progressLabel: 'Chờ trong hàng đợi...',
+    progressLabel: '—',
   })),
 ];
 
 const statusLabels: Record<RowStatus, string> = {
   completed: 'Hoàn thành',
-  failed: 'ⓘ Thất bại',
+  failed: 'ⓘ Lỗi',
   processing: 'ϟ Đang xử lý',
   pending: 'Chờ xử lý',
+  ready: 'Sẵn sàng',
 };
 
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
@@ -47,22 +54,21 @@ function SelectionBox({ checked, indeterminate = false }: { checked: boolean; in
 
 function ProgressCell({ row }: { row: InvoiceRow }) {
   if (row.status === 'failed') {
-    return (
-      <div className="failure-message">
-        <strong>{row.progressLabel}</strong>
-        <span>Vui lòng kiểm tra lại MST hoặc Mật khẩu.</span>
-      </div>
-    );
+    return <div className="failure-message"><strong>{row.progressLabel}</strong></div>;
+  }
+  if (row.status === 'ready') {
+    return <div className="progress-cell" data-status={row.status}><div className="progress-copy"><span>{row.progressLabel}</span></div></div>;
   }
   return (
     <div className="progress-cell" data-status={row.status}>
-      <div className="progress-copy"><span>{row.progressLabel}</span><span>{row.progress}%</span></div>
-      <div className="progress-track"><span style={{ width: `${row.progress}%` }} /></div>
+      <div className="progress-copy"><span>{row.progressLabel}</span></div>
+      <div className="progress-track"><span style={{ width: `${Math.max(0, Math.min(100, row.progress))}%` }} /></div>
     </div>
   );
 }
 
-export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
+export function InvoiceManagementPage({ jobLifecycle, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
+  jobLifecycle: BatchJobLifecycle;
   onAddAccount(): void;
   connectionId: string;
   selectedAccountIds: string[];
@@ -72,52 +78,70 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
   onSelectAccounts(ids: string[]): void;
-  onViewResults(id: string): void;
+  onViewResults(id: string, dateFrom: string, dateTo: string): void;
 }) {
+  const initialRange = useRef(readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
+  const [forceRefresh, setForceRefresh] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
-  const [actionAccountId, setActionAccountId] = useState<string | null>(null);
-  const [dateFrom, setDateFrom] = useState('2023-10-01');
-  const [dateTo, setDateTo] = useState('2023-10-31');
+  const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
+  const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
-  const { items: batchItems, startMany, cancelAll, message, dismissMessage } = useBatchJobLifecycle();
+  const { items: batchItems, startMany, cancelAll } = jobLifecycle;
   const figmaFixture = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('figma') === '1';
 
   useEffect(() => {
-    if (!menu && !actionAccountId) return;
+    if (!menu) return;
     const closeOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && !target.closest('.select-wrap') && !target.closest('.row-action-popover') && !target.closest('.row-action-trigger')) { setMenu(null); setActionAccountId(null); }
+      if (target instanceof Element && !target.closest('.select-wrap')) setMenu(null);
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setMenu(null); setActionAccountId(null); }
-    };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenu(null); };
     document.addEventListener('pointerdown', closeOutside);
     document.addEventListener('keydown', closeOnEscape);
     return () => {
       document.removeEventListener('pointerdown', closeOutside);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [menu, actionAccountId]);
+  }, [menu]);
 
   async function exportAccounts(connectionIds: string[]) {
     if (!window.miaRuntime?.artifacts?.export) { setSelectionError('Tính năng xuất file chỉ có trong ứng dụng desktop.'); return; }
+    if (connectionIds.length !== 1) { setSelectionError('Chỉ tải Excel cho một tài khoản tại một thời điểm.'); return; }
     let destination = exportFolder;
     if (!destination) {
       destination = await window.miaRuntime.artifacts.selectDirectory() ?? '';
       if (!destination) return;
       onExportFolder(destination);
     }
+    const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
+    const resultDirection = directions.length === 1 ? directions[0] : null;
+    diagnosticLog('account_excel_export_requested', {
+      date_from: dateFrom,
+      date_to: dateTo,
+      scopes: resultScopes,
+      direction: resultDirection,
+    });
     try {
-      const result = await window.miaRuntime.artifacts.export({ destination, connection_ids: connectionIds, kinds: ['excel'] });
+      const result = await window.miaRuntime.artifacts.export({
+        destination,
+        connection_ids: connectionIds,
+        kinds: ['excel'],
+        result_scopes: resultScopes,
+        date_from: dateFrom,
+        date_to: dateTo,
+        direction: resultDirection,
+        search: '',
+      });
+      diagnosticLog('account_excel_export_completed', { file_count: result.count });
       setSelectionError(`Đã xuất ${result.count} file Excel.`);
-      setActionAccountId(null);
-    } catch {
+    } catch (error) {
+      diagnosticLog('account_excel_export_failed', { code: (error as { code?: string })?.code }, 'error');
       setSelectionError('Không thể xuất Excel. Vui lòng kiểm tra thư mục lưu và thử lại.');
     }
   }
@@ -128,10 +152,20 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
       setSelectionError('Vui lòng chọn ít nhất một hướng và phạm vi dữ liệu trước khi đồng bộ.');
       return;
     }
+    diagnosticLog('sync_clicked', {
+      account_count: selectedAccountIds.length,
+      date_from: dateFrom,
+      date_to: dateTo,
+      directions,
+      scopes,
+      force_refresh: forceRefresh,
+    });
     setSelectionError(null);
     startMany(selectedAccountIds.map((connection_id) => ({
       connection_id, date_from: dateFrom, date_to: dateTo,
       directions, query_types: ['query', 'sco-query'], scopes, data_types: ['invoice'],
+      force_refresh: forceRefresh,
+      refresh_latest_month: true,
     })));
   }
 
@@ -147,17 +181,44 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
       : [...current, value]);
   }
 
-  const terminal = ['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned'];
-  const activeJob = Object.values(batchItems).some((item) => Boolean(item.record && (!item.status || !terminal.includes(item.status.status))));
-  const primaryStatus = Object.values(batchItems).find((item) => item.status)?.status;
-  const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => ({
-    taxCode: account.username,
-    company: account.company_name || '—',
-    status: account.status === 'active' || account.status === 'connected' ? 'completed' : 'pending',
-    selected: selectedAccountIds.includes(account.connection_id),
-    progress: batchItems[account.connection_id]?.status?.overall_percent ?? 0,
-    progressLabel: batchItems[account.connection_id]?.status?.stage ?? (account.status === 'unchecked' ? 'Chưa kiểm tra đăng nhập' : account.status),
-  }));
+  const terminal = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
+  const activeJob = Object.values(batchItems).some((item) => {
+    const status = item.status?.status ?? item.record?.status;
+    return Boolean(item.record?.job_id && status && !terminal.has(status));
+  });
+  const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => {
+    const item = batchItems[account.connection_id];
+    const job = item?.status ?? item?.record;
+    const runtimeStatus = job?.status;
+    const sourceError = job?.error;
+    const inlineError = item?.error;
+    const status: RowStatus = inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
+      ? 'failed'
+      : runtimeStatus === 'running' || runtimeStatus === 'waiting_account' || runtimeStatus === 'cancelling'
+        ? 'processing'
+        : runtimeStatus === 'queued'
+          ? 'pending'
+          : runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning'
+            ? 'completed'
+            : 'ready';
+    const processed = Math.max(0, Number(job?.invoice_progress?.processed ?? 0));
+    const planned = Math.max(0, Number(job?.invoice_progress?.planned ?? 0));
+    const progress = planned > 0 ? Math.min(100, processed * 100 / planned) : status === 'completed' ? 100 : 0;
+    const progressLabel = status === 'failed'
+      ? inlineError ?? sourceError?.message ?? sourceError?.code ?? runtimeStatus ?? 'failed'
+      : status === 'ready'
+        ? '—'
+        : `${status === 'completed' && planned > 0 ? planned : processed}/${planned} hóa đơn`;
+    return {
+      taxCode: account.username,
+      company: account.company_name || '—',
+      status,
+      selected: selectedAccountIds.includes(account.connection_id),
+      progress,
+      progressLabel,
+      actionsReady: runtimeStatus === 'completed' || runtimeStatus === 'completed_with_warning',
+    };
+  });
   const visibleRows = allRows.filter((row) => {
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
@@ -165,6 +226,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
   const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
   const visibleAccountIds = visibleRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
   const selectedVisibleCount = visibleAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
+
   return (
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
@@ -184,12 +246,12 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
-          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu ({selectedAccountIds.length})</button>
-          {primaryStatus ? <div className="job-progress-panel" role="status">
-            <strong>{primaryStatus.status}</strong><span>{primaryStatus.overall_percent}% tổng thể</span>
-            <div className="progress-track"><span style={{ width: `${primaryStatus.overall_percent}%` }} /></div>
-            {primaryStatus.current_month ? <><small>Tháng {primaryStatus.current_month.key}: {primaryStatus.current_month.processed}/{primaryStatus.current_month.planned}</small><div className="progress-track"><span style={{ width: `${primaryStatus.current_month.percent}%` }} /></div></> : null}
-          </div> : null}
+          <label className="refresh-data-toggle" title="Tích để source API force-refresh toàn bộ khoảng đã chọn. Khi không tích, cache/checkpoint và refresh tháng mới nhất do source API quyết định.">
+            <input type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" />
+            <span className="refresh-data-box" data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>
+            <span>Tải mới dữ liệu</span>
+          </label>
+          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" onClick={startJob}><img src={syncIcon} alt="" /> Đồng bộ dữ liệu</button>
         </div>
       </section>
       <section className="invoice-content">
@@ -200,7 +262,7 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
               <img src={searchIcon} alt="" />
               <input aria-label="Tìm kiếm tài khoản" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
             </label>
-            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Thất bại</option><option value="pending">Chờ xử lý</option></select>
+            <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="ready">Sẵn sàng</option></select>
           </div>
           <button className="stop-button" type="button" disabled={!activeJob} onClick={() => void cancelAll()}><img src={stopIcon} alt="" /> Dừng tải</button>
         </div>
@@ -218,8 +280,14 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
                 <strong className="company-name">{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
-                {account ? <span className="row-action-group"><button className="row-action-trigger" type="button" aria-label={`Mở tác vụ ${row.taxCode}`} aria-expanded={actionAccountId === account.connection_id} onClick={() => setActionAccountId((current) => current === account.connection_id ? null : account.connection_id)}>⋮</button><button type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>{actionAccountId === account.connection_id ? <span className="row-action-popover" role="menu"><button role="menuitem" type="button" onClick={() => onViewResults(account.connection_id)}>Xem kết quả</button><button role="menuitem" type="button" onClick={() => void exportAccounts([account.connection_id])}>Tải Excel tài khoản này</button><button role="menuitem" type="button" disabled={!selectedAccountIds.length} onClick={() => void exportAccounts(selectedAccountIds)}>Tải tất cả đã chọn</button></span> : null}</span> : <span className="row-actions">{row.status === 'failed' ? '✎  ↻' : '⋮'}</span>}
-              </div>
+                {account ? <span className="row-action-group">
+                  {row.actionsReady ? <>
+                    <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button>
+                    <button className="row-excel-button" type="button" onClick={() => void exportAccounts([account.connection_id])}>Tải Excel</button>
+                  </> : <span className="row-action-placeholder">—</span>}
+                  <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
+                </span> : <span className="row-action-placeholder">—</span>}
+              </div>;
             })}
           </div>
         </div>
@@ -229,7 +297,6 @@ export function InvoiceManagementPage({ onAddAccount, accounts, selectedAccountI
         </footer>
       </section>
       {selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
-      {message ? <NoticeDialog kind={message.kind} message={message.text} onClose={dismissMessage} /> : null}
     </div>
   );
 }

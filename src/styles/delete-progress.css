@@ -1,0 +1,67 @@
+.delete-progress-popup {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1400;
+  display: grid;
+  grid-template-columns: 38px minmax(220px, 1fr) 22px;
+  align-items: center;
+  gap: 12px;
+  width: min(420px, calc(100vw - 48px));
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
+  pointer-events: none;
+}
+
+.delete-progress-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.delete-progress-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+.delete-progress-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.delete-progress-copy strong {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.delete-progress-copy span {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-progress-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #cbd5e1;
+  border-top-color: #475569;
+  border-radius: 50%;
+  animation: delete-progress-spin 0.8s linear infinite;
+}
+
+@keyframes delete-progress-spin {
+  to { transform: rotate(360deg); }
+}
