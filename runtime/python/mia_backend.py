@@ -139,6 +139,46 @@ class ProductionBackend(SourceBackend):
         )
         return self.public_connection(connection)
 
+    def cancel_active_jobs_for_exit(self) -> int:
+        """Cancel local source jobs without deleting any persisted invoice data.
+
+        Normal source host shutdown requeues a running taskless pipeline so a
+        server worker can resume it later. Desktop has different UX semantics:
+        closing the app means stop this user-initiated batch. Request source
+        cancellation *before* worker shutdown so queued/waiting jobs become
+        cancelled immediately and a running job moves to ``cancelling``. The
+        source supervisor then terminalizes it as cancelled at its next safe
+        interruption point instead of requeueing it. Already committed DB rows,
+        checkpoints and artifacts remain untouched; the next manual sync still
+        goes through CoveragePlanner and the source cache/refresh policy.
+        """
+        cancelled = 0
+        for job in self.repository.list_jobs_for_reconciliation():
+            if (
+                job.owner_id != source_backend_module.OWNER_ID
+                or job.status in source_backend_module.JOB_TERMINAL_STATES
+            ):
+                continue
+            self.service.cancel_job(
+                job.job_id,
+                owner_id=source_backend_module.OWNER_ID,
+            )
+            cancelled += 1
+        if self.logger is not None:
+            self.logger.info(
+                "job_engine event=desktop_exit_cancel_requested count=%s",
+                cancelled,
+            )
+        return cancelled
+
+    def close(self, *, cancel_jobs: bool = False) -> None:
+        # Account purge/reinitialization may close the backend without meaning
+        # "the user exited the app", so cancellation is explicit rather than
+        # the default. system.shutdown passes cancel_jobs=True.
+        if cancel_jobs:
+            self.cancel_active_jobs_for_exit()
+        SourceBackend.close(self)
+
     @staticmethod
     def public_job(job):
         # Upstream JobRecord timestamps are strings. Keep the source record
