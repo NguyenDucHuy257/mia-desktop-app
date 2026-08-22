@@ -442,7 +442,17 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 raise RpcError(-32011, "storage_not_initialized")
             if production_backend is not None:
                 production_backend.prepare_artifacts(value)
-            return ArtifactExporter(storage, data_directory).export(value), False
+            def artifact_progress(event: dict[str, Any]) -> None:
+                write_message({
+                    "jsonrpc": "2.0", "method": "artifact.progress", "params": event,
+                })
+
+            result = ArtifactExporter(storage, data_directory).export(
+                value, progress_callback=artifact_progress
+            )
+            if not result.get("count"):
+                raise RpcError(-32062, "artifact_batch_empty")
+            return result, False
         except RpcError:
             raise
         except (KeyError, TypeError, ValueError):

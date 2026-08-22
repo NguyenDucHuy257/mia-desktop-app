@@ -79,6 +79,12 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
             originals[name] = original
 
             def wrapped(job, payload, *args, _original=original, _stage=stage, **kwargs):
+                if _stage == "ensure_xml" and isinstance(payload, dict):
+                    # The source package response contains both invoice.xml and
+                    # invoice.html. Ask the existing source handler/storage
+                    # service to persist both from that one package request.
+                    # This changes no portal, retry, cache or naming rule.
+                    payload = {**payload, "export_xml": True, "export_html": True}
                 self._set_current_source_unit(_stage, payload)
                 return _original(job, payload, *args, **kwargs)
 
@@ -98,6 +104,15 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         self._desktop_current_unit = unit
         self._state["current_direction"] = str(direction)
         self._state["current_query_type"] = str(query_type) if query_type else None
+        if stage == "ensure_xml":
+            self._state["current_artifact"] = {
+                "direction": str(direction),
+                "query_type": str(query_type or ""),
+                "nbmst": str(payload.get("nbmst") or ""),
+                "khhdon": str(payload.get("khhdon") or ""),
+                "shdon": str(payload.get("shdon") or ""),
+                "khmshdon": str(payload.get("khmshdon") or ""),
+            }
         # Persist only when the source changes logical unit. Item/month progress
         # continues to use the source pipeline's own persistence throttle.
         self._persist(force=True)

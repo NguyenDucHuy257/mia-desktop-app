@@ -150,6 +150,27 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
             OptimizedInvoiceCrawlPipeline,
         )
 
+    def test_xml_wrapper_reuses_source_handler_for_xml_and_html(self):
+        observed = []
+        pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+        pipeline.core = SimpleNamespace(
+            run_xml_unit=lambda _job, payload: observed.append(dict(payload))
+        )
+        pipeline._state = {}
+        pipeline._desktop_current_unit = None
+        pipeline._persist = lambda **_kwargs: None
+
+        pipeline._install_unit_progress_wrappers()
+        pipeline.core.run_xml_unit(object(), {
+            "direction": "purchase", "query_type": "query", "nbmst": "0101",
+            "khhdon": "AA/26E", "shdon": "12", "khmshdon": "1",
+            "export_xml": True, "export_html": False,
+        })
+
+        self.assertTrue(observed[0]["export_xml"])
+        self.assertTrue(observed[0]["export_html"])
+        self.assertEqual(pipeline._state["current_artifact"]["shdon"], "12")
+
 
 if __name__ == "__main__":
     unittest.main()

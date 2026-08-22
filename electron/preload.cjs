@@ -51,6 +51,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
       ipcRenderer.on('mia:artifacts:export-progress', wrapped);
       return () => ipcRenderer.removeListener('mia:artifacts:export-progress', wrapped);
     },
+    onInvoiceProgress: (listener) => {
+      if (typeof listener !== 'function') throw new TypeError('invalid invoice artifact progress listener');
+      const wrapped = (_event, progress) => listener(progress);
+      ipcRenderer.on('mia:artifacts:invoice-progress', wrapped);
+      return () => ipcRenderer.removeListener('mia:artifacts:invoice-progress', wrapped);
+    },
   }),
   preferences: Object.freeze({
     get: () => ipcRenderer.invoke('mia:preferences:get'),

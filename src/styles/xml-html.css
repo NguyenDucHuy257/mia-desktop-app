@@ -1,0 +1,32 @@
+.xml-html-page { height: 100%; padding: 24px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; color: #1a1c1b; }
+.xml-html-page > header { display: flex; align-items: center; justify-content: space-between; }
+.xml-html-page h1 { margin: 0 0 4px; font-size: 22px; }
+.xml-html-page header p { margin: 0; color: #62625b; font-size: 13px; }
+.xml-html-filters { padding: 12px; border: 1px solid #e5e5e0; border-radius: 12px; background: #f6f6f3; display: flex; align-items: center; gap: 10px; }
+.xml-html-filters > select, .xml-html-filters > input { min-width: 0; height: 42px; padding: 0 12px; border: 1px solid #d6d6cf; border-radius: 10px; background: #fff; font: inherit; }
+.xml-html-filters > select { width: 170px; }
+.xml-html-filters > input { flex: 1; }
+.xml-html-actions { display: flex; align-items: center; gap: 12px; }
+.xml-html-actions .storage-folder-picker { min-width: 340px; flex: 1; }
+.xml-html-kind-options { display: flex; gap: 8px; }
+.xml-html-kind-options label { height: 38px; padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 9px; display: inline-flex; align-items: center; gap: 7px; color: #52606d; background: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.xml-html-kind-options label[data-active="true"] { border-color: #166534; color: #166534; background: #f0fdf4; }
+.xml-html-kind-options input { accent-color: #166534; }
+.xml-html-download { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: #2563b8; color: #fff; font-weight: 700; cursor: pointer; }
+.xml-html-download:disabled { opacity: .55; cursor: not-allowed; }
+.xml-html-progress { position: relative; padding: 11px 14px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; display: grid; gap: 7px; }
+.xml-html-progress > div { display: flex; justify-content: space-between; color: #244b82; font-size: 13px; }
+.xml-html-progress > span { height: 8px; border-radius: 999px; background: #dbeafe; overflow: hidden; }
+.xml-html-progress > span > i { height: 100%; border-radius: inherit; display: block; background: #2563b8; transition: width 180ms ease; }
+.xml-html-progress small { color: #52606d; }
+.xml-html-progress button { position: absolute; right: 14px; bottom: 9px; border: 0; background: transparent; color: #b91c1c; font-weight: 700; cursor: pointer; }
+.xml-html-state { min-height: 160px; border: 1px dashed #d6d6cf; border-radius: 12px; display: grid; place-items: center; color: #62625b; }
+.xml-html-table { min-height: 220px; flex: 1 1 0; overflow: auto; border: 1px solid #dce3ea; border-radius: 10px; scrollbar-color: #4f8fd8 #f3f6f9; }
+.xml-html-table::-webkit-scrollbar { width: 12px; height: 12px; }
+.xml-html-table::-webkit-scrollbar-thumb { border: 2px solid #fff; border-radius: 999px; background: linear-gradient(90deg, #3b82f6, #38a7d8 48%, #d6ad42); }
+.xml-html-row { width: max-content; min-width: 100%; display: grid; grid-template-columns: 64px 135px 135px 125px 160px minmax(220px, 1fr) 145px 170px 170px; border-bottom: 1px solid #e8edf2; background: #fff; }
+.xml-html-row--head { position: sticky; top: 0; z-index: 2; background: #f4f7fa; font-weight: 700; }
+.xml-html-row > span { min-width: 0; padding: 11px 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.xml-html-row span[data-progress="Hoàn thành"] { color: #166534; font-weight: 700; }
+.xml-html-row span[data-progress^="Đang"] { color: #2563b8; font-weight: 700; }
+.xml-html-page .artifact-pager { flex: 0 0 50px; border-radius: 8px; }

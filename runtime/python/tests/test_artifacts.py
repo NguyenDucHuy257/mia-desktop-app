@@ -172,6 +172,7 @@ class ArtifactExporterTests(unittest.TestCase):
                         id INTEGER PRIMARY KEY,
                         company_tax_code TEXT NOT NULL,
                         direction TEXT NOT NULL,
+                        query_type TEXT NOT NULL,
                         nlap_date TEXT,
                         updated_at TEXT,
                         xml_path TEXT,
@@ -179,23 +180,31 @@ class ArtifactExporterTests(unittest.TestCase):
                         xml_fetched INTEGER NOT NULL DEFAULT 0,
                         html_fetched INTEGER NOT NULL DEFAULT 0,
                         unavailable INTEGER NOT NULL DEFAULT 0
+                        ,nbmst TEXT NOT NULL, khhdon TEXT NOT NULL,
+                        shdon TEXT NOT NULL, khmshdon TEXT NOT NULL
                     )
                 """)
                 invoices.execute(
                     """INSERT INTO invoice_package_items(
-                        id,company_tax_code,direction,nlap_date,updated_at,
-                        xml_path,xml_fetched,html_fetched,unavailable
-                    ) VALUES (?,?,?,?,?,?,?,?,?)""",
+                        id,company_tax_code,direction,query_type,nlap_date,updated_at,
+                        xml_path,xml_fetched,html_fetched,unavailable,
+                        nbmst,khhdon,shdon,khmshdon
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         1,
                         tax_code,
                         "purchase",
+                        "query",
                         "2026-08-15",
                         "2026-08-21T08:00:00+00:00",
                         str(xml_path),
                         1,
                         0,
                         0,
+                        "0109999999",
+                        "AA/26E",
+                        "12",
+                        "1",
                     ),
                 )
                 invoices.commit()
@@ -225,15 +234,31 @@ class ArtifactExporterTests(unittest.TestCase):
             self.assertEqual(outside_range["items"], [])
 
             destination = root / "output"
+            progress = []
             exported = exporter.export({
                 "destination": str(destination),
                 "connection_ids": [connection_id],
                 "kinds": ["xml"],
-            })
+                "direction": "purchase",
+                "query_type": "query",
+                "date_from": "2026-08-01",
+                "date_to": "2026-08-21",
+                "search": "AA/26E",
+            }, progress_callback=progress.append)
             self.assertEqual(exported["count"], 1)
             copied = Path(exported["files"][0])
             self.assertTrue(copied.is_file())
             self.assertEqual(copied.read_text(encoding="utf-8"), "<invoice/>")
+            self.assertEqual(progress[0]["percent"], 0)
+            self.assertEqual(progress[-1]["percent"], 100)
+            self.assertTrue(all(
+                left["percent"] <= right["percent"]
+                for left, right in zip(progress, progress[1:])
+            ))
+            self.assertEqual(
+                progress[1]["artifact_key"],
+                "purchase|query|0109999999|AA/26E|12|1",
+            )
 
     def test_safe_excel_value_covers_all_formula_prefixes(self):
         for prefix in ("=", "+", "-", "@"):

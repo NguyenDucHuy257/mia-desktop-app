@@ -256,9 +256,14 @@ void app.whenReady().then(async () => {
     env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
     logger: electronLog(),
     onNotification(method, payload) {
-      if (method !== 'export.progress') return;
+      const channel = method === 'export.progress'
+        ? 'mia:artifacts:export-progress'
+        : method === 'artifact.progress'
+          ? 'mia:artifacts:invoice-progress'
+          : null;
+      if (!channel) return;
       for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send('mia:artifacts:export-progress', payload);
+        if (!window.isDestroyed()) window.webContents.send(channel, payload);
       }
     },
   });

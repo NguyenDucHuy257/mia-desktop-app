@@ -51,6 +51,19 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
   });
 
+  it('preserves allowlisted XML/HTML invoice filters', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-packages');
+    expect(validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'],
+      date_from: '2026-08-01', date_to: '2026-08-31', direction: 'sold',
+      query_type: 'sco-query', search: '000123',
+    })).toMatchObject({
+      destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'],
+      direction: 'sold', query_type: 'sco-query', search: '000123',
+    });
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['xml'], query_type: 'bad' })).toThrow('invalid_artifact_query_type');
+  });
+
   it('returns the broker envelope expected by preload for successful exports', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-results');
     const runtime = {

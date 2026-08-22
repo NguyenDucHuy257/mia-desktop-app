@@ -7,7 +7,9 @@ import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
 import { useResultExportLifecycle } from './features/results/use-result-export-lifecycle';
-import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
+import { PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
+import { XmlHtmlPage } from './features/artifacts/XmlHtmlPage';
+import { useXmlHtmlDownloadLifecycle } from './features/artifacts/use-xml-html-download-lifecycle';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
@@ -15,8 +17,7 @@ import './styles/result-export-progress.css';
 const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
-  xml: 'XML Downloader',
-  html: 'HTML Downloader',
+  'xml-html': 'XML/HTML',
   pdf: 'PDF Downloader',
   materials: 'Mã vật tư',
   logs: 'Nhật ký',
@@ -61,6 +62,7 @@ export default function App() {
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
   const invoiceJobs = useBatchJobLifecycle();
   const resultExports = useResultExportLifecycle();
+  const xmlHtmlDownloads = useXmlHtmlDownloadLifecycle();
   const deleteQueue = useRef<string[]>([]);
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
@@ -177,8 +179,7 @@ export default function App() {
             onSelectAccounts={setSelectedAccountIds}
             onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
           />
-        ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-          : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
+        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={xmlHtmlDownloads} />
             : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
               : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
       </AppShell>

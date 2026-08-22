@@ -544,3 +544,37 @@ for (const width of [1024, 1280, 1366, 1440, 1500, 1600]) {
     await expect(page.locator('.artifact-page')).toHaveJSProperty('scrollWidth', width - 200);
   });
 }
+
+test('unified XML HTML navigation reads overview rows and paginates by fifty', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_xml_html', username: '0100000000', company_name: 'Công ty XML HTML', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    const rows = Array.from({ length: 51 }, (_, index) => ({
+      row_id: index + 1, direction: 'purchase', fields: {
+        tdlap: '20/08/2026', khmshdon: '1', khhdon: 'AA/26E', shdon: String(index + 1),
+        nbmst: `010000${String(index).padStart(4, '0')}`, nbten: `Đối tác ${index + 1}`,
+        tgtttbso: index * 1000, tthai: 'Hóa đơn mới',
+      },
+    }));
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      jobs: { resume: async () => null, resumeAll: async () => [], latestAll: async () => [], start: async () => ({}), status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      results: { overview: async ({ cursor }: { cursor?: string | null }) => ({ items: cursor ? rows.slice(50) : rows.slice(0, 50), total_count: 51, pagination: { limit: 50, has_more: !cursor, next_cursor: cursor ? null : 'page-2' } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
+      artifacts: { list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
+    } });
+  });
+  await page.goto('/');
+  const xmlHtmlNav = page.getByRole('button', { name: 'XML/HTML', exact: true });
+  await xmlHtmlNav.click();
+  await expect(xmlHtmlNav).toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.nav-button[data-active="true"]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'HTML', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'XML/HTML' })).toBeVisible();
+  await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(50);
+  await expect(page.getByText('Tổng 51 hàng · tối đa 50 hàng/trang')).toBeVisible();
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await expect(page.locator('.xml-html-row:not(.xml-html-row--head)')).toHaveCount(1);
+  await page.getByRole('button', { name: 'PDF', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.nav-button[data-active="true"]')).toHaveCount(1);
+});

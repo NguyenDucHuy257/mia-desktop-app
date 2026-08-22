@@ -54,7 +54,7 @@ function jobStartFailureMessage(code?: string) {
   return 'Không thể tạo tác vụ đồng bộ. Xem Nhật ký để biết chi tiết.';
 }
 
-export function useBatchJobLifecycle() {
+export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisting?: boolean } = {}) {
   const [items, setItems] = useState<Record<string, BatchItem>>({});
   const [message, setMessage] = useState<{ kind: 'notice' | 'error' | 'success'; text: string } | null>(null);
   const [active, setActive] = useState(false);
@@ -305,6 +305,7 @@ export function useBatchJobLifecycle() {
   }, [finishStoppingIfDone, launchNext, updateItems]);
 
   useEffect(() => {
+    if (!hydrateExisting) return stopTimers;
     const token = generation.current;
     const jobs = window.miaRuntime?.jobs;
     if (!jobs) return stopTimers;
@@ -330,7 +331,7 @@ export function useBatchJobLifecycle() {
       diagnosticLog('job_state_hydrated', { account_count: activeRecords.length, active_count: activeRecords.length });
     }).catch((error) => diagnosticLog('job_state_hydrate_failed', { code: (error as { code?: string })?.code }, 'warn'));
     return stopTimers;
-  }, [poll, stopTimers, updateItems]);
+  }, [hydrateExisting, poll, stopTimers, updateItems]);
 
   const startMany = useCallback((intents: CreateJobRequest[]) => {
     // Lock in the hook itself, not only in the button. Two clicks can arrive in

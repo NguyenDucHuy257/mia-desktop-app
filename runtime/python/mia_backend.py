@@ -328,6 +328,16 @@ class ProductionBackend(SourceBackend):
         # executed. Counters remain the source month/overall counters.
         payload["current_direction"] = state.get("current_direction")
         payload["current_query_type"] = state.get("current_query_type")
+        current_artifact = state.get("current_artifact")
+        if isinstance(current_artifact, dict):
+            allowed = {
+                "direction", "query_type", "nbmst", "khhdon", "shdon", "khmshdon"
+            }
+            payload["current_artifact"] = {
+                key: str(value)
+                for key, value in current_artifact.items()
+                if key in allowed and value is not None
+            }
         return payload
 
     def results(self, kind, query):

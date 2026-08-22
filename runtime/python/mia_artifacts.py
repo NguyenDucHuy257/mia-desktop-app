@@ -9,7 +9,7 @@ import tempfile
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openpyxl import Workbook
 
@@ -110,7 +110,11 @@ class ArtifactExporter:
         except (AttributeError, sqlite3.Error):
             return "local"
 
-    def export(self, value: dict[str, Any]) -> dict[str, Any]:
+    def export(
+        self,
+        value: dict[str, Any],
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         destination = Path(value["destination"])
         if not destination.is_absolute():
             raise ValueError("invalid_artifact_directory")
@@ -125,6 +129,7 @@ class ArtifactExporter:
         ):
             raise ValueError("invalid_artifact_accounts")
         destination.mkdir(parents=True, exist_ok=True)
+        sources: list[tuple[Path, str | None]] = []
         outputs: list[str] = []
         for account_id in account_ids:
             account = self._account(account_id)
@@ -135,26 +140,106 @@ class ArtifactExporter:
                 if production_excel:
                     outputs.extend(str(item) for item in production_excel)
                 elif not account_id.startswith("conn_"):
-                    outputs.append(
-                        str(
-                            self._export_excel(
-                                destination, account_id, account["username"]
-                            )
-                        )
-                    )
+                    outputs.append(str(self._export_excel(
+                        destination, account_id, account["username"]
+                    )))
             for kind in set(kinds) - {"excel"}:
-                outputs.extend(
-                    str(item)
-                    for item in self._copy_job_artifacts(
-                        destination, account_id, kind
-                    )
-                )
+                if account_id.startswith("conn_") and kind in {"xml", "html"}:
+                    sources.extend(self._source_package_paths(
+                        tax_code=account["username"], kind=kind,
+                        direction=value.get("direction"), query_type=value.get("query_type"),
+                        search=str(value.get("search") or "").strip().casefold(),
+                        date_from=value.get("date_from"), date_to=value.get("date_to"),
+                    ))
+                else:
+                    sources.extend((item, None) for item in self._job_artifact_paths(account_id, kind))
+        total = len(sources)
+        if progress_callback:
+            progress_callback({"status": "running", "processed": 0, "total": total, "percent": 0})
+        for processed, (source, artifact_key) in enumerate(sources, start=1):
+            if progress_callback:
+                progress_callback({
+                    "status": "running", "processed": processed - 1,
+                    "total": total,
+                    "percent": ((processed - 1) / total * 100) if total else 100,
+                    "artifact_key": artifact_key,
+                })
+            target = self._copy_path_atomically(destination, source)
+            outputs.append(str(target))
+            if progress_callback:
+                progress_callback({
+                    "status": "running", "processed": processed, "total": total,
+                    "percent": (processed / total * 100) if total else 100,
+                    "artifact_key": artifact_key,
+                })
+        if progress_callback:
+            progress_callback({"status": "completed", "processed": total, "total": total, "percent": 100})
         return {"count": len(outputs), "files": outputs}
+
+    def _source_package_paths(
+        self, *, tax_code: str, kind: str, direction: str | None,
+        query_type: str | None, search: str, date_from: str | None,
+        date_to: str | None,
+    ) -> list[tuple[Path, str]]:
+        database = self.data_directory / "source-data" / tax_code / "db" / "invoices.sqlite3"
+        if not database.is_file():
+            return []
+        path_column = "xml_path" if kind == "xml" else "html_path"
+        fetched_column = "xml_fetched" if kind == "xml" else "html_fetched"
+        clauses = ["company_tax_code=?", f"{fetched_column}=1", f"{path_column} IS NOT NULL", "COALESCE(unavailable,0)=0"]
+        parameters: list[Any] = [tax_code]
+        for column, value in (("direction", direction), ("query_type", query_type)):
+            if value:
+                clauses.append(f"{column}=?")
+                parameters.append(value)
+        if date_from:
+            clauses.append("nlap_date>=?")
+            parameters.append(date_from)
+        if date_to:
+            clauses.append("nlap_date<=?")
+            parameters.append(date_to)
+        try:
+            with closing(sqlite3.connect(database, timeout=5)) as connection:
+                rows = connection.execute(
+                    f"SELECT {path_column},direction,query_type,nbmst,khhdon,shdon,khmshdon FROM invoice_package_items WHERE "
+                    + " AND ".join(clauses) + " ORDER BY nlap_date DESC,id DESC",
+                    parameters,
+                ).fetchall()
+        except sqlite3.Error:
+            return []
+        paths: list[tuple[Path, str]] = []
+        for raw_path, *identity in rows:
+            source = Path(str(raw_path))
+            searchable = " ".join(str(item) for item in identity[2:]).casefold()
+            if source.is_file() and (not search or search in searchable):
+                paths.append((source, "|".join(str(item) for item in identity)))
+        return paths
+
+    def _job_artifact_paths(self, account_id: str, kind: str) -> list[Path]:
+        account = self._account(account_id)
+        extension = "xlsx" if kind == "excel" else kind
+        return [source for root in self._export_roots(account["username"])
+                if root.exists() and self.data_directory in root.parents
+                for source in root.rglob(f"*.{extension}")]
+
+    def _copy_path_atomically(self, destination: Path, source: Path) -> Path:
+        target = self._available_path(destination, safe_filename(source.stem) + source.suffix.lower())
+        temporary = target.with_name(f".{target.name}.tmp")
+        try:
+            with source.open("rb") as reader, temporary.open("xb") as writer:
+                shutil.copyfileobj(reader, writer)
+                writer.flush()
+                os.fsync(writer.fileno())
+            temporary.replace(target)
+            return target
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def list(self, value: dict[str, Any]) -> dict[str, Any]:
         account_ids = value.get("connection_ids")
         kind = value.get("kind")
         direction = value.get("direction")
+        query_type = value.get("query_type")
         search = str(value.get("search", "")).strip().casefold()
         limit = int(value.get("limit", 50))
         date_from = value.get("date_from")
@@ -168,6 +253,7 @@ class ArtifactExporter:
         if (
             kind not in ALLOWED_KINDS - {"excel"}
             or direction not in (None, "purchase", "sold")
+            or query_type not in (None, "query", "sco-query")
             or not 1 <= limit <= 200
         ):
             raise ValueError("invalid_artifact_query")
@@ -182,6 +268,7 @@ class ArtifactExporter:
                         tax_code=account["username"],
                         kind=kind,
                         direction=direction,
+                        query_type=query_type,
                         search=search,
                         date_from=date_from,
                         date_to=date_to,
@@ -222,6 +309,7 @@ class ArtifactExporter:
         tax_code: str,
         kind: str,
         direction: str | None,
+        query_type: str | None,
         search: str,
         date_from: str | None,
         date_to: str | None,
@@ -248,6 +336,9 @@ class ArtifactExporter:
         if direction:
             clauses.append("direction=?")
             parameters.append(direction)
+        if query_type:
+            clauses.append("query_type=?")
+            parameters.append(query_type)
         if date_from:
             clauses.append("nlap_date>=?")
             parameters.append(date_from)
@@ -399,27 +490,8 @@ class ArtifactExporter:
     def _copy_job_artifacts(
         self, destination: Path, account_id: str, kind: str
     ) -> list[Path]:
-        account = self._account(account_id)
-        copied: list[Path] = []
-        extension = "xlsx" if kind == "excel" else kind
-        for root in self._export_roots(account["username"]):
-            if not root.exists() or self.data_directory not in root.parents:
-                continue
-            for source in root.rglob(f"*.{extension}"):
-                target = self._available_path(
-                    destination, safe_filename(source.stem) + source.suffix.lower()
-                )
-                temporary = target.with_name(f".{target.name}.tmp")
-                try:
-                    with source.open("rb") as reader, temporary.open("xb") as writer:
-                        shutil.copyfileobj(reader, writer)
-                        writer.flush()
-                        os.fsync(writer.fileno())
-                    temporary.replace(target)
-                    copied.append(target)
-                finally:
-                    temporary.unlink(missing_ok=True)
-        return copied
+        return [self._copy_path_atomically(destination, source)
+                for source in self._job_artifact_paths(account_id, kind)]
 
     def _atomic_workbook(
         self, destination: Path, filename: str, workbook: Workbook
