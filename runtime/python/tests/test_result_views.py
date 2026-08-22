@@ -167,6 +167,51 @@ class ResultViewTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["direction"], "sold")
         self.assertTrue(result["columns"])
         self.assertTrue(result["column_labels"])
+        self.assertEqual(result["total_count"], 1)
+
+    def test_detail_pages_report_total_display_rows_not_invoice_count(self):
+        backend, _ = self.backend_with_job()
+
+        class DetailReader:
+            @staticmethod
+            def detail_page(_job, *, limit, cursor):
+                start = int(cursor or 0)
+                rows = [
+                    {"id": index + 1, "stt": index + 1, "ten": f"Dòng {index + 1}"}
+                    for index in range(start, min(start + limit, 73))
+                ]
+                next_offset = start + len(rows)
+                return {
+                    "items": rows,
+                    "invoice_count": 12,
+                    "row_count": len(rows),
+                    "pagination": {
+                        "limit": limit,
+                        "has_more": next_offset < 73,
+                        "next_cursor": str(next_offset) if next_offset < 73 else None,
+                    },
+                }
+
+        with patch(
+            "app.external_api.results.JobResultReader", return_value=DetailReader()
+        ):
+            query = {
+                "connection_id": "conn_account_1",
+                "date_from": "2026-03-01",
+                "date_to": "2026-03-31",
+                "direction": "purchase",
+                "query_type": "query",
+                "limit": 50,
+            }
+            first = backend.results("details", query)
+            second = backend.results(
+                "details", {**query, "cursor": first["pagination"]["next_cursor"]}
+            )
+
+        self.assertEqual(len(first["items"]), 50)
+        self.assertEqual(first["total_count"], 73)
+        self.assertEqual(len(second["items"]), 23)
+        self.assertEqual(second["total_count"], 73)
 
     def test_result_dispatch_initializes_source_backend_after_restart(self):
         previous = (

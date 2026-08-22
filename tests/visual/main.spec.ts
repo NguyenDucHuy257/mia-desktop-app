@@ -58,7 +58,7 @@ test('account forms validate input and submit through the browser demo adapter',
 
 test('local account list starts empty, persists in the gateway and supports deletion', async ({ page }) => {
   await page.goto('/?demo=1');
-  await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
+  await expect(page.getByText('Hiển thị 0–0 trên tổng 0 tài khoản')).toBeVisible();
   await expect(page.getByText('Tên công ty')).toBeVisible();
   await expect(page.getByText('Kỳ tải')).toHaveCount(0);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
@@ -67,7 +67,7 @@ test('local account list starts empty, persists in the gateway and supports dele
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await expect(page.getByText('Hiển thị 1 tài khoản')).toBeVisible();
+  await expect(page.getByText('Hiển thị 1–1 trên tổng 1 tài khoản')).toBeVisible();
   await expect(page.getByText('—')).toBeVisible();
   await expect(page.getByText('Chưa kiểm tra đăng nhập')).toBeVisible();
   const accountSelection = page.getByRole('button', { name: 'Chọn 0101234567' }).locator('.selection-box');
@@ -77,7 +77,92 @@ test('local account list starts empty, persists in the gateway and supports dele
   await page.getByRole('button', { name: 'Chọn 0101234567' }).click();
   await expect(accountSelection).toHaveAttribute('data-checked', 'true');
   await page.getByRole('button', { name: 'Xóa 0101234567' }).click();
-  await expect(page.getByText('Hiển thị 0 tài khoản')).toBeVisible();
+  await expect(page.getByText('Hiển thị 0–0 trên tổng 0 tài khoản')).toBeVisible();
+});
+
+test('invoice accounts paginate by twenty after filtering and preserve selection', async ({ page }) => {
+  await page.addInitScript(() => {
+    const accounts = Array.from({ length: 21 }, (_, index) => ({
+      connection_id: `conn_${index + 1}`,
+      username: String(1000000000 + index),
+      company_name: `Công ty ${String(index + 1).padStart(2, '0')}`,
+      status: 'connected', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false,
+    }));
+    Object.defineProperty(window, 'miaRuntime', { value: { accountConnections: {
+      list: async () => [...accounts],
+      create: async () => accounts[0],
+      get: async (id: string) => accounts.find((account) => account.connection_id === id),
+      reconnect: async () => accounts[0],
+      revoke: async (id: string) => { const index = accounts.findIndex((account) => account.connection_id === id); if (index >= 0) accounts.splice(index, 1); },
+    } } });
+  });
+  await page.goto('/');
+  await expect(page.locator('.table-row')).toHaveCount(20);
+  await expect(page.getByText('Hiển thị 1–20 trên tổng 21 tài khoản')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chọn 1000000000' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
+
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await expect(page.locator('.table-row')).toHaveCount(1);
+  await expect(page.getByText('Hiển thị 21–21 trên tổng 21 tài khoản')).toBeVisible();
+  await page.getByRole('button', { name: 'Trang trước' }).click();
+  await expect(page.getByRole('button', { name: 'Chọn 1000000000' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
+
+  await page.getByLabel('Tìm kiếm tài khoản').fill('Công ty 21');
+  await expect(page.locator('.table-row')).toHaveCount(1);
+  await expect(page.getByText('Hiển thị 1–1 trên tổng 1 tài khoản')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Trang sau' })).toBeDisabled();
+  await page.getByLabel('Tìm kiếm tài khoản').fill('');
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await page.getByRole('button', { name: 'Xóa 1000000020' }).click();
+  await expect(page.locator('.table-row')).toHaveCount(20);
+  await expect(page.getByText('Hiển thị 1–20 trên tổng 20 tài khoản')).toBeVisible();
+  await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('1');
+});
+
+test('detail results retain total rows on page two and empty export is stopped before lifecycle', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_results', username: '0100000000', company_name: 'Công ty Kết quả', status: 'connected', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    const record = { job_id: 'job_results', connection_id: account.connection_id, intent: {}, idempotency_key: 'desktop-results', created_at: 'now', updated_at: 'now', status: 'running' };
+    let exportCalls = 0;
+    Object.defineProperty(window, 'resultExportCalls', { get: () => exportCalls });
+    const resultPage = (query: { cursor?: string | null; search?: string }) => {
+      if (query.search) return { items: [], columns: ['stt', 'ten'], column_labels: { stt: 'STT', ten: 'Tên hàng hóa' }, total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } };
+      const second = Boolean(query.cursor);
+      const count = second ? 23 : 50;
+      return {
+        items: Array.from({ length: count }, (_, index) => ({ row_id: `${second ? 50 : 0}-${index}`, direction: 'purchase', fields: { stt: (second ? 50 : 0) + index + 1, ten: `Dòng ${(second ? 50 : 0) + index + 1}` } })),
+        columns: ['stt', 'ten'], column_labels: { stt: 'STT', ten: 'Tên hàng hóa' }, total_count: 73,
+        pagination: { limit: 50, has_more: !second, next_cursor: second ? null : 'detail-page-2' },
+      };
+    };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], create: async () => account, get: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      jobs: {
+        resume: async () => record,
+        start: async () => ({ record, accepted: {} }),
+        status: async () => ({ job_id: record.job_id, status: 'completed', stage: null, overall_percent: 100, current_month: null, updated_at: 'now', error: null }),
+        summary: async () => ({ job_id: record.job_id, status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
+        cancel: async () => ({}), clear: async () => undefined,
+      },
+      results: { overview: async (query: { cursor?: string | null; search?: string }) => resultPage(query), details: async (query: { cursor?: string | null; search?: string }) => resultPage(query) },
+      artifacts: { export: async () => { exportCalls += 1; return { count: 1, files: ['D:\\MIA\\result.xlsx'] }; } },
+    } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Xem kết quả' })).toBeVisible();
+  await page.getByRole('button', { name: 'Xem kết quả' }).click();
+  await page.getByRole('tab', { name: 'Chi tiết' }).click();
+  await expect(page.getByText('Tổng 73 hàng · tối đa 50 hàng/trang')).toBeVisible();
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await expect(page.locator('.results-row:not(.results-row--header)')).toHaveCount(23);
+  await expect(page.getByText('Tổng 73 hàng · tối đa 50 hàng/trang')).toBeVisible();
+
+  await page.getByLabel('Tìm kiếm kết quả').fill('không-có');
+  await expect(page.getByText('Không tồn tại hóa đơn trong thời gian này.')).toBeVisible();
+  await page.getByRole('button', { name: 'Tải xuống kết quả' }).click();
+  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  await expect(page.getByText('Không tồn tại hóa đơn phù hợp với lựa chọn hiện tại.')).toBeVisible();
+  expect(await page.evaluate(() => (window as typeof window & { resultExportCalls: number }).resultExportCalls)).toBe(0);
 });
 
 test('verified runtime account immediately shows portal company information', async ({ page }) => {
@@ -328,6 +413,18 @@ test('production artifact tabs render runtime files instead of demo rows', async
 test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
   await page.goto('/?figma=1');
   await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  const calendarOffsets = await page.locator('.date-range-calendar-control').evaluateAll((controls) => controls.map((control) => {
+    const icon = control.querySelector('img');
+    if (!icon) return Number.POSITIVE_INFINITY;
+    const controlBox = control.getBoundingClientRect();
+    const iconBox = icon.getBoundingClientRect();
+    return Math.max(
+      Math.abs((controlBox.left + controlBox.width / 2) - (iconBox.left + iconBox.width / 2)),
+      Math.abs((controlBox.top + controlBox.height / 2) - (iconBox.top + iconBox.height / 2)),
+    );
+  }));
+  expect(calendarOffsets).toHaveLength(2);
+  expect(Math.max(...calendarOffsets)).toBeLessThanOrEqual(1);
   await page.getByLabel('Từ ngày đồng bộ nhập tay').fill('01/09/2023');
   await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('30/09/2023');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
@@ -337,8 +434,8 @@ test('date, company, search, status and pagination controls update the UI', asyn
   await expect(page.locator('.table-row')).toHaveCount(0);
   await page.getByLabel('Lọc trạng thái').selectOption('completed');
   await expect(page.locator('.table-row')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Trang sau' }).click();
-  await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('2');
+  await expect(page.getByRole('button', { name: 'Trang sau' })).toBeDisabled();
+  await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('1');
   await page.getByRole('button', { name: 'Cài đặt tài khoản' }).click();
   await expect(page.getByRole('heading', { name: 'Cài đặt' })).toBeVisible();
 

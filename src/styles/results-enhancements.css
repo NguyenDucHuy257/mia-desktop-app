@@ -283,31 +283,25 @@
   box-shadow: 0 0 0 3px rgb(22 163 74 / 10%);
 }
 
-.results-page--figma .results-filters--figma .results-date-range .date-range-popover input[type='date'] {
+.results-page--figma .results-filters--figma .results-date-range .date-range-calendar-control {
   width: 42px;
   min-width: 42px;
   height: 38px;
-  padding: 0;
   border: 1px solid #d6d6cf;
   border-radius: 9px;
   outline: 0;
   background: #fff;
-  color: transparent;
-  cursor: pointer;
 }
 
-.results-page--figma .results-filters--figma .results-date-range .date-range-popover input[type='date']:focus-visible {
+.results-page--figma .results-filters--figma .results-date-range .date-range-calendar-control:focus-within {
   border-color: #16a34a;
   box-shadow: 0 0 0 3px rgb(22 163 74 / 10%);
 }
 
-.results-page--figma .results-filters--figma .results-date-range .date-range-popover input[type='date']::-webkit-calendar-picker-indicator {
+.results-page--figma .results-filters--figma .results-date-range .date-range-calendar-control > img {
   width: 18px;
   height: 18px;
-  margin: 0 auto;
-  padding: 0;
   display: block;
-  cursor: pointer;
 }
 
 .results-page--figma .results-filters--figma .results-date-range .date-range-popover > p {

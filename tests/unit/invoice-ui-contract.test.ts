@@ -41,4 +41,18 @@ describe('invoice result control presentation', () => {
     expect(luxury).toContain('#3b82f6 0%, #38a7d8 48%, #d6ad42 100%');
     expect(luxury).toContain('::-webkit-scrollbar-thumb:horizontal');
   });
+
+  it('uses real account pages, a stable calendar control, and the HDDT back copy', async () => {
+    const [invoicePage, datePicker, addAccount] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/components/DateRangePicker.tsx'),
+      source('src/features/accounts/AddAccountPage.tsx'),
+    ]);
+    expect(invoicePage).toContain('ACCOUNT_PAGE_SIZE = 20');
+    expect(invoicePage).toContain('pageRows.map');
+    expect(invoicePage).not.toContain('[1, 2, 3].map');
+    expect(datePicker).toContain('date-range-calendar-control');
+    expect(addAccount).toContain('Quay lại Quản lý HDDT');
+    expect(addAccount).not.toContain('Quay lại Quản lý tải');
+  });
 });

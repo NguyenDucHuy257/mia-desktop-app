@@ -3,6 +3,7 @@ import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
+import { pageBounds, paginationTokens } from '../../components/pagination-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
 import syncIcon from '../../assets/figma/sync.png';
@@ -31,6 +32,7 @@ interface InvoiceRow {
 }
 
 const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
+const ACCOUNT_PAGE_SIZE = 20;
 
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
@@ -201,11 +203,11 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       } else if (summary.count > 0) {
         setSelectionError(`Đã xuất ${summary.count} file Excel; ${summary.failures.length}/${selectedAccountIds.length} tài khoản không có hoặc không thể tạo kết quả.`);
       } else {
-        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo));
+        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo, resultScopes));
       }
     } catch (error) {
       diagnosticLog('bulk_result_export_failed', { code: (error as { code?: string })?.code }, 'error');
-      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo));
+      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo, resultScopes));
     }
   }
 
@@ -315,14 +317,21 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       actionsReady: Boolean(job?.job_id),
     };
   });
-  const visibleRows = allRows.filter((row) => {
+  const filteredRows = allRows.filter((row) => {
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
   });
+  const { currentPage, totalPages, start: firstRowIndex, end: lastRowIndex } = pageBounds(filteredRows.length, page, ACCOUNT_PAGE_SIZE);
+  const pageRows = filteredRows.slice(firstRowIndex, lastRowIndex);
+  const accountPageTokens = paginationTokens(totalPages, currentPage);
   const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
-  const visibleAccountIds = visibleRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
-  const selectedVisibleCount = visibleAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
+  const filteredAccountIds = filteredRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
+  const selectedFilteredCount = filteredAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
   const bulkExportWorking = resultExports.active && resultExports.owner === 'bulk';
+
+  useEffect(() => {
+    if (page !== currentPage) setPage(currentPage);
+  }, [currentPage, page]);
 
   return (
     <div className="invoice-page">
@@ -401,13 +410,13 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
-            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản" onClick={() => onSelectAccounts(selectedVisibleCount === visibleAccountIds.length ? selectedAccountIds.filter((id) => !visibleAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...visibleAccountIds])])}><SelectionBox checked={visibleAccountIds.length > 0 && selectedVisibleCount === visibleAccountIds.length} indeterminate={selectedVisibleCount > 0 && selectedVisibleCount < visibleAccountIds.length} /></button>
+            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFilteredCount === filteredAccountIds.length ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...filteredAccountIds])])}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
             <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
-            {visibleRows.map((row, index) => {
+            {pageRows.map((row, index) => {
               const account = accountByTaxCode.get(row.taxCode);
-              return <div className="table-row table-grid" data-status={row.status} key={`${row.taxCode}-${index}`}>
+              return <div className="table-row table-grid" data-status={row.status} key={account?.connection_id ?? `${row.taxCode}-${firstRowIndex + index}`}>
                 {account ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <span>{row.taxCode}</span>
                 <strong className="company-name" title={row.company}>{row.company}</strong>
@@ -422,8 +431,8 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           </div>
         </div>
         <footer className="pagination">
-          <span>{accounts ? `Hiển thị ${visibleRows.length} tài khoản` : `Hiển thị trang ${page} trong tổng số 128 hóa đơn`}</span>
-          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>‹</button>{[1, 2, 3].map((value) => <button type="button" key={value} data-active={page === value} onClick={() => setPage(value)}>{value}</button>)}<span>...</span><button type="button" onClick={() => setPage(3)}>3</button><button type="button" aria-label="Trang sau" disabled={page === 3} onClick={() => setPage((value) => Math.min(3, value + 1))}>›</button></div>
+          <span>{`Hiển thị ${filteredRows.length ? firstRowIndex + 1 : 0}–${lastRowIndex} trên tổng ${filteredRows.length} tài khoản`}</span>
+          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div>
         </footer>
       </section>
       {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}

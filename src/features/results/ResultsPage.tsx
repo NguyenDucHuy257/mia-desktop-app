@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { readLastSyncDateRange } from '../../components/date-input-utils';
+import { paginationTokens } from '../../components/pagination-utils';
 import previousIcon from '../../assets/figma/artifact-previous.svg';
 import nextIcon from '../../assets/figma/artifact-next.svg';
 import backIcon from '../../assets/figma/back.png';
@@ -17,7 +18,6 @@ import '../../styles/results-luxury.css';
 
 type ResultMode = 'overview' | 'details';
 type ResultItem = OverviewResult | DetailResult;
-type PageToken = number | 'ellipsis';
 
 const DEFAULT_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const PAGE_SIZE = 50;
@@ -250,6 +250,43 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       return;
     }
 
+    const exportSearch = search.trim();
+    const bridge = window.miaRuntime?.results;
+    if (bridge) {
+      const availability = await Promise.all(exportScopes.map(async (scope) => {
+        if (
+          scope === mode
+          && state === 'ready'
+          && debouncedSearch === exportSearch
+          && totalCount !== null
+        ) return totalCount > 0;
+        try {
+          const result = await bridge[scope]({
+            connection_id: connectionId,
+            cursor: null,
+            limit: 1,
+            search: exportSearch,
+            direction: direction || null,
+            query_type: queryType,
+            date_from: dateFrom,
+            date_to: dateTo,
+          }) as LocalResultPage<ResultItem>;
+          return typeof result.total_count === 'number'
+            ? result.total_count > 0
+            : result.items.length > 0;
+        } catch {
+          return null;
+        }
+      }));
+      if (availability.length > 0 && availability.every((value) => value === false)) {
+        setFeedback(exportSearch
+          ? 'Không tồn tại hóa đơn phù hợp với lựa chọn hiện tại.'
+          : 'Không tồn tại hóa đơn trong thời gian này.');
+        setExportOpen(false);
+        return;
+      }
+    }
+
     setFeedback('');
     diagnosticLog('results_export_requested', {
       connection_id: connectionId,
@@ -270,12 +307,12 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         date_to: dateTo,
         direction: direction || null,
         query_type: queryType,
-        search: search.trim(),
+        search: exportSearch,
       }]);
       if (summary.failures.length) {
         const error = summary.failures[0].error;
         diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
-        setFeedback(resultExportErrorMessage(error, dateFrom, dateTo));
+        setFeedback(resultExportErrorMessage(error, dateFrom, dateTo, exportScopes, exportSearch));
         return;
       }
       diagnosticLog('results_export_completed', { connection_id: connectionId, scopes: exportScopes, file_count: summary.count });
@@ -283,7 +320,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       setExportOpen(false);
     } catch (error) {
       diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
-      setFeedback(resultExportErrorMessage(error, dateFrom, dateTo));
+      setFeedback(resultExportErrorMessage(error, dateFrom, dateTo, exportScopes, exportSearch));
     }
   }
 
@@ -432,16 +469,4 @@ function formatCell(value: unknown) {
   if (typeof value === 'boolean') return value ? 'Có' : 'Không';
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
-}
-
-function paginationTokens(totalPages: number, currentPage: number): PageToken[] {
-  if (totalPages <= 5) return Array.from({ length: totalPages }, (_, index) => index + 1);
-  const candidates = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
-  const pages = [...candidates].filter((value) => value >= 1 && value <= totalPages).sort((a, b) => a - b);
-  const tokens: PageToken[] = [];
-  pages.forEach((value, index) => {
-    if (index > 0 && value - pages[index - 1] > 1) tokens.push('ellipsis');
-    tokens.push(value);
-  });
-  return tokens;
 }

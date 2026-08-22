@@ -120,7 +120,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
         <header className="account-card-header">
           <button className="account-back" type="button" onClick={onBack}>
             <img src={backIcon} alt="" />
-            <span>{tab === 'single' ? 'Quay lại Quản lý tải' : 'Quay lại Quản lý HDDT'}</span>
+            <span>Quay lại Quản lý HDDT</span>
           </button>
           <h1>Thêm tài khoản</h1>
           <p>Quản lý và thêm mới tài khoản vào hệ thống</p>

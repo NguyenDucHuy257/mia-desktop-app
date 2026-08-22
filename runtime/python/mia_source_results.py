@@ -14,8 +14,10 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import tempfile
 import time
+from collections import OrderedDict
 from dataclasses import replace
 from datetime import date
 from functools import lru_cache
@@ -25,6 +27,10 @@ from typing import Any, Callable
 
 logger = logging.getLogger("mia.excel_export")
 ExportProgressCallback = Callable[[dict[str, Any]], None]
+
+
+_RESULT_COUNT_CACHE: OrderedDict[tuple[Any, ...], int] = OrderedDict()
+_RESULT_COUNT_CACHE_LIMIT = 64
 
 
 BLOCKED_RESULT_FIELDS = {
@@ -357,6 +363,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     if context is None:
         return {
             "items": [], "columns": [], "column_labels": {},
+            "total_count": 0,
             "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
@@ -370,6 +377,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     if direction_index >= len(directions):
         return {
             "items": [], "columns": columns, "column_labels": column_labels,
+            "total_count": _result_total_count(kind, context, search),
             "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
@@ -439,14 +447,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
         },
     }
 
-    if kind == "overview" and not search:
-        total_count = 0
-        for direction in directions:
-            count_page = context["reader"].overview_page(
-                _job_for(context, direction), limit=1, cursor=None
-            )
-            total_count += int(count_page.get("total_count") or 0)
-        response["total_count"] = total_count
+    response["total_count"] = _result_total_count(kind, context, search)
     return response
 
 
@@ -502,6 +503,145 @@ def _grouped_result_filename(
         f"{safe_tax_code} - {direction_label} - {scope_label} - "
         f"{date_from}_{date_to}.xlsx"
     )
+
+
+def _database_revision(database_path: Path) -> tuple[tuple[int, int], ...]:
+    """Track SQLite and WAL writes so cached presentation counts stay fresh."""
+    revision: list[tuple[int, int]] = []
+    for path in (database_path, Path(f"{database_path}-wal")):
+        try:
+            stat = path.stat()
+        except OSError:
+            revision.append((0, 0))
+        else:
+            revision.append((stat.st_mtime_ns, stat.st_size))
+    return tuple(revision)
+
+
+def _cached_result_count(key: tuple[Any, ...], factory: Callable[[], int]) -> int:
+    cached = _RESULT_COUNT_CACHE.get(key)
+    if cached is not None:
+        _RESULT_COUNT_CACHE.move_to_end(key)
+        return cached
+    value = factory()
+    _RESULT_COUNT_CACHE[key] = value
+    _RESULT_COUNT_CACHE.move_to_end(key)
+    while len(_RESULT_COUNT_CACHE) > _RESULT_COUNT_CACHE_LIMIT:
+        _RESULT_COUNT_CACHE.popitem(last=False)
+    return value
+
+
+def _normalized_detail_row_count(context, job) -> int | None:
+    """Return the displayed line count when all available details are normalized.
+
+    Mixed/legacy datasets return ``None`` so the caller can delegate row
+    expansion to the authoritative source reader instead of guessing from the
+    invoice count.
+    """
+    database_path = Path(context["database_path"])
+    if not database_path.is_file():
+        return None
+    directions = tuple(job.parameters["directions"])
+    query_types = tuple(job.parameters["query_types"])
+    direction_slots = ",".join("?" for _ in directions)
+    query_slots = ",".join("?" for _ in query_types)
+    params = [
+        job.company_tax_code,
+        job.parameters["date_from"],
+        job.parameters["date_to"],
+        *directions,
+        *query_types,
+    ]
+    try:
+        with sqlite3.connect(database_path) as connection:
+            columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(invoice_detail_items)")
+            }
+            line_table = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='invoice_detail_lines'"
+            ).fetchone()
+            if "normalized_ready" not in columns or not line_table:
+                return None
+            normalized, legacy = connection.execute(f"""
+                SELECT
+                    COALESCE(SUM(CASE WHEN normalized_ready=1 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN normalized_ready<>1 THEN 1 ELSE 0 END), 0)
+                FROM invoice_detail_items
+                WHERE company_tax_code=? AND nlap_date BETWEEN ? AND ?
+                  AND direction IN ({direction_slots})
+                  AND query_type IN ({query_slots})
+                  AND (error_message IS NULL OR TRIM(error_message)='')
+                  AND (normalized_ready=1 OR TRIM(raw_detail_path)<>'')
+            """, params).fetchone()
+            if int(legacy) > 0:
+                return None
+            if int(normalized) == 0:
+                return 0
+            row = connection.execute(f"""
+                SELECT COUNT(*)
+                FROM invoice_detail_items d
+                JOIN invoice_detail_lines l ON l.detail_item_id=d.id
+                WHERE d.company_tax_code=? AND d.nlap_date BETWEEN ? AND ?
+                  AND d.direction IN ({direction_slots})
+                  AND d.query_type IN ({query_slots})
+                  AND d.normalized_ready=1
+                  AND (d.error_message IS NULL OR TRIM(d.error_message)='')
+            """, params).fetchone()
+            return int(row[0])
+    except sqlite3.Error:
+        return None
+
+
+def _result_total_count(kind: str, context, search: str) -> int:
+    database_path = Path(context["database_path"])
+    base_job = context["base_job"]
+    key = (
+        kind,
+        str(database_path.resolve()),
+        _database_revision(database_path),
+        base_job.company_tax_code,
+        context["date_from"],
+        context["date_to"],
+        tuple(context["directions"]),
+        tuple(context["query_types"]),
+        search,
+    )
+
+    def count() -> int:
+        total = 0
+        for direction in context["directions"]:
+            job = _job_for(context, direction)
+            if kind == "overview" and not search:
+                page = context["reader"].overview_page(job, limit=1, cursor=None)
+                total += int(page.get("total_count") or 0)
+                continue
+            if kind == "details" and not search:
+                normalized_count = _normalized_detail_row_count(context, job)
+                if normalized_count is not None:
+                    total += normalized_count
+                    continue
+
+            cursor = None
+            while True:
+                page = (
+                    context["reader"].overview_page(job, limit=50, cursor=cursor)
+                    if kind == "overview"
+                    else context["reader"].detail_page(job, limit=50, cursor=cursor)
+                )
+                for item in page.get("items") or ():
+                    fields = _safe_fields(item)
+                    fields["direction"] = direction
+                    if _search_matches(fields, search):
+                        total += 1
+                pagination = page.get("pagination") or {}
+                if not pagination.get("has_more") or not pagination.get("next_cursor"):
+                    break
+                cursor = str(pagination["next_cursor"])
+        return total
+
+    return _cached_result_count(key, count)
 
 
 def _combine_source_workbooks_atomically(
