@@ -51,6 +51,10 @@ class ResultViewTests(unittest.TestCase):
         backend.repository = SimpleNamespace(list_jobs_for_reconciliation=lambda: [job])
         return backend, job
 
+    @staticmethod
+    def replace_fixture_job(job, *, parameters):
+        return SimpleNamespace(**{**vars(job), "parameters": parameters})
+
     def test_invoice_progress_sums_all_months_in_current_module(self):
         job = SimpleNamespace(
             current_stage="detail",
@@ -94,7 +98,9 @@ class ResultViewTests(unittest.TestCase):
         ]
         reader = FakeOverviewReader(source_items)
 
-        with patch("mia_backend.JobResultReader", return_value=reader):
+        with patch("mia_backend.JobResultReader", return_value=reader), patch(
+            "mia_backend.replace", side_effect=self.replace_fixture_job,
+        ):
             result = backend.results("overview", {
                 "connection_id": "account-1",
                 "date_from": "2026-02-01",
@@ -116,7 +122,10 @@ class ResultViewTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["payload"]["nmten"], "Alpha")
 
         excluded = result["items"][0]["business_key"]
-        with patch("mia_backend.JobResultReader", return_value=FakeOverviewReader(source_items)):
+        with patch(
+            "mia_backend.JobResultReader",
+            return_value=FakeOverviewReader(source_items),
+        ), patch("mia_backend.replace", side_effect=self.replace_fixture_job):
             filtered = backend.results("overview", {
                 "connection_id": "account-1",
                 "limit": 50,
@@ -140,13 +149,6 @@ class ResultViewTests(unittest.TestCase):
             "items": [{"overview_id": 1}],
             "pagination": {"limit": 50, "has_more": False, "next_cursor": None},
         }
-        backend.repository.recover_expired_leases.return_value = SimpleNamespace(
-            recovered_jobs=0,
-            recovered_tasks=0,
-            failed_tasks=0,
-            cancelled_jobs=0,
-            promoted_jobs=0,
-        )
         try:
             with tempfile.TemporaryDirectory() as directory, patch(
                 "mia_runtime.ProductionBackend", return_value=backend,
@@ -163,9 +165,7 @@ class ResultViewTests(unittest.TestCase):
                 result, should_stop = mia_runtime.dispatch("results.overview", query)
                 self.assertFalse(should_stop)
                 self.assertEqual(result["items"][0]["overview_id"], 1)
-                constructor.assert_called_once_with(Path(directory), None, start_worker=False)
-                backend.repository.recover_expired_leases.assert_called_once_with()
-                backend.worker.start.assert_called_once_with()
+                constructor.assert_called_once_with(Path(directory), None)
                 backend.results.assert_called_once_with("overview", query)
         finally:
             (
