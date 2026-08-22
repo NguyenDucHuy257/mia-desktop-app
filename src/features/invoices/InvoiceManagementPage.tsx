@@ -9,6 +9,7 @@ import stopIcon from '../../assets/figma/stop.png';
 import syncIcon from '../../assets/figma/sync.png';
 import checkIcon from '../../assets/figma/check.svg';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
+import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
@@ -178,17 +179,19 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       direction: resultDirection,
     });
 
+    const requests: ArtifactExportRequest[] = selectedAccountIds.map((connection_id) => ({
+      destination: exportFolder,
+      connection_ids: [connection_id],
+      kinds: ['excel'],
+      result_scopes: resultScopes,
+      date_from: dateFrom,
+      date_to: dateTo,
+      direction: resultDirection,
+      search: '',
+    }));
+
     try {
-      const summary = await resultExports.run('bulk', selectedAccountIds.map((connection_id) => ({
-        destination: exportFolder,
-        connection_ids: [connection_id],
-        kinds: ['excel'] as const,
-        result_scopes: resultScopes,
-        date_from: dateFrom,
-        date_to: dateTo,
-        direction: resultDirection,
-        search: '',
-      })));
+      const summary = await resultExports.run('bulk', requests);
       diagnosticLog('bulk_result_export_completed', {
         account_count: selectedAccountIds.length,
         file_count: summary.count,
