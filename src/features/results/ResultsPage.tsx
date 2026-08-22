@@ -7,6 +7,7 @@ import backIcon from '../../assets/figma/back.png';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { DetailResult, LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
 import type { InvoiceQueryType } from '../../lib/api/contracts';
+import { resultExportErrorMessage } from './result-export-errors';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
 
@@ -216,7 +217,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       setExportOpen(false);
     } catch (error) {
       diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
-      setFeedback('Không thể tạo file Excel. Vui lòng kiểm tra dữ liệu và thư mục lưu trữ.');
+      setFeedback(resultExportErrorMessage(error, dateFrom, dateTo));
     } finally {
       setExportState('idle');
     }
