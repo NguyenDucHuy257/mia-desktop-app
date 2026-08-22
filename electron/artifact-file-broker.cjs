@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { runBrokerCommand } = require('./account-connection-broker.cjs');
 
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const EXTENSIONS = new Set(['.xml', '.html', '.pdf', '.xlsx']);
@@ -87,8 +88,8 @@ function validateListRequest(value) {
 
 function createArtifactBroker(getRuntime) {
   return Object.freeze({
-    export: (value) => getRuntime().invoke('artifacts.export', validateExportRequest(value), { timeoutMs: 30 * 60 * 1000 }),
-    list: (value) => getRuntime().invoke('artifacts.list', validateListRequest(value)),
+    export: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.export', validateExportRequest(value), { timeoutMs: 30 * 60 * 1000 })),
+    list: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.list', validateListRequest(value))),
   });
 }
 
