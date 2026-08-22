@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,10 @@ class LocalResultJobLookupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = LocalSequentialJobRepository(Path(directory) / "control.sqlite3")
             repository.migrate()
+            idempotency_key_hash = hashlib.sha256(b"result-test-key").hexdigest()
+            request_fingerprint = hashlib.sha256(
+                b"result-test-fingerprint"
+            ).hexdigest()
             job = repository.create_admitted_job(
                 CreateJobRequest(
                     account_key="conn_result_test",
@@ -24,8 +29,8 @@ class LocalResultJobLookupTests(unittest.TestCase):
                         "query_types": ["query"],
                     },
                     owner_id="mia-desktop-local",
-                    idempotency_key_hash="result-test-key",
-                    request_fingerprint="result-test-fingerprint",
+                    idempotency_key_hash=idempotency_key_hash,
+                    request_fingerprint=request_fingerprint,
                     pipeline_version=2,
                 ),
                 (),
