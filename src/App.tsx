@@ -6,9 +6,11 @@ import { createAccountConnectionGateway } from './features/accounts/account-gate
 import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
+import { useResultExportLifecycle } from './features/results/use-result-export-lifecycle';
 import { ArtifactDownloaderPage, PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
+import './styles/result-export-progress.css';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   xml: 'XML Downloader',
@@ -56,6 +58,7 @@ export default function App() {
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
   const invoiceJobs = useBatchJobLifecycle();
+  const resultExports = useResultExportLifecycle();
   const deleteQueue = useRef<string[]>([]);
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
@@ -135,10 +138,25 @@ export default function App() {
             exportFolder={exportFolder}
             initialDateFrom={resultRange?.dateFrom}
             initialDateTo={resultRange?.dateTo}
+            crawlItem={invoiceJobs.items[connectionId]}
+            resultExports={resultExports}
             onBack={() => setView('navigation')}
           />
         ) : active === 'invoices' ? (
-          <InvoiceManagementPage jobLifecycle={invoiceJobs} accounts={accounts} connectionId={connectionId} selectedAccountIds={selectedAccountIds} exportFolder={exportFolder} onExportFolder={setExportFolder} onAddAccount={() => setView('add-account')} onDeleteAccount={async (id) => { deleteAccount(id); }} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }} />
+          <InvoiceManagementPage
+            jobLifecycle={invoiceJobs}
+            resultExports={resultExports}
+            accounts={accounts}
+            connectionId={connectionId}
+            selectedAccountIds={selectedAccountIds}
+            exportFolder={exportFolder}
+            onExportFolder={setExportFolder}
+            onAddAccount={() => setView('add-account')}
+            onDeleteAccount={async (id) => { deleteAccount(id); }}
+            onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])}
+            onSelectAccounts={setSelectedAccountIds}
+            onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
+          />
         ) : active === 'xml' ? <ArtifactDownloaderPage kind="xml" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
           : active === 'html' ? <ArtifactDownloaderPage kind="html" folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
             : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={setExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
