@@ -9,6 +9,15 @@ export function resultExportErrorMessage(
   const code = String((error as { code?: string })?.code ?? 'internal_error');
   const range = dateFrom && dateTo ? ` từ ${formatDate(dateFrom)} đến ${formatDate(dateTo)}` : '';
 
+  if (code === 'result_export_busy_bulk') {
+    return 'Đang tải kết quả tất cả ở màn Hóa đơn. Hãy chờ tác vụ đó hoàn tất.';
+  }
+  if (code === 'result_export_busy_results') {
+    return 'Đang tạo Excel trong tab Kết quả. Hãy chờ tác vụ đó hoàn tất.';
+  }
+  if (code === 'result_export_runtime_unavailable') {
+    return 'Bộ tạo Excel cục bộ chưa sẵn sàng.';
+  }
   if (code === 'result_export_no_overview_data') {
     return `Không có dữ liệu Tổng quan${range} để tạo Excel.`;
   }
