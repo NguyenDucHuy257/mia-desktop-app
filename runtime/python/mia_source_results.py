@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import tempfile
 from dataclasses import replace
 from datetime import date
@@ -43,6 +44,43 @@ CASH_SOLD_TEMPLATE_KEYS = (
     "nbmst", "nbten", "nmmst", "nmten", "nmdchi", "nmcmnd",
     "tgtcthue", "tgtthue", "ttcktmai", "tgtttbso", "tthai", "kqcht",
 )
+
+# openpyxl rejects these XML control characters when assigning a cell. Real
+# portal/company text occasionally contains them, so sanitize only at the Excel
+# presentation boundary and leave the source-owned SQLite/raw payload untouched.
+_EXCEL_ILLEGAL_CHARACTER_RE = re.compile(r"[\x00-\x08\x0B-\x0C\x0E-\x1F]")
+
+
+def _excel_safe_value(value: Any) -> Any:
+    if isinstance(value, str):
+        text = _EXCEL_ILLEGAL_CHARACTER_RE.sub("", value)
+        return "'" + text if text.startswith("=") else text
+    if isinstance(value, (dict, list, tuple, set)):
+        text = json.dumps(value, ensure_ascii=False, default=str)
+        text = _EXCEL_ILLEGAL_CHARACTER_RE.sub("", text)
+        return "'" + text if text.startswith("=") else text
+    return value
+
+
+def _excel_safe_record(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: _excel_safe_value(field) for key, field in value.items()}
+
+
+class _ExcelSafeDetailRowBuilder:
+    """Delegate source row construction, sanitizing only final Excel cells."""
+
+    def __init__(self) -> None:
+        from app.parsers.invoice_detail_excel_row_builder import InvoiceDetailExcelRowBuilder
+
+        self._delegate = InvoiceDetailExcelRowBuilder()
+
+    def build_rows(
+        self, payload: dict[str, Any], record: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        return [
+            _excel_safe_record(row)
+            for row in self._delegate.build_rows(payload, record)
+        ]
 
 
 def _public_field_name(name: str) -> bool:
@@ -460,13 +498,19 @@ def _write_overview_excel_from_source_template(
     )
     begin = date.fromisoformat(date_from)
     end = date.fromisoformat(date_to)
+    safe_rows = [_excel_safe_record(row) for row in rows]
     if category == "electronic":
-        content = renderer._electronic_records_to_xlsx(rows, direction, begin, end)
+        content = renderer._electronic_records_to_xlsx(
+            safe_rows, direction, begin, end
+        )
     elif category == "cash_register":
-        content = renderer._cash_records_to_xlsx(rows, direction, begin, end)
+        content = renderer._cash_records_to_xlsx(
+            safe_rows, direction, begin, end
+        )
     else:
         raise ValueError("invalid_overview_export_category")
 
+    target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.stem}-", suffix=".tmp", dir=target.parent
     )
@@ -559,7 +603,8 @@ def export_results(backend, value: dict[str, Any]) -> dict[str, Any]:
     if "details" in scopes:
         repository = InvoiceDetailQueryRepository(context["database_path"])
         exporter = InvoiceDetailExcelExporter(
-            _source_template_dir() / "invoice_detail.xlsx"
+            _source_template_dir() / "invoice_detail.xlsx",
+            row_builder=_ExcelSafeDetailRowBuilder(),
         )
         for direction in context["directions"]:
             for query_type in context["query_types"]:
