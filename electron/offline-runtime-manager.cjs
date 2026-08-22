@@ -1,6 +1,7 @@
 const { PythonRuntimeClient, packagedRuntimeExecutable } = require('./python-runtime-client.cjs');
 
 const STARTUP_RPC_TIMEOUT_MS = 15_000;
+const EXIT_CANCEL_TIMEOUT_MS = 5_000;
 
 class OfflineRuntimeManager {
   constructor(options) {
@@ -12,6 +13,7 @@ class OfflineRuntimeManager {
     this.restartCount = 0;
     this.maxRestarts = options.maxRestarts ?? 2;
     this.startupRpcTimeoutMs = options.startupRpcTimeoutMs ?? STARTUP_RPC_TIMEOUT_MS;
+    this.sourceJobsObserved = false;
   }
 
   start() {
@@ -28,6 +30,7 @@ class OfflineRuntimeManager {
 
   async invoke(method, params = {}, callOptions = {}) {
     await this.start();
+    if (method.startsWith('source.jobs.')) this.sourceJobsObserved = true;
     const started = Date.now();
     this.logger?.info('runtime_rpc_start', { method });
     try {
@@ -56,11 +59,57 @@ class OfflineRuntimeManager {
     const client = this.client;
     this.client = undefined;
     this.startPromise = undefined;
-    if (client) await client.stop();
+    if (!client) return;
+
+    // Source server hosts normally requeue a running pipeline on host shutdown.
+    // Desktop exit has different user semantics: leaving the app cancels the
+    // current batch. Ask the source repository to cancel every non-terminal job
+    // before system.shutdown. Queued/waiting jobs become cancelled immediately;
+    // a running job becomes cancelling and therefore cannot be claimed/resumed
+    // on the next launch. Persisted invoice rows/checkpoints remain untouched,
+    // so the next manual sync still follows source CoveragePlanner/cache rules.
+    if (this.sourceJobsObserved) {
+      await this.#cancelSourceJobsBeforeShutdown(client);
+    }
+    await client.stop();
   }
 
   terminateForRecoveryTest() {
     this.client?.terminate();
+  }
+
+  async #cancelSourceJobsBeforeShutdown(client) {
+    const options = { timeoutMs: EXIT_CANCEL_TIMEOUT_MS };
+    try {
+      const records = await client.call('source.jobs.resume_all', {}, options);
+      const active = Array.isArray(records)
+        ? records.filter((record) => record && typeof record.job_id === 'string' && record.job_id)
+        : [];
+      let requested = 0;
+      for (const record of active) {
+        try {
+          await client.call('source.jobs.cancel', { job_id: record.job_id }, options);
+          requested += 1;
+        } catch (error) {
+          this.logger?.warn('runtime_exit_job_cancel_failed', {
+            job_id: record.job_id,
+            code: error?.code,
+            message: error?.message,
+          });
+        }
+      }
+      this.logger?.info('runtime_exit_jobs_cancel_requested', {
+        active_count: active.length,
+        requested_count: requested,
+      });
+    } catch (error) {
+      // Shutdown must still finish even if the control channel is already
+      // unhealthy. Durable leases/recovery remain the final safety net.
+      this.logger?.warn('runtime_exit_job_scan_failed', {
+        code: error?.code,
+        message: error?.message,
+      });
+    }
   }
 
   async #startClient() {
@@ -105,4 +154,4 @@ class OfflineRuntimeManager {
   }
 }
 
-module.exports = { OfflineRuntimeManager, STARTUP_RPC_TIMEOUT_MS };
+module.exports = { EXIT_CANCEL_TIMEOUT_MS, OfflineRuntimeManager, STARTUP_RPC_TIMEOUT_MS };
