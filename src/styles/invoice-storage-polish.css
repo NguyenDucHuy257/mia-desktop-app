@@ -1,37 +1,18 @@
-/* Storage selector polish for the invoice toolbar. The browse button uses a
- * vector mask instead of the old font glyph so Windows font rendering cannot
- * turn it into a broken square/slanted character. */
-.invoice-page .invoice-export-folder {
-  left: 190px;
-  bottom: 8px;
-  width: min(410px, calc(100% - 210px));
-  min-height: 52px;
-  gap: 4px;
-  justify-content: flex-end;
-  color: #475569;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 12px;
-  letter-spacing: .55px;
-}
-
-.invoice-page .invoice-export-folder > span {
-  min-height: 12px;
-  padding-left: 2px;
-  display: flex;
-  align-items: center;
-  color: #3568b7;
-  line-height: 12px;
-}
-
-.invoice-page .invoice-export-folder > div {
+/* Shared storage-folder selector used by invoice, XML/HTML and PDF flows.
+ * The visible label lives inside the browse button so no separate heading can
+ * drift above the input. The folder icon is inline SVG and therefore does not
+ * depend on a Windows font glyph. */
+.storage-folder-picker {
   height: 36px;
-  flex: 0 0 36px;
+  min-width: 0;
+  display: flex;
   align-items: stretch;
 }
 
-.invoice-page .invoice-export-folder input {
+.storage-folder-picker input {
+  min-width: 0;
   height: 36px;
+  flex: 1 1 auto;
   padding: 0 12px;
   border: 1px solid #c7d2e3;
   border-radius: 7px 0 0 7px;
@@ -39,55 +20,97 @@
   color: #334155;
   font-size: 12px;
   line-height: 36px;
+  outline: none;
   box-shadow: inset 0 1px 1px rgb(15 23 42 / 3%);
 }
 
-.invoice-page .invoice-export-folder input:hover {
+.storage-folder-picker input:hover {
   border-color: #9eb7da;
 }
 
-.invoice-page .invoice-export-folder input:focus {
+.storage-folder-picker input:focus {
+  position: relative;
   z-index: 1;
   border-color: #6f9bd6;
   box-shadow: 0 0 0 3px rgb(59 130 246 / 10%);
 }
 
-.invoice-page .invoice-export-folder button {
-  width: 46px;
+.storage-folder-picker button {
+  width: 154px;
   height: 36px;
-  flex: 0 0 46px;
-  padding: 0;
+  flex: 0 0 154px;
+  padding: 0 12px;
   border: 1px solid #c7d2e3;
   border-left: 0;
   border-radius: 0 7px 7px 0;
   background: linear-gradient(180deg, #f7faff 0%, #e8f0fc 100%);
   color: #315f9f;
-  display: grid;
-  place-items: center;
-  font-size: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
   cursor: pointer;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 80%);
 }
 
-.invoice-page .invoice-export-folder button::before {
-  content: '';
+.storage-folder-picker button svg {
   width: 19px;
-  height: 15px;
+  height: 16px;
+  flex: 0 0 19px;
   display: block;
-  background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 20'%3E%3Cpath d='M2 4.5A2.5 2.5 0 0 1 4.5 2H9l2 2.5h8.5A2.5 2.5 0 0 1 22 7v8.5a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 15.5v-11Z' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M2.5 8h19' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 20'%3E%3Cpath d='M2 4.5A2.5 2.5 0 0 1 4.5 2H9l2 2.5h8.5A2.5 2.5 0 0 1 22 7v8.5a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 15.5v-11Z' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M2.5 8h19' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center / contain no-repeat;
+  overflow: visible;
 }
 
-.invoice-page .invoice-export-folder button:hover,
-.invoice-page .invoice-export-folder button:focus-visible {
+.storage-folder-picker button svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.storage-folder-picker button:hover,
+.storage-folder-picker button:focus-visible {
   border-color: #8caedb;
   background: linear-gradient(180deg, #eef5ff 0%, #dce9fb 100%);
   color: #1d4f91;
-  box-shadow: inset 0 1px 0 #fff, 0 3px 9px rgb(49 95 159 / 13%);
+  outline: none;
 }
 
-.invoice-page .invoice-export-folder button:active {
+.storage-folder-picker button:active {
   background: #d8e6f8;
-  transform: scale(.97);
+  transform: scale(.98);
+}
+
+.invoice-page .invoice-export-folder {
+  position: absolute;
+  left: 190px;
+  bottom: 8px;
+  width: min(520px, calc(100% - 210px));
+}
+
+.pdf-config .pdf-storage-folder {
+  width: min(560px, 100%);
+  margin-bottom: 10px;
+}
+
+.artifact-page .artifact-storage-folder {
+  width: min(560px, 100%);
+  margin: 0 0 12px;
+}
+
+@media (max-width: 1180px) {
+  .invoice-page .invoice-export-folder {
+    width: min(430px, calc(100% - 210px));
+  }
+
+  .storage-folder-picker button {
+    width: 142px;
+    flex-basis: 142px;
+  }
 }
