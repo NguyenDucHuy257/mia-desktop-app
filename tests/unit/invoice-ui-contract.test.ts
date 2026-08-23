@@ -31,6 +31,15 @@ describe('invoice result control presentation', () => {
     expect(styles).toContain('minmax(240px, 340px)');
   });
 
+  it('uses one cumulative sync progress bar without monthly progress UI', async () => {
+    const component = await source('src/features/invoices/InvoiceManagementPage.tsx');
+    expect(component).toContain('formatSourceJobProgress(job)');
+    expect(component).toContain('progress-track progress-track--overall');
+    expect(component).not.toContain('monthProgress');
+    expect(component).not.toContain('month-progress');
+    expect(component).not.toContain('Tiến trình tổng');
+  });
+
   it('uses blue result actions and blue-to-gold scroll thumbs', async () => {
     const [page, luxury] = await Promise.all([
       source('src/features/results/ResultsPage.tsx'),
@@ -40,6 +49,10 @@ describe('invoice result control presentation', () => {
     expect(page).not.toContain('results-export-popover--gold');
     expect(luxury).toContain('#3b82f6 0%, #38a7d8 48%, #d6ad42 100%');
     expect(luxury).toContain('::-webkit-scrollbar-thumb:horizontal');
+    expect(page).toContain('ColumnFilterPopover');
+    expect(page).toContain('Chọn tất cả hóa đơn phù hợp bộ lọc trên mọi trang');
+    expect(page).toContain('Loại khỏi tải xuống');
+    expect(page).toContain('results-row--total');
   });
 
   it('uses real account pages, a stable calendar control, and the HDDT back copy', async () => {

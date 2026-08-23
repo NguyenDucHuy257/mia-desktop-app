@@ -596,6 +596,68 @@ class ResultViewTests(unittest.TestCase):
             finally:
                 detail_workbook.close()
 
+    def test_excel_export_keeps_scope_filters_separate_and_forwards_exclusion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend, _ = self.backend_with_job(data_root=root / "source-data")
+            detail_repository = Mock()
+            detail_repository.get_detail_records_for_export.return_value = [{
+                "direction": "purchase", "query_type": "query", "nbmst": "0101",
+                "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+                "raw_detail_path": str(root / "detail.json"),
+            }]
+            (root / "detail.json").write_text("{}", encoding="utf-8")
+            row_builder = Mock()
+            row_builder.build_rows.return_value = [{"ten": "Dịch vụ"}]
+            detail_exporter = Mock()
+            detail_exporter.export.side_effect = lambda **kwargs: Path(kwargs["output_path"]).write_bytes(b"detail")
+
+            def combine(_staged, target):
+                target.write_bytes(b"combined")
+
+            with patch(
+                "mia_source_results._resolve_excluded_keys",
+                return_value=frozenset({"purchase|query|0101|AA|999|1"}),
+            ) as resolve_exclusion, patch(
+                "mia_source_results._all_overview_fields",
+                return_value=[{"shdon": "1"}],
+            ) as overview_rows, patch(
+                "mia_source_results._write_overview_excel_from_source_template",
+                side_effect=lambda _rows, **kwargs: kwargs["target"].write_bytes(b"overview"),
+            ), patch(
+                "app.repositories.invoice_detail_query_repository.InvoiceDetailQueryRepository",
+                return_value=detail_repository,
+            ), patch(
+                "mia_source_results._FilteredExcelSafeDetailRowBuilder",
+                return_value=row_builder,
+            ) as filtered_builder, patch(
+                "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
+                return_value=detail_exporter,
+            ), patch(
+                "mia_source_results._combine_source_workbooks_atomically",
+                side_effect=combine,
+            ):
+                result = backend.export_results({
+                    "destination": directory,
+                    "connection_ids": ["conn_account_1"],
+                    "result_scopes": ["overview", "details"],
+                    "date_from": "2026-02-01", "date_to": "2026-02-28",
+                    "direction": "purchase", "query_type": "query", "search": "",
+                    "result_filters": {
+                        "overview": {"search": "overview-term", "column_filters": {"nbten": {"values": ["A"]}}},
+                        "details": {"search": "detail-term", "column_filters": {"ten": {"values": ["Dịch vụ"]}}},
+                    },
+                    "exclusion": {"keys": ["purchase|query|0101|AA|999|1"], "rules": []},
+                })
+
+            self.assertEqual(result["count"], 2)
+            self.assertEqual(overview_rows.call_args.args[3], "overview-term")
+            self.assertEqual(overview_rows.call_args.args[4], {"nbten": {"values": ["A"]}})
+            filtered_builder.assert_any_call(
+                search="detail-term", column_filters={"ten": {"values": ["Dịch vụ"]}}
+            )
+            resolve_exclusion.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

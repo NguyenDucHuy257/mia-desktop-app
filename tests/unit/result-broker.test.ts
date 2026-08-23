@@ -9,6 +9,7 @@ describe('result IPC broker', () => {
     expect(validateQuery({ connection_id: 'account-1' })).toEqual({
       connection_id: 'account-1', cursor: null, limit: 50, search: '', direction: null,
       query_type: null, date_from: null, date_to: null,
+      column_filters: {}, exclusion: { keys: [], rules: [] },
     });
     expect(validateQuery({ connection_id: 'account-1', limit: 50 }).limit).toBe(50);
     expect(() => validateQuery({ connection_id: 'account-1', limit: 51 })).toThrow();
@@ -42,5 +43,16 @@ describe('result IPC broker', () => {
     const result = await createResultBroker(() => ({ invoke }))[method]({ connection_id: 'account-1' });
     expect(result.ok).toBe(true);
     expect(invoke).toHaveBeenCalledWith(`results.${method}`, expect.objectContaining({ connection_id: 'account-1', limit: 50 }));
+  });
+
+  it('validates column filters, symbolic exclusions and facet requests', async () => {
+    const invoke = vi.fn().mockResolvedValue({ values: ['A'], truncated: false, column_type: 'text' });
+    const broker = createResultBroker(() => ({ invoke }));
+    await expect(broker.facets({
+      connection_id: 'account-1', kind: 'details', column: 'ten',
+      column_filters: { ten: { values: ['Dịch vụ'], search: 'dịch' } },
+    })).resolves.toMatchObject({ ok: true });
+    expect(invoke).toHaveBeenCalledWith('results.facets', expect.objectContaining({ kind: 'details', column: 'ten' }));
+    expect(() => validateQuery({ connection_id: 'account-1', column_filters: { ten: { operator: 'drop table' } } })).toThrow();
   });
 });
