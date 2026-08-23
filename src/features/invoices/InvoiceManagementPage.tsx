@@ -120,7 +120,7 @@ function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
 function InvoiceCountCell({ state }: { state?: InvoiceSyncState }) {
   const format = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
   if (state?.baseline_invoice_count !== null && state?.baseline_invoice_count !== undefined) {
-    return <div className="invoice-count-cell"><span>Đã có trong hệ thống: {format(state.baseline_invoice_count)} hóa đơn</span><strong>{format(state.added_invoice_count ?? 0)} hóa đơn bổ sung</strong></div>;
+    return <div className="invoice-count-cell"><span>Đã có trong hệ thống: {format(state.invoice_count)} hóa đơn</span><strong>{format(state.added_invoice_count ?? 0)} hóa đơn bổ sung</strong></div>;
   }
   return <div className="invoice-count-cell"><strong>{format(state?.invoice_count ?? 0)} hóa đơn</strong></div>;
 }
@@ -306,12 +306,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     const transientSyncStatus = activeBatchDirection === direction
       ? inlineError ? 'failed' as const
         : phase === 'stopped' ? 'cancelled' as const
-          : batchActive && (phase === 'queued' || phase === 'starting') ? 'queued' as const
+          : batchActive && (phase === 'queued' || phase === 'starting') ? 'running' as const
             : null
       : null;
     const syncState: InvoiceSyncState | undefined = transientSyncStatus
       ? {
-          connection_id: account.connection_id, direction, status: transientSyncStatus, current_month: null,
+          connection_id: account.connection_id, direction, status: transientSyncStatus, current_month: dateFrom.slice(0, 7),
           sync_from: persistedSyncState?.sync_from ?? null, sync_until: persistedSyncState?.sync_until ?? null,
           invoice_count: persistedSyncState?.invoice_count ?? 0,
           baseline_invoice_count: persistedSyncState?.invoice_count ?? 0, added_invoice_count: 0,

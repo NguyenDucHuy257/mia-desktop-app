@@ -168,17 +168,13 @@ class ProductionBackend(SourceBackend):
                    WHERE company_tax_code=? AND direction=? AND checkpoint_status='finalized'""",
                 (tax_code, direction),
             ).fetchone()
-            added = 0
-            if job is not None and job.parameters.get("baseline_invoice_count") is not None:
-                clauses = ["company_tax_code=?", "direction=?", "created_at>=?"]
-                params = [tax_code, direction, str(job.created_at)]
-                if getattr(job, "finished_at", None) is not None:
-                    clauses.append("created_at<=?")
-                    params.append(str(job.finished_at))
-                added = int(connection.execute(
-                    f"SELECT COUNT(*) FROM invoice_overview_items WHERE {' AND '.join(clauses)}",
-                    params,
-                ).fetchone()[0])
+            baseline = (
+                job.parameters.get("baseline_invoice_count") if job is not None else None
+            )
+            # The invoice count is read from committed overview rows on every
+            # metadata poll. Do not infer inserts from crawler processed/planned
+            # progress: UPSERTed duplicates do not increase this delta.
+            added = max(0, count - int(baseline)) if baseline is not None else 0
         return {
             "invoice_count": count,
             "added_count": added,
@@ -222,33 +218,46 @@ class ProductionBackend(SourceBackend):
             metrics = self._invoice_direction_metrics(connection.username, direction, job)
             state = dict(getattr(job, "progress_state", None) or {}) if job else {}
             modules = state.get("modules") or {}
+            overview_module = modules.get("overview")
             overview_complete = (
-                isinstance(modules.get("overview"), dict)
-                and modules["overview"].get("status") == "completed"
+                isinstance(overview_module, dict)
+                and overview_module.get("status") == "completed"
             )
             raw_status = str(getattr(job, "status", "")) if job else ""
-            if overview_complete or raw_status in {"completed", "completed_with_warning"}:
-                status = "completed"
-            elif raw_status in {"queued", "waiting_account"}:
-                status = "queued"
-            elif raw_status in {"running", "cancelling"}:
+            active_statuses = {
+                "queued", "starting", "waiting_account", "running",
+                "processing", "downloading", "syncing", "cancelling",
+            }
+            overview_requested = "overview" in set(job.parameters.get("scopes") or ()) if job else False
+            if raw_status in active_statuses:
+                # A current job always wins over finalized coverage from older
+                # jobs. This remains running while detail follows overview.
                 status = "running"
             elif raw_status in {"failed", "abandoned"}:
                 status = "failed"
             elif raw_status == "cancelled":
                 status = "cancelled"
+            elif overview_complete or (
+                raw_status in {"completed", "completed_with_warning"}
+                and overview_requested
+                and not isinstance(overview_module, dict)
+            ):
+                status = "completed"
             elif metrics["invoice_count"] > 0 or metrics["sync_until"]:
                 status = "completed"
             else:
                 status = "not_synced"
-            active_stage = state.get("current_stage") or getattr(job, "current_stage", None)
-            month = state.get("current_month") if active_stage == "overview" else None
+            month = state.get("current_month") if status == "running" else None
+            month_key = month.get("key") if isinstance(month, dict) else None
+            if status == "running" and not month_key and job:
+                date_from = str(job.parameters.get("date_from") or "")
+                month_key = date_from[:7] if len(date_from) >= 7 else None
             baseline = job.parameters.get("baseline_invoice_count") if job else None
             output.append({
                 "connection_id": str(connection_id),
                 "direction": direction,
                 "status": status,
-                "current_month": month.get("key") if isinstance(month, dict) else None,
+                "current_month": month_key,
                 "sync_from": metrics["sync_from"],
                 "sync_until": metrics["sync_until"],
                 "invoice_count": metrics["invoice_count"],
