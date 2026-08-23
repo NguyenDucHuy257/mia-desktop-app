@@ -1,4 +1,4 @@
-import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
+import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, InvoiceSyncState, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
 
 export interface MiaDeviceIdentity {
   algorithm: 'Ed25519';
@@ -29,6 +29,7 @@ export interface MiaRuntimeBridge {
     resume(): Promise<PersistedJob | null>;
     resumeAll(): Promise<PersistedJob[]>;
     latestAll(): Promise<PersistedJob[]>;
+    syncStates(connectionIds: string[], direction: InvoiceDirection): Promise<InvoiceSyncState[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;

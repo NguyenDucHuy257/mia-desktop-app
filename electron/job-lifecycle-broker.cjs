@@ -9,6 +9,7 @@ const DIRECTIONS = new Set(['purchase', 'sold']);
 const QUERY_TYPES = new Set(['query', 'sco-query']);
 const SCOPES = new Set(['overview', 'detail']);
 const DATA_TYPES = new Set(['invoice', 'xml', 'html', 'pdf']);
+const SYNC_MODES = new Set(['new', 'supplement']);
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
 const JOB_POLICY_NAMESPACE = 'desktop-source-v1';
 
@@ -29,10 +30,11 @@ function uniqueEnum(value, allowed, max, allowEmpty = false) {
 
 function validateIntent(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new JobInputError();
-  const allowed = new Set(['connection_id', 'date_from', 'date_to', 'directions', 'query_types', 'scopes', 'data_types', 'force_refresh', 'refresh_latest_month']);
+  const allowed = new Set(['connection_id', 'date_from', 'date_to', 'directions', 'query_types', 'scopes', 'data_types', 'force_refresh', 'refresh_latest_month', 'sync_mode']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new JobInputError();
   if (Object.hasOwn(value, 'force_refresh') && typeof value.force_refresh !== 'boolean') throw new JobInputError();
   if (Object.hasOwn(value, 'refresh_latest_month') && typeof value.refresh_latest_month !== 'boolean') throw new JobInputError();
+  if (Object.hasOwn(value, 'sync_mode') && !SYNC_MODES.has(value.sync_mode)) throw new JobInputError();
   const connectionId = validateConnectionId(value.connection_id);
   if (!connectionId.startsWith('conn_')) throw new JobInputError('invalid_connection_id');
   if (!DATE_PATTERN.test(value.date_from) || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new JobInputError();
@@ -47,6 +49,7 @@ function validateIntent(value) {
   };
   if (Object.hasOwn(value, 'force_refresh')) intent.force_refresh = value.force_refresh;
   if (Object.hasOwn(value, 'refresh_latest_month')) intent.refresh_latest_month = value.refresh_latest_month;
+  if (Object.hasOwn(value, 'sync_mode')) intent.sync_mode = value.sync_mode;
   if (intent.directions.length === 0 || intent.scopes.length === 0 || intent.data_types.length === 0) {
     throw new JobInputError('empty_job_selection');
   }
@@ -85,6 +88,16 @@ function createJobLifecycleBroker(
     }),
     resumeAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.resume_all')),
     latestAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.latest')),
+    syncStates: (connectionIds, direction) => runBrokerCommand(async () => {
+      if (!Array.isArray(connectionIds) || connectionIds.length > 500 || new Set(connectionIds).size !== connectionIds.length) throw new JobInputError();
+      const validatedIds = connectionIds.map((value) => {
+        const id = validateConnectionId(value);
+        if (!id.startsWith('conn_')) throw new JobInputError('invalid_connection_id');
+        return id;
+      });
+      if (!DIRECTIONS.has(direction)) throw new JobInputError();
+      return getRuntime().invoke('source.sync.states', { connection_ids: validatedIds, direction });
+    }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
       const baseKey = idempotencyKey(intent);

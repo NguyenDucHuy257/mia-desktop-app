@@ -9,9 +9,11 @@ repository. Crawl/cache/session/result behavior stays in the vendored source.
 from __future__ import annotations
 
 import sys
+import sqlite3
 import threading
 import time
 import types
+from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -149,6 +151,113 @@ class ProductionBackend(SourceBackend):
         # (_save -> _load/_write). RLock prevents a self-deadlock without
         # changing source crawler/session/job behavior.
         self._metadata_lock = threading.RLock()
+
+    def _invoice_direction_metrics(self, tax_code: str, direction: str, job=None):
+        database = self.data_root / tax_code / "db" / "invoices.sqlite3"
+        if not database.is_file():
+            return {"invoice_count": 0, "added_count": 0, "sync_from": None, "sync_until": None}
+        with closing(sqlite3.connect(database, timeout=5)) as connection:
+            connection.execute("PRAGMA busy_timeout = 5000")
+            count = int(connection.execute(
+                "SELECT COUNT(*) FROM invoice_overview_items WHERE company_tax_code=? AND direction=?",
+                (tax_code, direction),
+            ).fetchone()[0])
+            coverage = connection.execute(
+                """SELECT MIN(from_date), MAX(to_date)
+                   FROM invoice_overview_checkpoints
+                   WHERE company_tax_code=? AND direction=? AND checkpoint_status='finalized'""",
+                (tax_code, direction),
+            ).fetchone()
+            added = 0
+            if job is not None and job.parameters.get("baseline_invoice_count") is not None:
+                clauses = ["company_tax_code=?", "direction=?", "created_at>=?"]
+                params = [tax_code, direction, str(job.created_at)]
+                if getattr(job, "finished_at", None) is not None:
+                    clauses.append("created_at<=?")
+                    params.append(str(job.finished_at))
+                added = int(connection.execute(
+                    f"SELECT COUNT(*) FROM invoice_overview_items WHERE {' AND '.join(clauses)}",
+                    params,
+                ).fetchone()[0])
+        return {
+            "invoice_count": count,
+            "added_count": added,
+            "sync_from": coverage[0] if coverage else None,
+            "sync_until": coverage[1] if coverage else None,
+        }
+
+    def start(self, value: dict[str, object]) -> dict[str, object]:
+        intent = dict(value.get("intent") or {})
+        mode = intent.get("sync_mode")
+        direction = str((intent.get("directions") or [""])[0])
+        if mode in {"new", "supplement"}:
+            # Both choices must query the selected range again. Supplement is
+            # made non-destructive by the desktop pipeline/handler adapter.
+            intent["force_refresh"] = True
+            connection = self.service.get_account_connection(
+                str(intent["connection_id"]), owner_id=source_backend_module.OWNER_ID
+            )
+            baseline = self._invoice_direction_metrics(connection.username, direction)["invoice_count"]
+            self.repository.desktop_job_metadata = {
+                "sync_mode": mode,
+                "baseline_invoice_count": baseline,
+            }
+        try:
+            return super().start({**value, "intent": intent})
+        finally:
+            if hasattr(self, "repository"):
+                self.repository.desktop_job_metadata = None
+
+    def sync_states(self, connection_ids, direction):
+        if direction not in {"purchase", "sold"}:
+            raise ValueError("invalid_direction")
+        output = []
+        for connection_id in connection_ids:
+            connection = self.service.get_account_connection(
+                str(connection_id), owner_id=source_backend_module.OWNER_ID
+            )
+            job = self.repository.latest_invoice_job_for_direction(
+                str(connection_id), direction, owner_id=source_backend_module.OWNER_ID
+            )
+            metrics = self._invoice_direction_metrics(connection.username, direction, job)
+            state = dict(getattr(job, "progress_state", None) or {}) if job else {}
+            modules = state.get("modules") or {}
+            overview_complete = (
+                isinstance(modules.get("overview"), dict)
+                and modules["overview"].get("status") == "completed"
+            )
+            raw_status = str(getattr(job, "status", "")) if job else ""
+            if overview_complete or raw_status in {"completed", "completed_with_warning"}:
+                status = "completed"
+            elif raw_status in {"queued", "waiting_account"}:
+                status = "queued"
+            elif raw_status in {"running", "cancelling"}:
+                status = "running"
+            elif raw_status in {"failed", "abandoned"}:
+                status = "failed"
+            elif raw_status == "cancelled":
+                status = "cancelled"
+            elif metrics["invoice_count"] > 0 or metrics["sync_until"]:
+                status = "completed"
+            else:
+                status = "not_synced"
+            active_stage = state.get("current_stage") or getattr(job, "current_stage", None)
+            month = state.get("current_month") if active_stage == "overview" else None
+            baseline = job.parameters.get("baseline_invoice_count") if job else None
+            output.append({
+                "connection_id": str(connection_id),
+                "direction": direction,
+                "status": status,
+                "current_month": month.get("key") if isinstance(month, dict) else None,
+                "sync_from": metrics["sync_from"],
+                "sync_until": metrics["sync_until"],
+                "invoice_count": metrics["invoice_count"],
+                "baseline_invoice_count": int(baseline) if baseline is not None else None,
+                "added_invoice_count": metrics["added_count"] if baseline is not None else None,
+                "last_job_id": job.job_id if job else None,
+                "sync_mode": job.parameters.get("sync_mode") if job else None,
+            })
+        return output
 
     def _source_company_name(self, connection) -> str:
         """Read the company profile through the source-managed durable session.
@@ -342,6 +451,9 @@ class ProductionBackend(SourceBackend):
             )
             job = normalized
         payload = SourceBackend.public_job(job)
+        if job.parameters.get("sync_mode") in {"new", "supplement"}:
+            payload["intent"]["sync_mode"] = job.parameters["sync_mode"]
+            payload["intent"]["force_refresh"] = True
         state = dict(getattr(job, "progress_state", None) or {})
         progress_totals = _progress_totals_from_state(state)
         payload["progress_totals"] = progress_totals

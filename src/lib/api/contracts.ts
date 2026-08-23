@@ -32,9 +32,24 @@ export interface CreateJobRequest {
   data_types?: Array<'invoice' | 'xml' | 'html' | 'pdf'>;
   force_refresh?: boolean;
   refresh_latest_month?: boolean;
+  sync_mode?: 'new' | 'supplement';
   result_scope?: 'overview' | 'detail';
   include_xml?: boolean;
   include_mvt?: boolean;
+}
+
+export interface InvoiceSyncState {
+  connection_id: string;
+  direction: InvoiceDirection;
+  status: 'not_synced' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  current_month: string | null;
+  sync_from: string | null;
+  sync_until: string | null;
+  invoice_count: number;
+  baseline_invoice_count: number | null;
+  added_invoice_count: number | null;
+  last_job_id: string | null;
+  sync_mode: 'new' | 'supplement' | null;
 }
 
 /** Local JSON-RPC acceptance envelope. No server worker-slot concept exists. */

@@ -64,6 +64,15 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
             self._desktop_detail_plan_by_month = None
             self._desktop_current_unit = None
 
+    @staticmethod
+    def _overview_payload(parameters, direction, query_type, month):
+        payload = InvoiceCrawlPipeline._overview_payload(
+            parameters, direction, query_type, month
+        )
+        if parameters.get("sync_mode") == "supplement":
+            payload["sync_mode"] = "supplement"
+        return payload
+
     def _install_unit_progress_wrappers(self):
         originals = {}
         for name, stage in (
@@ -220,9 +229,14 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         InvoiceDetailRepository.get_detail_by_invoice_key = self._cached_detail_lookup(
             original_lookup
         )
+        plan_parameters = parameters
+        if parameters.get("sync_mode") == "supplement":
+            # Supplement refreshes the Overview range but fetches Detail only
+            # for missing/recent invoices; existing detail rows stay intact.
+            plan_parameters = {**parameters, "force_refresh": False}
         try:
             decisions = tuple(
-                super()._iter_detail_plan(job, parameters, coverage)
+                super()._iter_detail_plan(job, plan_parameters, coverage)
             )
         finally:
             InvoiceDetailRepository.get_detail_by_invoice_key = original_lookup

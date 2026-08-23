@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     resume: () => invokeResult('mia:jobs:resume'),
     resumeAll: () => invokeResult('mia:jobs:resume-all'),
     latestAll: () => invokeResult('mia:jobs:latest-all'),
+    syncStates: (connectionIds, direction) => invokeResult('mia:jobs:sync-states', connectionIds, direction),
     start: (intent) => invokeResult('mia:jobs:start', intent),
     status: (jobId) => invokeResult('mia:jobs:status', jobId),
     summary: (jobId) => invokeResult('mia:jobs:summary', jobId),

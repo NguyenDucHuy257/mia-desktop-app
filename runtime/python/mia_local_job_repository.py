@@ -13,9 +13,11 @@ state transitions for source-compatible jobs remain implemented upstream.
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 import sys
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +42,7 @@ class LocalSequentialJobRepository:
 
     def __init__(self, database_path: Path | str) -> None:
         self.delegate = SQLiteJobEngineRepository(database_path)
+        self.desktop_job_metadata: dict[str, object] | None = None
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -131,6 +134,31 @@ class LocalSequentialJobRepository:
             ).fetchone()
         return self.delegate.get_job(str(row[0])) if row else None
 
+    def latest_invoice_job_for_direction(
+        self, account_key: str, direction: str, *, owner_id: str | None = None
+    ):
+        """Latest durable job containing one direction, including failures/cancels."""
+        where_owner = " AND owner_id = ?" if owner_id is not None else ""
+        params: tuple[object, ...] = (
+            (account_key, owner_id) if owner_id is not None else (account_key,)
+        )
+        with closing(sqlite3.connect(self.delegate.database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            rows = connection.execute(
+                f"""SELECT job_id, parameters_json FROM crawl_jobs
+                    WHERE account_key=? AND job_type='invoice_crawl' {where_owner}
+                    ORDER BY created_at DESC, job_id DESC""",
+                params,
+            ).fetchall()
+        for job_id, raw in rows:
+            try:
+                directions = json.loads(raw).get("directions") or ()
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if direction in directions:
+                return self.delegate.get_job(str(job_id))
+        return None
+
     def create_admitted_job(self, request, tasks=(), *, stages=None, now=None):
         # ExternalApiService is reused only as an in-process source service. Its
         # server host normally calls a worker-slot admission facade here. Local
@@ -139,8 +167,12 @@ class LocalSequentialJobRepository:
         # source worker queue after migration.
         if not str(request.account_key).startswith(_SOURCE_CONNECTION_PREFIX):
             raise ValueError("source_connection_required")
+        metadata = dict(self.desktop_job_metadata or {})
+        enriched_request = replace(
+            request, parameters={**request.parameters, **metadata}
+        ) if metadata else request
         return self.delegate.create_job(
-            request,
+            enriched_request,
             tasks,
             stages=stages,
             now=now,

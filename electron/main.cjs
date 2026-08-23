@@ -232,7 +232,7 @@ ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
   return localAccounts().revoke(connectionId);
 });
 for (const [channel, method] of [
-  ['mia:jobs:resume', 'resume'], ['mia:jobs:resume-all', 'resumeAll'], ['mia:jobs:latest-all', 'latestAll'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
+  ['mia:jobs:resume', 'resume'], ['mia:jobs:resume-all', 'resumeAll'], ['mia:jobs:latest-all', 'latestAll'], ['mia:jobs:sync-states', 'syncStates'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
   ['mia:jobs:summary', 'summary'], ['mia:jobs:cancel', 'cancel'], ['mia:jobs:clear', 'clear'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
