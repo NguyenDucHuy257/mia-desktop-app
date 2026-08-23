@@ -63,7 +63,7 @@ describe('invoice result control presentation', () => {
       source('src/styles/xml-html.css'),
     ]);
     expect(results).toContain('results-export-trigger primary-download-button');
-    expect(page).toContain('primary-download-button xml-html-download');
+    expect(page).toContain('primary-download-button artifact-download-button');
     expect(styles).toContain('.primary-download-button:hover:not(:disabled)');
     expect(styles).toContain('.primary-download-button:active:not(:disabled)');
     expect(styles).toContain('background: #2563b8');
@@ -71,23 +71,22 @@ describe('invoice result control presentation', () => {
     expect(styles).not.toContain('.primary-download-button { background: linear-gradient');
   });
 
-  it('uses the shared XML HTML control block and exact lifecycle copy', async () => {
+  it('uses one account-based XML HTML PDF surface without sync controls', async () => {
     const [page, styles] = await Promise.all([
       source('src/features/artifacts/XmlHtmlPage.tsx'),
       source('src/styles/xml-html.css'),
     ]);
-    expect(page).toContain('Tra cứu XML/HTML các hóa đơn đã/chưa đồng bộ');
-    expect(page).toContain('xml-html-control-block');
+    expect(page).toContain('Tải artifact từ dữ liệu Tổng quan đã đồng bộ');
+    expect(page).toContain('artifact-toolbar-card');
     expect(page).toContain('<StorageFolderPicker');
-    expect(page).toContain('Đồng bộ dữ liệu');
-    expect(page).toContain('Tải xuống kết quả');
+    expect(page).not.toContain('Đồng bộ dữ liệu');
+    expect(page).not.toContain('Thêm tài khoản');
+    expect(page).toContain("useState<InvoiceArtifactKind[]>(['xml', 'html'])");
+    expect(page).toContain('PDF');
+    expect(page).toContain('artifact-account-row--head');
     expect(page).toContain('Dừng tải');
-    expect(styles).toContain('.xml-html-company');
-    expect(styles).toContain('font-size: 12px !important');
-    expect(styles).toContain('width: clamp(245px, 25vw, 390px)');
-    expect(styles).toContain('background: #f0fdf4');
-    expect(styles).toContain('scrollbar-gutter: stable');
-    expect(styles).toContain('width: 100%; min-width: 1345px');
-    expect(page).toContain('title={cell === 8 ? undefined : String(value)}');
+    expect(styles).toContain('.artifact-progress-cards[data-count=');
+    expect(styles).toContain("[data-kind='pdf']");
+    expect(styles).toContain('grid-template-columns: 40px 120px');
   });
 });

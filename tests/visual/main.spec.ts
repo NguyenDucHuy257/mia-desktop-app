@@ -68,8 +68,9 @@ test('local account list starts empty, persists in the gateway and supports dele
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await expect(page.getByText('Hiển thị 1–1 trên tổng 1 tài khoản')).toBeVisible();
-  await expect(page.getByText('—')).toBeVisible();
-  await expect(page.getByText('Chưa kiểm tra đăng nhập')).toBeVisible();
+  await expect(page.getByTitle('—')).toBeVisible();
+  await expect(page.locator('.table-row').last()).toContainText('Sẵn sàng');
+  await expect(page.locator('.table-row').last()).toContainText('Chưa đồng bộ');
   const accountSelection = page.getByRole('button', { name: 'Chọn 0101234567' }).locator('.selection-box');
   await expect(accountSelection).toHaveAttribute('data-checked', 'true');
   await page.getByRole('button', { name: 'Chọn 0101234567' }).click();
@@ -221,10 +222,11 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  await expect(page.getByRole('status')).toContainText('35% tổng thể');
-  await expect(page.getByRole('status')).toContainText('35/100');
+  await expect(page.locator('.table-row').last()).toContainText('Tiến trình tổng');
+  await expect(page.locator('.table-row').last()).toContainText('35%');
+  await expect(page.locator('.table-row').last()).toContainText('35/100 hóa đơn');
   await page.getByRole('button', { name: 'Dừng tải' }).click();
-  await expect(page.getByRole('status')).toContainText('cancelling');
+  await expect(page.locator('.table-row').last()).toContainText(/Đang dừng|Đã dừng/);
 });
 
 test('allows combined overview/detail and multi-select purchase/sold directions', async ({ page }) => {
@@ -281,18 +283,22 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
   await page.addInitScript(() => {
-    const record = { job_id: 'job-retry', connection_id: 'conn_demo', intent: {}, idempotency_key: 'desktop-fixed', created_at: 'now', updated_at: 'now' };
-    Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
+    const record = { job_id: 'job-retry', connection_id: 'conn_demo', intent: {}, idempotency_key: 'desktop-fixed', created_at: 'now', updated_at: 'now', status: 'running' };
+    const account = { connection_id: 'conn_demo', username: '0101234567', company_name: 'Công ty Retry', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    Object.defineProperty(window, 'miaRuntime', { value: { accountConnections: { list: async () => [account] }, preferences: {
+      get: async () => ({ concurrency: 1, retries: 0, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value,
+    }, jobs: {
       resume: async () => record,
+      resumeAll: async () => [record], latestAll: async () => [record],
       status: async () => { throw new Error('temporary network failure'); },
       summary: async () => ({}), start: async () => ({}), cancel: async () => ({}), clear: async () => undefined,
     } } });
   });
   await page.goto('/');
-  await expect(page.getByText('Mất kết nối tạm thời, đang thử lại…')).toBeVisible();
+  await expect(page.getByText('Mất kết nối khi cập nhật tiến trình. Đồng bộ mới được khóa để tránh chạy chồng job.')).toBeVisible({ timeout: 30_000 });
 });
 
-test('shows job errors in a centered red error dialog', async ({ page }) => {
+test('shows sanitized job errors in the affected account row', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
       resume: async () => null,
@@ -308,18 +314,29 @@ test('shows job errors in a centered red error dialog', async ({ page }) => {
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Thông báo lỗi' })).toContainText('Không thể tạo job');
-  await expect(page.locator('.notice-icon[data-kind="error"]')).toHaveText('×');
-  await expect(page.getByRole('button', { name: 'Đóng' })).toBeVisible();
+  await expect(page.locator('.table-row').last()).toContainText('Không thể tạo tác vụ đồng bộ');
+  await expect(page.locator('.table-row').last()).toContainText('Lỗi');
 });
 
 test('opens local overview/detail results and paginates by cursor', async ({ page }) => {
   await page.addInitScript(() => {
+    const account = { connection_id: 'conn_results', username: '0101234567', company_name: 'Công ty Results', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    const accounts: unknown[] = [];
+    const record = { job_id: 'job-results', connection_id: account.connection_id, intent: {}, idempotency_key: 'results', created_at: 'now', updated_at: 'now', status: 'completed' };
     const pageFor = (kind: string, cursor?: string | null) => ({
-      items: [{ overview_id: cursor ? 2 : 1, detail_id: cursor ? 2 : 1, direction: 'purchase', business_key: `${kind}-${cursor ?? 'first'}`, line_key: 'line-1', payload: { company: 'Demo' } }],
+      items: [{ row_id: cursor ? 2 : 1, direction: 'purchase', fields: { business_key: `${kind}-${cursor ?? 'first'}`, company: 'Demo' } }],
+      columns: ['business_key', 'company'], column_labels: { business_key: 'Mã', company: 'Công ty' }, total_count: 2,
       pagination: { limit: 50, has_more: !cursor, next_cursor: cursor ? null : 'djE6MQ' },
     });
-    Object.defineProperty(window, 'miaRuntime', { value: { results: {
+    Object.defineProperty(window, 'miaRuntime', { value: { accountConnections: {
+      list: async () => accounts, create: async () => { accounts.push(account); return account; },
+      get: async () => account, reconnect: async () => account, revoke: async () => undefined,
+    }, jobs: {
+      resumeAll: async () => [record], latestAll: async () => [record], resume: async () => record,
+      status: async () => ({ ...record, stage: null, overall_percent: 100, current_month: null, error: null }),
+      summary: async () => ({ job_id: record.job_id, status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
+      start: async () => ({ record, accepted: {} }), cancel: async () => ({}), clear: async () => undefined,
+    }, results: {
       overview: async (query: { cursor?: string | null }) => pageFor('overview', query.cursor),
       details: async (query: { cursor?: string | null }) => pageFor('detail', query.cursor),
     } } });
@@ -331,16 +348,16 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await page.getByRole('button', { name: 'Mở tác vụ 0101234567' }).click();
-  await page.getByRole('menuitem', { name: 'Xem kết quả' }).click();
+  await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await page.getByRole('button', { name: 'Xem kết quả' }).click();
   await expect(page.getByText('overview-first')).toBeVisible();
-  await page.getByRole('button', { name: 'Tải thêm' }).click();
+  await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.getByText('overview-djE6MQ')).toBeVisible();
-  await page.getByRole('button', { name: 'Chi tiết' }).click();
+  await page.getByRole('tab', { name: 'Chi tiết' }).click();
   await expect(page.getByText('detail-first')).toBeVisible();
 });
 
-test('row action menu exports one or all selected accounts and closes with Escape', async ({ page }) => {
+test('bulk export uses the selected account without a legacy row action menu', async ({ page }) => {
   await page.addInitScript(() => {
     const exports: unknown[] = [];
     Object.defineProperty(window, 'artifactExports', { value: exports });
@@ -356,58 +373,12 @@ test('row action menu exports one or all selected accounts and closes with Escap
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  const trigger = page.getByRole('button', { name: 'Mở tác vụ 0101234567' });
-  await trigger.click();
-  await expect(page.getByRole('menu')).toBeVisible();
-  await page.keyboard.press('Escape');
   await expect(page.getByRole('menu')).toHaveCount(0);
-  await trigger.click();
-  await page.getByRole('menuitem', { name: 'Tải Excel tài khoản này' }).click();
+  await page.getByRole('button', { name: 'Tải kết quả tất cả' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('Đã xuất 1 file Excel');
   const calls = await page.evaluate(() => (window as typeof window & { artifactExports: Array<{ connection_ids: string[]; kinds: string[] }> }).artifactExports);
   expect(calls[0]?.connection_ids).toHaveLength(1);
   expect(calls[0]).toMatchObject({ kinds: ['excel'] });
-});
-
-test('XML and HTML tabs provide Figma-aligned filtering and download interactions', async ({ page }) => {
-  await page.goto('/?demo=1');
-  await page.getByRole('button', { name: 'XML' }).click();
-  await expect(page.locator('[data-node-id="1:654"]')).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Danh sách XML' }).getByRole('row')).toHaveCount(5);
-  await page.getByRole('button', { name: 'Mua vào' }).click();
-  await expect(page.getByRole('table', { name: 'Danh sách XML' }).getByRole('row')).toHaveCount(3);
-  await page.getByRole('button', { name: 'Tải XML hàng loạt' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('2 file XML');
-  await page.getByRole('button', { name: 'Đóng' }).click();
-
-  await page.getByRole('button', { name: 'HTML', exact: true }).click();
-  await expect(page.locator('[data-node-id="104:22"]')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Tải HTML hàng loạt' })).toBeVisible();
-});
-
-test('production artifact tabs render runtime files instead of demo rows', async ({ page }) => {
-  await page.addInitScript(() => {
-    const account = { connection_id: 'conn_local', username: '0100000000', company_name: 'Công ty Runtime', status: 'connected', token_generation: 0, created_at: 'now', updated_at: 'now', reused: false };
-    Object.defineProperty(window, 'miaRuntime', { value: {
-      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
-      artifacts: {
-        list: async (request: { cursor?: string | null; search?: string }) => {
-          const filename = request.search ? `tim-${request.search}.xml` : request.cursor ? 'hoa-don-trang-2.xml' : 'hoa-don-runtime.xml';
-          return { items: [{ artifact_id: `job:${filename}`, connection_id: 'conn_local', job_id: 'job_1', filename, kind: 'xml', direction: 'purchase', size: 128, updated_at: Date.now() * 1_000_000 }], pagination: { limit: 50, has_more: !request.cursor && !request.search, next_cursor: !request.cursor && !request.search ? 'cursor-2' : null } };
-        },
-        export: async () => ({ count: 1, files: ['D:\\MIA\\hoa-don-runtime.xml'] }), selectDirectory: async () => 'D:\\MIA', openDirectory: async () => true,
-      },
-    } });
-  });
-  await page.goto('/');
-  await page.getByRole('button', { name: 'XML' }).click();
-  await expect(page.getByRole('table', { name: 'Danh sách XML' })).toContainText('hoa-don-runtime.xml');
-  await expect(page.getByRole('table', { name: 'Danh sách XML' })).not.toContainText('HD-2023-001');
-  await expect(page.getByLabel('Chọn công ty')).toContainText('Công ty Runtime');
-  await page.getByRole('button', { name: 'Tải trang sau' }).click();
-  await expect(page.getByRole('table', { name: 'Danh sách XML' })).toContainText('hoa-don-trang-2.xml');
-  await page.getByLabel('Tìm kiếm XML').fill('ABC-123');
-  await expect(page.getByRole('table', { name: 'Danh sách XML' })).toContainText('tim-ABC-123.xml');
 });
 
 test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
@@ -438,34 +409,23 @@ test('date, company, search, status and pagination controls update the UI', asyn
   await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('1');
   await page.getByRole('button', { name: 'Cài đặt tài khoản' }).click();
   await expect(page.getByRole('heading', { name: 'Cài đặt' })).toBeVisible();
-
-  await page.goto('/?demo=1');
-  await page.getByRole('button', { name: 'XML' }).click();
-  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
-  await page.getByLabel('Từ ngày nhập tay').fill('01/09/2023');
-  await page.getByLabel('Đến ngày nhập tay').fill('30/09/2023');
-  await page.getByRole('button', { name: 'Áp dụng' }).click();
-  await page.getByLabel('Chọn công ty').selectOption('company-b');
-  await expect(page.getByLabel('Chọn công ty')).toHaveValue('company-b');
-  await page.getByRole('button', { name: 'Trang sau' }).click();
-  await expect(page.locator('.artifact-pager button[data-active="true"]').first()).toHaveText('2');
 });
 
 test('settings persist scheduler limits and logs are filtered after main-process redaction', async ({ page }) => {
   await page.addInitScript(() => {
-    let preferences = { concurrency: 2, retries: 5 };
+    let preferences = { concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' };
     Object.defineProperty(window, 'miaRuntime', { value: {
       accountConnections: { list: async () => [] },
-      preferences: { get: async () => preferences, set: async (value: { concurrency: number; retries: number }) => (preferences = value) },
+      preferences: { get: async () => preferences, set: async (value: typeof preferences) => (preferences = value) },
       logs: { list: async () => ['2026 INFO storage_initialized', '2026 WARN retry_scheduled'] },
     } });
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'Cài đặt', exact: true }).click();
-  await page.getByLabel('Giới hạn tài khoản chạy đồng thời').selectOption('4');
   await page.getByLabel('Số lần thử lại').fill('1');
+  await page.getByLabel('Số PDF xử lý đồng thời').fill('100');
   await page.getByRole('button', { name: 'Lưu cài đặt' }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('Job mới sẽ áp dụng');
+  await expect(page.getByRole('alertdialog')).toContainText('Tác vụ mới sẽ áp dụng');
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: 'Nhật ký' }).click();
   await expect(page.locator('.utility-log-list')).toContainText('storage_initialized');
@@ -481,7 +441,7 @@ test('bulk Excel progress stays determinate inside the toolbar button', async ({
     Object.defineProperty(window, 'miaRuntime', { value: {
       accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
       jobs: { resume: async () => null, resumeAll: async () => [], latestAll: async () => [], start: async () => ({}), status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
-      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       artifacts: {
         selectDirectory: async () => 'C:\\MIA',
         onExportProgress: (listener: (value: Record<string, unknown>) => void) => { progressListener = listener; return () => { progressListener = undefined; }; },
@@ -507,7 +467,7 @@ test('bulk Excel progress stays determinate inside the toolbar button', async ({
   await expect(page.locator('.stop-button .stop-button-icon')).toHaveCount(1);
 });
 
-test('artifact default frames use direct Figma exports as visual baselines', async ({ page }) => {
+test.skip('legacy artifact default frames used separate tabs', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.evaluate(() => document.fonts.ready);
   await page.getByRole('button', { name: 'XML' }).click();
@@ -520,7 +480,7 @@ test('artifact default frames use direct Figma exports as visual baselines', asy
   await expect(await page.screenshot({ animations: 'disabled' })).toMatchSnapshot('figma-pdf-progress-1500x1024.png', { maxDiffPixelRatio: 0.01, threshold: 0.25 });
 });
 
-test('PDF tab validates folder and exposes converting/cancel states', async ({ page }) => {
+test.skip('legacy PDF tab used a separate screen', async ({ page }) => {
   await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'PDF', exact: true }).click();
   await expect(page.locator('[data-node-id="106:18856"]')).toBeVisible();
@@ -536,7 +496,7 @@ test('PDF tab validates folder and exposes converting/cancel states', async ({ p
 });
 
 for (const width of [1024, 1280, 1366, 1440, 1500, 1600]) {
-  test(`artifact layout remains usable at ${width}px`, async ({ page }) => {
+  test.skip(`legacy artifact layout remains usable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 1024 });
     await page.goto('/?demo=1');
     await page.getByRole('button', { name: 'XML' }).click();
@@ -545,7 +505,7 @@ for (const width of [1024, 1280, 1366, 1440, 1500, 1600]) {
   });
 }
 
-test('unified XML HTML navigation reads overview rows and paginates by fifty', async ({ page }) => {
+test.skip('legacy XML HTML navigation read overview rows directly', async ({ page }) => {
   await page.addInitScript(() => {
     const account = { connection_id: 'conn_xml_html', username: '0100000000', company_name: 'Công ty XML HTML', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
     const rows = Array.from({ length: 51 }, (_, index) => ({
@@ -558,7 +518,7 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
     Object.defineProperty(window, 'miaRuntime', { value: {
       accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
       jobs: { resume: async () => null, resumeAll: async () => [], latestAll: async () => [], start: async () => ({}), status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
-      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       results: { overview: async ({ cursor }: { cursor?: string | null }) => ({ items: cursor ? rows.slice(50) : rows.slice(0, 50), total_count: 51, pagination: { limit: 50, has_more: !cursor, next_cursor: cursor ? null : 'page-2' } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
       artifacts: { targets: async () => ({ keys: [], total: 0 }), cancel: async () => ({ cancelled: true }), list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
     } });
@@ -597,7 +557,7 @@ test('unified XML HTML navigation reads overview rows and paginates by fifty', a
   await expect(page.locator('.nav-button[data-active="true"]')).toHaveCount(1);
 });
 
-test('XML HTML empty data requires explicit overview synchronization', async ({ page }) => {
+test.skip('legacy XML HTML screen started overview synchronization', async ({ page }) => {
   await page.addInitScript(() => {
     const account = { connection_id: 'conn_sync', username: '0100000000', company_name: 'CÔNG TY TNHH HỒNG TRÀ NGỌC GIA', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
     let synced = false;
@@ -611,7 +571,7 @@ test('XML HTML empty data requires explicit overview synchronization', async ({ 
         status: async () => ({ job_id: 'job_sync', status: 'completed', stage: null, overall_percent: 100, current_month: null, updated_at: 'now', error: null }),
         summary: async () => ({ job_id: 'job_sync', status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }), cancel: async () => ({}), clear: async () => undefined,
       },
-      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       results: { overview: async () => ({ items: synced ? [{ row_id: 1, direction: 'purchase', fields: { tdlap: '20/08/2026', khmshdon: '1', khhdon: 'AA/26E', shdon: '1', nbmst: '0101', nbten: 'Đối tác', tgtttbso: 1000, tthai: 'Hóa đơn mới' } }] : [], total_count: synced ? 1 : 0, pagination: { limit: 50, has_more: false, next_cursor: null } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
       artifacts: { targets: async () => ({ keys: [], total: 0 }), cancel: async () => ({ cancelled: true }), list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
     } });
@@ -629,7 +589,7 @@ test('XML HTML empty data requires explicit overview synchronization', async ({ 
   expect(starts[0]).toMatchObject({ connection_id: 'conn_sync', scopes: ['overview'], data_types: ['invoice'] });
 });
 
-test('XML HTML source outcomes update counters and row substates live', async ({ page }) => {
+test.skip('legacy XML HTML screen used invoice event counters', async ({ page }) => {
   await page.addInitScript(() => {
     const account = { connection_id: 'conn_progress', username: '0100000000', company_name: 'Công ty Progress', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
     const rows = ['1', '2'].map((number, index) => ({
@@ -647,7 +607,7 @@ test('XML HTML source outcomes update counters and row substates live', async ({
         start: async (intent: unknown) => ({ record: { job_id: 'job_progress', connection_id: account.connection_id, intent, idempotency_key: 'progress', created_at: 'now', updated_at: 'now', status: 'queued' }, accepted: { job_id: 'job_progress', status: 'queued', current_stage: null } }),
         status: async () => ({ status: 'queued' }), summary: async () => ({}), cancel: async () => ({ status: 'cancelled' }), clear: async () => undefined,
       },
-      preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       results: { overview: async () => ({ items: rows, total_count: 2, pagination: { limit: 50, has_more: false, next_cursor: null } }), details: async () => ({ items: [], total_count: 0, pagination: { limit: 50, has_more: false, next_cursor: null } }) },
       artifacts: {
         targets: async () => ({ keys, total: keys.length }), export: async () => {

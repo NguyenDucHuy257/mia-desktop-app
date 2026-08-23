@@ -17,23 +17,29 @@ describe('local preferences and logs', () => {
       concurrency: 1,
       retries: 5,
       exportFolder: 'C:\\MIACrawl\\Export\\PDF\\T10_2023',
+      pdfConcurrency: 5,
     });
     await expect(writePreferences(directory, { concurrency: 4, retries: 1 })).resolves.toEqual({
       concurrency: 1,
       retries: 1,
       exportFolder: 'C:\\MIACrawl\\Export\\PDF\\T10_2023',
+      pdfConcurrency: 5,
     });
     await expect(readPreferences(directory)).resolves.toEqual({
       concurrency: 1,
       retries: 1,
       exportFolder: 'C:\\MIACrawl\\Export\\PDF\\T10_2023',
+      pdfConcurrency: 5,
     });
     expect(JSON.parse(await readFile(path.join(directory, 'preferences.json'), 'utf8'))).toEqual({
       concurrency: 1,
       retries: 1,
       exportFolder: 'C:\\MIACrawl\\Export\\PDF\\T10_2023',
+      pdfConcurrency: 5,
     });
     expect(() => validatePreferences({ concurrency: 0, retries: 9 })).toThrow('invalid_concurrency');
+    expect(() => validatePreferences({ concurrency: 1, retries: 5, pdfConcurrency: 0 })).toThrow('invalid_pdf_concurrency');
+    expect(validatePreferences({ concurrency: 1, retries: 5, pdfConcurrency: 100 })).toMatchObject({ pdfConcurrency: 100 });
   });
 
   it('restores the last selected export folder across preference readers', async () => {
