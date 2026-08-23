@@ -183,7 +183,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
-      if (!window.miaRuntime?.jobs.syncStates || ids.length === 0) {
+      if (!window.miaRuntime?.jobs?.syncStates || ids.length === 0) {
         if (!disposed) setSyncStates({});
         return;
       }

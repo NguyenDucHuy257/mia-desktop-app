@@ -307,6 +307,15 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         // the single-worker desktop invariant.
         return;
       }
+      updateItems((current) => ({
+        ...current,
+        [connectionId]: {
+          ...current[connectionId],
+          connectionId,
+          error: 'Mất kết nối tạm thời, đang thử lại…',
+          errorCode: code,
+        },
+      }));
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, attempt + 1, token); }, backoffDelay(attempt + 1));
       timers.current.add(timer);
     }

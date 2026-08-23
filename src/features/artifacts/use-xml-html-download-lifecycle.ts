@@ -102,7 +102,7 @@ export function useXmlHtmlDownloadLifecycle() {
     [sourceStates, targetKeys],
   );
 
-  useEffect(() => window.miaRuntime?.artifacts?.onInvoiceProgress((progress) => {
+  useEffect(() => window.miaRuntime?.artifacts?.onInvoiceProgress?.((progress) => {
     if (!activeRef.current) return;
     setPhase('source');
     if (!progress.artifact_key || (progress.kind !== 'xml' && progress.kind !== 'html')) return;
