@@ -16,8 +16,8 @@ export function useArtifactDownloadLifecycle() {
     if (TERMINAL.has(next.status)) {
       setTaskId(null);
       setMessage(next.status === 'completed'
-        ? `Đã hoàn thành tải artifact${next.warning_count ? `; ${next.warning_count} mục lỗi/không khả dụng đã được ghi nhật ký.` : '.'}`
-        : next.status === 'stopped' ? 'Đã dừng tải artifact.' : 'Không thể hoàn thành tác vụ tải artifact.');
+        ? `Đã hoàn thành tải XML/HTML/PDF${next.warning_count ? `; ${next.warning_count} hóa đơn không có gói dữ liệu đã được ghi nhật ký.` : '.'}`
+        : next.status === 'stopped' ? 'Đã dừng tải XML/HTML/PDF.' : 'Không thể hoàn thành tác vụ tải XML/HTML/PDF.');
     }
   }, []);
 

@@ -76,7 +76,8 @@ describe('invoice result control presentation', () => {
       source('src/features/artifacts/XmlHtmlPage.tsx'),
       source('src/styles/xml-html.css'),
     ]);
-    expect(page).toContain('Tải artifact từ dữ liệu Tổng quan đã đồng bộ');
+    expect(page).toContain('Tải XML, HTML và PDF từ dữ liệu hóa đơn đã đồng bộ.');
+    expect(page).not.toContain('Tải artifact');
     expect(page).toContain('artifact-toolbar-card');
     expect(page).toContain('<StorageFolderPicker');
     expect(page).not.toContain('Đồng bộ dữ liệu');
@@ -85,8 +86,10 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('PDF');
     expect(page).toContain('artifact-account-row--head');
     expect(page).toContain('Dừng tải');
+    expect(page).toContain('Vui lòng chọn ít nhất Mua vào hoặc Bán ra.');
+    expect(page).not.toContain('Mở thư mục');
     expect(styles).toContain('.artifact-progress-cards[data-count=');
     expect(styles).toContain("[data-kind='pdf']");
-    expect(styles).toContain('grid-template-columns: 40px 120px');
+    expect(styles).toContain('grid-template-columns: 52px 120px');
   });
 });

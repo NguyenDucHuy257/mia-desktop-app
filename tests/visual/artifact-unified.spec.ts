@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const account = {
-  connection_id: 'conn_artifact', username: '0100000000', company_name: 'Công ty Artifact',
+  connection_id: 'conn_download', username: '0100000000', company_name: 'Công ty Mẫu',
   status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false,
 };
 
@@ -44,7 +44,9 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.getByRole('button', { name: 'Thêm tài khoản' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Đồng bộ dữ liệu' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Xóa tài khoản/ })).toHaveCount(0);
-  await expect(page.getByText('Công ty Artifact')).toBeVisible();
+  await expect(page.getByText('Công ty Mẫu')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/artifact/i);
+  await expect(page.getByRole('button', { name: 'Mở thư mục' })).toHaveCount(0);
   await expect(page.locator('.artifact-quantity')).toContainText('XML 4/12');
   await expect(page.locator('.artifact-quantity')).toContainText('HTML 3/12');
   await expect(page.locator('.artifact-quantity')).toContainText('PDF 2/12');
@@ -57,12 +59,38 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   });
   await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
   await expect(page.locator('.artifact-progress-card')).toHaveCount(2);
-  await expect(page.getByText('Đã hoàn thành tải artifact.')).toBeVisible({ timeout: 4_000 });
+  await expect(page.getByText('Đã hoàn thành tải XML/HTML/PDF.')).toBeVisible({ timeout: 4_000 });
 
   const calls = await page.evaluate(() => (window as typeof window & { artifactCalls: { snapshots: unknown[]; starts: Array<Record<string, unknown>> } }).artifactCalls);
   expect(calls.snapshots.length).toBeGreaterThanOrEqual(1);
   expect(calls.starts).toHaveLength(1);
-  expect(calls.starts[0]).toMatchObject({ connection_ids: ['conn_artifact'], directions: ['purchase', 'sold'], kinds: ['xml', 'html'], pdf_concurrency: 7 });
+  expect(calls.starts[0]).toMatchObject({ connection_ids: ['conn_download'], directions: ['purchase', 'sold'], kinds: ['xml', 'html'], pdf_concurrency: 7 });
+});
+
+test('directions allow an empty selection and validate only when downloading', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        snapshot: async (request: unknown) => ({ ...(request as object), accounts: [{ connection_id: accountValue.connection_id, ready: true, missing_ranges: [], total: 1, cached: { xml: 1, html: 1, pdf: 0 } }] }),
+        startBatch: async () => ({ task_id: 'unused', status: 'running' }), batchStatus: async () => ({}), cancelBatch: async () => ({ cancelled: true }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  const accountButton = page.locator('.artifact-account-body .selection-button').first();
+  if (await accountButton.locator('.selection-box').getAttribute('data-checked') !== 'true') await accountButton.click();
+  const directions = page.getByLabel('Loại hóa đơn');
+  await directions.getByText('Mua vào').click();
+  await directions.getByText('Bán ra').click();
+  await expect(directions.locator('input:checked')).toHaveCount(0);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Tải xuống', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Vui lòng chọn ít nhất Mua vào hoặc Bán ra.');
 });
 
 test('missing local coverage blocks downloads without starting an invoice sync job', async ({ page }) => {
