@@ -13,7 +13,8 @@
   --mia-danger: #ef4444;
   --mia-blue: #3b82f6;
   --mia-sidebar-width: 210px;
-  --mia-radius-sm: 4px;
-  --mia-radius-md: 8px;
-  --mia-radius-lg: 12px;
+  --mia-radius-ui: 6px;
+  --mia-radius-sm: var(--mia-radius-ui);
+  --mia-radius-md: var(--mia-radius-ui);
+  --mia-radius-lg: var(--mia-radius-ui);
 }

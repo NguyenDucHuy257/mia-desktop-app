@@ -61,7 +61,7 @@
   padding: 0 16px;
   overflow: hidden;
   border: 1px solid #8caedb;
-  border-radius: 9px;
+  border-radius: var(--mia-radius-ui);
   background: #e8f0fc;
   color: #315f9f;
   display: inline-flex;
@@ -133,7 +133,7 @@
   min-height: 38px;
   padding: 8px 12px;
   border: 1px solid #bfdbfe;
-  border-radius: 9px;
+  border-radius: var(--mia-radius-ui);
   background: #f8fbff;
   color: #334155;
   font-size: 12px;

@@ -3,7 +3,7 @@
   min-width: 164px;
   padding: 0 12px;
   border: 1px solid var(--mia-border-warm);
-  border-radius: 12px;
+  border-radius: var(--mia-radius-ui);
   background: #fff;
   display: flex;
   align-items: center;
@@ -40,7 +40,7 @@
   height: 18px;
   flex: 0 0 18px;
   border: 1px solid #bbf7d0;
-  border-radius: 4px;
+  border-radius: var(--mia-radius-ui);
   background: #fff;
   display: grid;
   place-items: center;
@@ -96,7 +96,7 @@
   overflow: visible;
   white-space: normal;
   border: 1px solid #dbe5dd;
-  border-radius: 8px;
+  border-radius: var(--mia-radius-ui);
   background: #fff;
   box-shadow: 0 8px 22px rgb(15 23 42 / 16%);
 }
@@ -173,7 +173,7 @@
   flex: 0 0 auto;
   padding: 0 8px;
   border: 1px solid var(--mia-border-cool);
-  border-radius: 7px;
+  border-radius: var(--mia-radius-ui);
   background: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -385,7 +385,7 @@
   flex: 1 1 auto;
   padding: 0 12px;
   border: 1px solid #cbd5e1;
-  border-radius: 6px 0 0 6px;
+  border-radius: var(--mia-radius-ui) 0 0 var(--mia-radius-ui);
   background: #fff;
   color: #374151;
   font-size: 12px;
@@ -404,7 +404,7 @@
   padding: 0 12px;
   border: 1px solid #b9c8dc;
   border-left: 0;
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--mia-radius-ui) var(--mia-radius-ui) 0;
   background: linear-gradient(180deg, #f7faff 0%, #eaf1fb 100%);
   color: #24558d;
   cursor: pointer;
