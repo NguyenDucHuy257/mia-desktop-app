@@ -248,8 +248,11 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await expect(page.getByText('1.320 hóa đơn')).toBeVisible();
+  await expect(page.locator('.invoice-count-current')).toHaveText('1.320');
+  await expect(page.locator('.invoice-count-added')).toHaveText('(+0 mới)');
+  await expect(page.locator('.invoice-count-baseline')).toHaveText('1.320 cũ');
   await expect(page.getByText('Đã đồng bộ', { exact: true })).toBeVisible();
+  await expect(page.locator('.sync-state-cell')).toContainText('Từ 01/01/2025 đến 31/08/2025');
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
   await expect(page.locator('.progress-cell')).toContainText('35%');
@@ -287,7 +290,7 @@ test('keeps exactly one purchase/sold direction and sends the selected sync mode
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await expect(page.getByText('1.320 hóa đơn')).toBeVisible();
+  await expect(page.locator('.invoice-count-current')).toHaveText('1.320');
   await expect(page.getByText('Đã đồng bộ', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Mua vào' }).click();
   await expect(page.getByLabel('Loại giao dịch').getByText('Mua vào')).toBeVisible();
@@ -298,7 +301,9 @@ test('keeps exactly one purchase/sold direction and sends the selected sync mode
   await page.getByLabel('Loại giao dịch').getByText('Bán ra', { exact: true }).click();
   await expect(page.getByLabel('Loại giao dịch').getByLabel('Mua vào')).not.toBeChecked();
   await expect(page.getByLabel('Loại giao dịch').getByLabel('Bán ra')).toBeChecked();
-  await expect(page.getByText('0 hóa đơn')).toBeVisible();
+  await expect(page.locator('.invoice-count-current')).toHaveText('0');
+  await expect(page.locator('.invoice-count-added')).toHaveText('(+0 mới)');
+  await expect(page.locator('.invoice-count-baseline')).toHaveText('0 cũ');
   await expect(page.locator('.sync-state-cell').getByText('Chưa đồng bộ', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Bán ra' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
@@ -341,7 +346,7 @@ test('active sync overrides coverage and refreshes committed invoice counts real
       jobs: {
         resume: async () => record, resumeAll: async () => [record],
         syncStates: async () => [{
-          connection_id: account.connection_id, direction: 'purchase', status: 'running', current_month: '2025-08',
+          connection_id: account.connection_id, direction: 'purchase', status: 'running', current_month: '2025-08', current_until: '2025-08-31',
           sync_from: '2025-05-01', sync_until: '2025-08-31', invoice_count: invoiceCount,
           baseline_invoice_count: 450, added_invoice_count: invoiceCount - 450,
           last_job_id: record.job_id, sync_mode: 'new',
@@ -360,13 +365,15 @@ test('active sync overrides coverage and refreshes committed invoice counts real
   await expect(page.locator('.progress-cell')).toContainText('145/149 hóa đơn');
   await expect(page.locator('.progress-cell')).toContainText('61%');
   await expect(page.locator('.sync-state-cell')).toContainText('Đang đồng bộ');
-  await expect(page.locator('.sync-state-cell')).toContainText('Đang đồng bộ đến 08/2025');
-  await expect(page.locator('.invoice-count-cell')).toContainText('Đã có trong hệ thống: 456 hóa đơn');
-  await expect(page.locator('.invoice-count-cell')).toContainText('6 hóa đơn bổ sung');
+  await expect(page.locator('.sync-state-cell')).toContainText('Đang xử lý đến 31/08/2025');
+  await expect(page.locator('.invoice-count-current')).toHaveText('456');
+  await expect(page.locator('.invoice-count-added')).toHaveText('(+6 mới)');
+  await expect(page.locator('.invoice-count-baseline')).toHaveText('450 cũ');
 
   await page.evaluate(() => (window as typeof window & { advanceRealtimeInvoiceCount(): void }).advanceRealtimeInvoiceCount());
-  await expect(page.locator('.invoice-count-cell')).toContainText('Đã có trong hệ thống: 460 hóa đơn', { timeout: 3_000 });
-  await expect(page.locator('.invoice-count-cell')).toContainText('10 hóa đơn bổ sung');
+  await expect(page.locator('.invoice-count-current')).toHaveText('460', { timeout: 3_000 });
+  await expect(page.locator('.invoice-count-added')).toHaveText('(+10 mới)');
+  await expect(page.locator('.invoice-count-baseline')).toHaveText('450 cũ');
   await expect(page.locator('.sync-state-cell')).not.toContainText('Đã đồng bộ');
 });
 

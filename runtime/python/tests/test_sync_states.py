@@ -48,11 +48,15 @@ class SyncStateTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_active_detail_job_overrides_previous_overview_completion(self):
+    def test_completed_overview_is_the_business_boundary_while_detail_runs(self):
         job = SimpleNamespace(
             job_id="job_purchase", status="running", current_stage="detail",
             created_at="2026-08-01T00:00:00+00:00", finished_at=None,
-            parameters={"directions": ["purchase"], "sync_mode": "supplement", "baseline_invoice_count": 1},
+            parameters={
+                "directions": ["purchase"], "sync_mode": "supplement",
+                "baseline_invoice_count": 1, "date_from": "2025-05-01",
+                "date_to": "2025-08-16",
+            },
             progress_state={
                 "current_stage": "detail",
                 "current_month": {"key": "2025-08"},
@@ -61,12 +65,13 @@ class SyncStateTests(unittest.TestCase):
         )
         self.backend.repository.latest_invoice_job_for_direction.return_value = job
         state = self.backend.sync_states(["conn_one"], "purchase")[0]
-        self.assertEqual(state["status"], "running")
-        self.assertEqual(state["current_month"], "2025-08")
+        self.assertEqual(state["status"], "completed")
+        self.assertIsNone(state["current_month"])
+        self.assertIsNone(state["current_until"])
         self.assertEqual(state["invoice_count"], 2)
         self.assertEqual(state["baseline_invoice_count"], 1)
         self.assertEqual(state["added_invoice_count"], 1)
-        self.assertEqual((state["sync_from"], state["sync_until"]), ("2025-01-01", "2025-08-31"))
+        self.assertEqual((state["sync_from"], state["sync_until"]), ("2025-05-01", "2025-08-16"))
 
     def test_direction_counts_are_independent(self):
         self.backend.repository.latest_invoice_job_for_direction.return_value = None
@@ -81,16 +86,22 @@ class SyncStateTests(unittest.TestCase):
         job = SimpleNamespace(
             job_id="job_running", status="running", current_stage="overview",
             created_at="2026-08-01T00:00:00+00:00", finished_at=None,
-            parameters={"directions": ["purchase"], "sync_mode": "new", "baseline_invoice_count": 1},
+            parameters={
+                "directions": ["purchase"], "sync_mode": "new",
+                "baseline_invoice_count": 1, "date_to": "2025-08-16",
+            },
             progress_state={
                 "current_stage": "overview", "current_month": {"key": "2025-05"},
-                "modules": {"overview": {"status": "running"}},
+                "modules": {"overview": {"status": "running", "months": [{
+                    "key": "2025-05", "from_date": "2025-05-01", "to_date": "2025-05-16",
+                }]}},
             },
         )
         self.backend.repository.latest_invoice_job_for_direction.return_value = job
         state = self.backend.sync_states(["conn_one"], "purchase")[0]
         self.assertEqual(state["status"], "running")
         self.assertEqual(state["current_month"], "2025-05")
+        self.assertEqual(state["current_until"], "2025-05-16")
 
     def test_queued_job_is_active_and_uses_selected_start_month(self):
         job = SimpleNamespace(
@@ -107,6 +118,7 @@ class SyncStateTests(unittest.TestCase):
         state = self.backend.sync_states(["conn_one"], "purchase")[0]
         self.assertEqual(state["status"], "running")
         self.assertEqual(state["current_month"], "2025-05")
+        self.assertEqual(state["current_until"], "2025-05-31")
         self.assertEqual(state["added_invoice_count"], 0)
 
     def test_active_job_counts_committed_invoices_realtime_from_baseline(self):
@@ -125,16 +137,16 @@ class SyncStateTests(unittest.TestCase):
             )
             connection.commit()
         job = SimpleNamespace(
-            job_id="job_realtime", status="running", current_stage="detail",
+            job_id="job_realtime", status="running", current_stage="overview",
             created_at="2026-08-01T00:00:00+00:00", finished_at=None,
             parameters={
                 "directions": ["purchase"], "scopes": ["overview", "detail"],
                 "sync_mode": "new", "baseline_invoice_count": 450,
-                "date_from": "2025-05-01",
+                "date_from": "2025-05-01", "date_to": "2025-08-31",
             },
             progress_state={
-                "current_stage": "detail", "current_month": {"key": "2025-08"},
-                "modules": {"overview": {"status": "completed"}, "detail": {"status": "running"}},
+                "current_stage": "overview", "current_month": {"key": "2025-08"},
+                "modules": {"overview": {"status": "running"}},
             },
         )
         self.backend.repository.latest_invoice_job_for_direction.return_value = job
