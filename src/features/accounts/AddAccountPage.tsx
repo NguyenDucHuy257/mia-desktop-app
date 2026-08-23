@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from 'react';
 import backIcon from '../../assets/figma/back.png';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { diagnosticLog } from '../../lib/diagnostic-logger';
 import {
   accountErrorMessage,
   createAccountConnectionsInBatches,
@@ -58,8 +59,10 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
     if (Object.keys(nextErrors).length > 0) return;
 
     setSubmitting(true);
+    diagnosticLog('account_login_requested', { mode: 'single', username: credentials.username });
     try {
       const connection = await gateway.create(credentials);
+      diagnosticLog('account_login_succeeded', { mode: 'single', connection_id: connection.connection_id, reused: connection.reused });
       onConnectionCreated?.(connection.connection_id);
       setUsername(connection.username);
       setPassword('');
@@ -68,6 +71,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
         message: connection.reused ? 'Tài khoản đã tồn tại và được dùng lại.' : 'Đã thêm tài khoản thành công.',
       });
     } catch (error) {
+      diagnosticLog('account_login_failed', { mode: 'single', code: (error as { code?: string })?.code }, 'error');
       setFeedback({ kind: 'error', message: accountErrorMessage(error) });
     } finally {
       setSubmitting(false);
@@ -86,6 +90,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
 
     setBulkError('');
     setSubmitting(true);
+    diagnosticLog('account_login_requested', { mode: 'bulk', account_count: parsed.entries.length });
     const results = await createAccountConnectionsInBatches(
       gateway,
       parsed.entries.map(({ username: taxCode, password: portalPassword }) => ({
@@ -95,6 +100,9 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
     );
     const successful = results.filter((result) => result.status === 'fulfilled').length;
     const failed = results.length - successful;
+    diagnosticLog(failed ? 'account_login_failed' : 'account_login_succeeded', {
+      mode: 'bulk', account_count: results.length, successful, failed,
+    }, failed ? 'error' : 'info');
     for (const result of results) {
       if (result.status === 'fulfilled') onConnectionCreated?.(result.value.connection_id);
     }

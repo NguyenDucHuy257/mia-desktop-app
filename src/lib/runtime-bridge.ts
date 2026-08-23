@@ -52,6 +52,8 @@ export interface MiaRuntimeBridge {
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
   logs: {
     list(): Promise<string[]>;
+    entries(): Promise<DiagnosticLogEntry[]>;
+    clear(): Promise<boolean>;
     write(level: 'info' | 'warn' | 'error', event: string, fields?: Record<string, unknown>): Promise<boolean>;
   };
   updates: {
@@ -65,6 +67,15 @@ export interface MiaRuntimeBridge {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
   };
+}
+
+export interface DiagnosticLogEntry {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'warn' | 'error';
+  source: string;
+  event: string;
+  details: string;
 }
 
 export type ExcelExportPhase = 'prepare' | 'query' | 'load_template' | 'build_rows' | 'write_rows' | 'format' | 'save' | 'completed';

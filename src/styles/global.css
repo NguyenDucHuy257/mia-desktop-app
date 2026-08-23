@@ -17,6 +17,7 @@ button { color: inherit; }
 .nav-button:not([data-active="true"]):hover { color: #3f5145; background: #ecefe9; }
 .nav-icon-frame { width: 24px; height: 20px; display: grid; place-items: center; flex: 0 0 24px; }
 .nav-icon-frame img { display: block; max-width: 24px; max-height: 20px; }
+.nav-button:not([data-active="true"]) .nav-icon-frame img { filter: grayscale(1) saturate(0) opacity(.72); }
 .nav-button[data-active="true"] .nav-icon-frame img { filter: brightness(0) saturate(100%) invert(30%) sepia(34%) saturate(1070%) hue-rotate(92deg) brightness(91%) contrast(91%); }
 .workspace { width: calc(100vw - var(--mia-sidebar-width)); min-width: 0; height: 100%; background: #fff; }
 .topbar { height: 56px; padding: 0 24px; border-bottom: 1px solid var(--mia-border-warm); background: var(--mia-surface-topbar); display: flex; align-items: center; justify-content: space-between; }
@@ -276,7 +277,30 @@ button { color: inherit; }
 .pdf-actions button img { width: 12px; height: 12px; }
 .pdf-actions button:nth-child(2) { padding-inline: 24px; color: #fff; border-color: #0051d5; background: #0051d5; opacity: .5; }
 .pdf-actions button:nth-child(2) img { width: 13px; height: 10px; }
-.utility-page { min-height: 100%; padding: 48px; background: #fff; }
+.utility-page { min-height: 100%; padding: 32px; background: #fff; }
+.utility-panel { margin-top: 22px; }
+.utility-log-panel { display: flex; flex-direction: column; gap: 12px; }
+.utility-log-toolbar { display: flex; align-items: flex-end; gap: 10px; }
+.utility-log-toolbar button { height: 38px; padding: 0 16px; border: 1px solid var(--mia-border-cool); border-radius: var(--mia-radius-ui); background: #fff; color: var(--mia-text-strong); font-weight: 700; cursor: pointer; }
+.utility-log-toolbar .utility-log-clear { border-color: var(--mia-danger); color: var(--mia-danger); }
+.utility-log-search { min-width: 360px; display: flex; flex-direction: column; gap: 5px; color: var(--mia-text-muted); font-size: 12px; font-weight: 700; }
+.utility-log-search input { height: 38px; padding: 0 12px; border: 1px solid var(--mia-border-cool); border-radius: var(--mia-radius-ui); outline: 0; }
+.utility-log-search input:focus { border-color: var(--mia-green-700); }
+.utility-log-list { max-height: calc(100vh - 210px); overflow: auto; border: 1px solid var(--mia-border-cool); border-radius: var(--mia-radius-ui); background: #fff; }
+.utility-log-row { min-height: 76px; padding: 12px 14px; border-bottom: 1px solid #edf1f5; display: grid; grid-template-columns: 78px minmax(280px, 1fr) minmax(150px, 240px); align-items: start; gap: 12px; }
+.utility-log-row:last-child { border-bottom: 0; }
+.utility-log-row[data-level="error"] { background: #fff7f7; }
+.utility-log-row[data-level="warn"] { background: #fffdf4; }
+.utility-log-level { width: max-content; padding: 3px 7px; border-radius: var(--mia-radius-ui); background: #eef2f6; color: #475569; font-size: 11px; font-weight: 800; }
+.utility-log-row[data-level="error"] .utility-log-level { background: #fee2e2; color: #b91c1c; }
+.utility-log-row[data-level="warn"] .utility-log-level { background: #fef3c7; color: #92400e; }
+.utility-log-row > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.utility-log-row strong { font-size: 13px; }
+.utility-log-row span { color: var(--mia-text-muted); font-size: 11px; }
+.utility-log-row pre { max-height: 92px; margin: 4px 0 0; overflow: auto; color: #334155; font: 11px/16px ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.utility-log-meta { align-items: flex-end; }
+.utility-log-meta code { color: #64748b; font-size: 10px; overflow-wrap: anywhere; text-align: right; }
+.utility-log-meta button { height: 28px; padding: 0 9px; border: 1px solid #fecaca; border-radius: var(--mia-radius-ui); background: #fff; color: #b91c1c; font-size: 10px; font-weight: 700; cursor: pointer; }
 .utility-empty { min-height: 280px; margin-top: 36px; border: 1px dashed #cbd5e1; border-radius: 16px; display: grid; place-content: center; gap: 8px; text-align: center; color: #62625b; }
 .utility-empty strong { color: #1a1c1b; font-size: 18px; }
 @media (max-width: 1100px) {

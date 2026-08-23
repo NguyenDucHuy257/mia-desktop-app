@@ -39,6 +39,8 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   const nav = page.getByRole('button', { name: 'XML/HTML/PDF', exact: true });
   await nav.click();
   await expect(nav).toHaveAttribute('data-active', 'true');
+  await expect(page.getByLabel('Tìm kiếm tài khoản tải xuống')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).locator('img')).toHaveCSS('filter', 'grayscale(1) saturate(0) opacity(0.72)');
   await expect(page.getByRole('heading', { name: 'XML/HTML/PDF' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Thêm tài khoản' })).toHaveCount(0);

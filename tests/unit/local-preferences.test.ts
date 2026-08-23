@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const require = (await import('node:module')).createRequire(import.meta.url);
-const { readPreferences, readSanitizedLogs, validatePreferences, writePreferences } = require('../../electron/local-preferences.cjs');
+const { clearDiagnosticLogs, readPreferences, readSanitizedLogEntries, readSanitizedLogs, validatePreferences, writePreferences } = require('../../electron/local-preferences.cjs');
 const directories: string[] = [];
 
 afterEach(async () => Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))));
@@ -64,5 +64,23 @@ describe('local preferences and logs', () => {
     expect(lines.every((line: string) => line.startsWith('[runtime] '))).toBe(true);
     expect(lines.join(' ')).not.toContain('0101234567');
     expect(lines.join(' ')).not.toContain('secret-value');
+  });
+
+  it('returns structured newest-first activity rows and clears every diagnostic file', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'mia-logs-'));
+    directories.push(directory);
+    const rendererDirectory = path.join(directory, 'logs');
+    await mkdir(rendererDirectory, { recursive: true });
+    const filename = path.join(rendererDirectory, 'renderer.log');
+    await writeFile(filename, [
+      '2026-08-24T01:00:00.000Z INFO account_login_succeeded {"connection_id":"conn_1"}',
+      '2026-08-24T01:01:00.000Z ERROR job_start_failed {"code":"invalid_params"}',
+    ].join('\n'));
+    const entries = await readSanitizedLogEntries(directory);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ level: 'error', source: 'renderer', event: 'job_start_failed' });
+    expect(entries[0].details).toContain('invalid_params');
+    await expect(clearDiagnosticLogs(directory)).resolves.toBe(true);
+    await expect(readSanitizedLogs(directory)).resolves.toEqual([]);
   });
 });

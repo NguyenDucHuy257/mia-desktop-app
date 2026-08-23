@@ -70,6 +70,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   }),
   logs: Object.freeze({
     list: () => ipcRenderer.invoke('mia:logs:list'),
+    entries: () => ipcRenderer.invoke('mia:logs:entries'),
+    clear: () => ipcRenderer.invoke('mia:logs:clear'),
     write: (level, event, fields = {}) => ipcRenderer.invoke('mia:logs:write', { level, event, fields }),
   }),
   updates: Object.freeze({

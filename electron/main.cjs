@@ -10,7 +10,7 @@ const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 const { createResultBroker } = require('./result-broker.cjs');
 const { createArtifactBroker } = require('./artifact-file-broker.cjs');
-const { readPreferences, readSanitizedLogs, writePreferences } = require('./local-preferences.cjs');
+const { clearDiagnosticLogs, readPreferences, readSanitizedLogEntries, readSanitizedLogs, writePreferences } = require('./local-preferences.cjs');
 const { createReleaseUpdater } = require('./release-updater.cjs');
 const { createDiagnosticLogger } = require('./app-logger.cjs');
 
@@ -210,6 +210,8 @@ ipcMain.handle('mia:artifacts:open-directory', async (event, directory) => {
 ipcMain.handle('mia:preferences:get', (event) => { assertTrustedSender(event); return readPreferences(app.getPath('userData')); });
 ipcMain.handle('mia:preferences:set', (event, value) => { assertTrustedSender(event); return writePreferences(app.getPath('userData'), value); });
 ipcMain.handle('mia:logs:list', (event) => { assertTrustedSender(event); return readSanitizedLogs(app.getPath('userData')); });
+ipcMain.handle('mia:logs:entries', (event) => { assertTrustedSender(event); return readSanitizedLogEntries(app.getPath('userData')); });
+ipcMain.handle('mia:logs:clear', (event) => { assertTrustedSender(event); return clearDiagnosticLogs(app.getPath('userData')); });
 ipcMain.handle('mia:logs:write', (event, payload) => {
   assertTrustedSender(event);
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new TypeError('invalid_log_payload');
