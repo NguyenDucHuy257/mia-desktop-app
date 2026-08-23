@@ -318,8 +318,10 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
     const hydrate = typeof jobs.resumeAll === 'function'
       ? jobs.resumeAll()
       : jobs.resume().then((record) => record ? [record] : []);
-    void hydrate.then((records) => {
+    const preferences = window.miaRuntime?.preferences?.get().catch(() => null) ?? Promise.resolve(null);
+    void Promise.all([hydrate, preferences]).then(([records, restoredPreferences]) => {
       if (token !== generation.current) return;
+      retryLimit.current = restoredPreferences?.retries ?? MAX_RETRIES;
       const restored: Record<string, BatchItem> = {};
       const activeRecords = currentSessionJobRecords(records);
       for (const record of activeRecords) {
