@@ -2,6 +2,7 @@ import base64
 import os
 import tempfile
 import unittest
+import requests
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -343,6 +344,74 @@ class ProductionBackendTests(unittest.TestCase):
             [("xml", "running"), ("html", "running"),
              ("xml", "completed"), ("html", "completed")],
         )
+
+    def _package_backend(self, side_effect):
+        backend = object.__new__(ProductionBackend)
+        backend.data_root = Path(tempfile.gettempdir()) / "mia-package-retry-test"
+        target = {
+            "artifact_key": "purchase|query|0101|AA|1|1",
+            "direction": "purchase", "query_type": "query", "nbmst": "0101",
+            "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+            "nlap": "2026-08-01", "nlap_date": "2026-08-01",
+        }
+        backend.artifact_targets_for_export = Mock(return_value=[target])
+        backend.accounts = Mock()
+        backend.accounts.session_hash.return_value = (Mock(), "session-hash")
+        backend._result_job = Mock(return_value=SimpleNamespace(parameters={}))
+        backend.handler = Mock()
+        backend.handler.run_xml_unit.side_effect = side_effect
+        backend.logger = Mock()
+        request = {
+            "connection_ids": ["conn_1"], "kinds": ["xml", "html"],
+            "date_from": "2026-08-01", "date_to": "2026-08-31",
+            "direction": "purchase", "query_type": "query", "search": "",
+        }
+        return backend, request
+
+    @staticmethod
+    def _transient_500():
+        response = requests.Response()
+        response.status_code = 500
+        error = requests.HTTPError("HTTP 500")
+        error.response = response
+        return error
+
+    def test_package_retry_uses_bounded_backoff_then_succeeds(self):
+        backend, request = self._package_backend([
+            self._transient_500(), self._transient_500(), {"outcome": "downloaded"},
+        ])
+        waits = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, retry_wait=lambda delay, _cancel: waits.append(delay)
+            )
+        self.assertEqual(waits, [1, 2])
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 3)
+        self.assertEqual(result["failed"], 0)
+
+    def test_exhausted_transient_package_is_warning_not_failure(self):
+        backend, request = self._package_backend([self._transient_500()] * 7)
+        waits = []
+        ready = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, retry_wait=lambda delay, _cancel: waits.append(delay),
+                ready_callback=lambda *_args: ready.append(_args),
+            )
+        self.assertEqual(waits, [1, 2, 4, 6, 8, 10])
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 7)
+        self.assertEqual(result["failed"], 0)
+        self.assertEqual(result["outcomes"]["unavailable"], 1)
+        self.assertEqual(ready[0][1:], ("unavailable", "unavailable"))
+
+    def test_package_retry_wait_can_cancel_without_another_attempt(self):
+        backend, request = self._package_backend([self._transient_500()])
+        def cancel_wait(_delay, _cancel):
+            raise ValueError("artifact_cancelled")
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            with self.assertRaisesRegex(ValueError, "artifact_cancelled"):
+                backend.ensure_invoice_packages(request, retry_wait=cancel_wait)
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 1)
 
 
 if __name__ == "__main__":

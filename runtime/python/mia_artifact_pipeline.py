@@ -454,6 +454,48 @@ class ArtifactInspector:
         return _merge_intervals(missing)
 
 
+def _create_pdf_renderer(assets_dir: Path):
+    """Desktop adapter for package assets and Windows-safe atomic PDF writes."""
+    from app.exporters.invoice_pdf_renderer import InvoicePdfRenderer
+
+    class DesktopInvoicePdfRenderer(InvoicePdfRenderer):
+        def _render_pdf_atomically(self, pdf_path: Path, **options: Any) -> None:
+            pdf_path = Path(pdf_path)
+            pdf_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{pdf_path.name}.", suffix=".tmp", dir=pdf_path.parent
+            )
+            os.close(descriptor)
+            temporary_path = Path(temporary_name)
+            try:
+                self._page.pdf(path=str(temporary_path), **options)
+                # Windows rejects fsync on a read-only CRT descriptor. r+b
+                # preserves validation while making the durability flush valid.
+                with temporary_path.open("r+b") as stream:
+                    header = stream.read(5)
+                    stream.seek(0, os.SEEK_END)
+                    size = stream.tell()
+                    stream.seek(max(0, size - 1024))
+                    trailer = stream.read()
+                    if header != b"%PDF-" or b"%%EOF" not in trailer:
+                        raise RuntimeError("Rendered PDF failed structural validation")
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary_path, pdf_path)
+                # Directory fsync is a POSIX durability primitive and is not
+                # supported by Windows directory handles.
+                if os.name != "nt":
+                    directory_fd = os.open(pdf_path.parent, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+
+    return DesktopInvoicePdfRenderer(assets_dir=assets_dir)
+
+
 class _PdfWorkerPool:
     def __init__(
         self, concurrency: int,
@@ -474,13 +516,23 @@ class _PdfWorkerPool:
 
     def _worker(self) -> None:
         renderer = None
+        renderer_assets = None
 
-        def get_renderer():
-            nonlocal renderer
+        def get_renderer(assets_dir: Path):
+            nonlocal renderer, renderer_assets
+            assets_dir = Path(assets_dir).resolve()
             if renderer is None:
-                from app.exporters.invoice_pdf_renderer import InvoicePdfRenderer
-                renderer = InvoicePdfRenderer()
+                # The two page assets belong to the real package. The vendored
+                # global directory is intentionally not assumed to be populated.
+                renderer = _create_pdf_renderer(assets_dir)
                 renderer.__enter__()
+                renderer_assets = assets_dir
+            elif renderer_assets != assets_dir:
+                # One Chromium instance is retained per worker while the
+                # controlled page CSS follows each invoice package directory.
+                renderer.assets_dir = assets_dir
+                renderer.page_asset_css = renderer._build_page_asset_css()
+                renderer_assets = assets_dir
             return renderer
 
         try:
@@ -537,6 +589,11 @@ class ArtifactBatchCoordinator:
             self.format_cancel[kind].set()
         else:
             raise ValueError("invalid_artifact_kind")
+        if self.logger is not None:
+            if kind is None:
+                self.logger.info("batch_cancelled")
+            else:
+                self.logger.info("format_cancelled kind=%s", kind)
         self._emit()
 
     def view(self) -> dict[str, Any]:
@@ -554,6 +611,7 @@ class ArtifactBatchCoordinator:
         )
 
     def run(self) -> dict[str, Any]:
+        cancelled = False
         inspector = ArtifactInspector(self.backend)
         snapshots = {
             item["connection_id"]: item
@@ -577,16 +635,32 @@ class ArtifactBatchCoordinator:
                 continue
             try:
                 self._run_account(connection_id)
+            except ValueError as error:
+                if str(error) == "artifact_cancelled":
+                    cancelled = True
+                    with self.lock:
+                        self.state["accounts"][connection_id]["status"] = "stopped"
+                    if self.logger is not None:
+                        self.logger.info("batch_cancelled connection_ref=%s", connection_id[-8:])
+                    self._emit()
+                    break
+                with self.lock:
+                    self.state["accounts"][connection_id]["status"] = "error"
+                    self.state["accounts"][connection_id]["error"] = type(error).__name__
+                    self.state["warning_count"] += 1
+                if self.logger is not None:
+                    self.logger.exception("account_failed connection_ref=%s", connection_id[-8:])
+                self._emit()
             except Exception as error:
                 with self.lock:
                     self.state["accounts"][connection_id]["status"] = "error"
                     self.state["accounts"][connection_id]["error"] = type(error).__name__
                     self.state["warning_count"] += 1
                 if self.logger is not None:
-                    self.logger.exception("artifact_account_failed connection_ref=%s", connection_id[-8:])
+                    self.logger.exception("account_failed connection_ref=%s", connection_id[-8:])
                 self._emit()
         with self.lock:
-            stopped = self.global_cancel.is_set() or not self._selected_active()
+            stopped = cancelled or self.global_cancel.is_set() or not self._selected_active()
             self.state["status"] = "stopped" if stopped else "completed"
             self.state["current_account_id"] = None
         self._emit()
@@ -656,6 +730,12 @@ class ArtifactBatchCoordinator:
         def ready(target: dict[str, Any], state: str, outcome: str) -> None:
             key = target["artifact_key"]
             display = " - ".join(str(target.get(name) or "") for name in ("khhdon", "shdon", "nbmst"))
+            if state == "unavailable" or outcome == "unavailable":
+                with self.lock:
+                    self.state["warning_count"] += 1
+                for kind in self.value["kinds"]:
+                    self._advance(kind, display)
+                return
             if state != "completed":
                 with self.lock:
                     self.state["warning_count"] += 1
@@ -737,6 +817,9 @@ class ArtifactBatchCoordinator:
                 if self.global_cancel.is_set() or not self._selected_active()
                 else "completed"
             )
+        if self.logger is not None:
+            event = "account_completed" if self.state["accounts"][connection_id]["status"] == "completed" else "batch_cancelled"
+            self.logger.info("%s connection_ref=%s", event, connection_id[-8:])
         self._emit()
 
     def _advance(self, kind: str, display: str, *, failed: bool = False) -> None:
@@ -764,7 +847,7 @@ class ArtifactBatchCoordinator:
 
     def _render_pdf_item(
         self, item: dict[str, Any], tax_code: str, output_root: Path,
-        get_renderer: Callable[[], Any],
+        get_renderer: Callable[[Path], Any],
     ) -> None:
         display = item["display"]
         if self.global_cancel.is_set() or self.format_cancel["pdf"].is_set():
@@ -777,7 +860,9 @@ class ArtifactBatchCoordinator:
             if fingerprint is None:
                 raise FileNotFoundError("html_bundle_incomplete")
             if not pdf_cache_valid(self.data_root, tax_code, target["artifact_key"], html_path):
-                get_renderer().render_pdf(html_path, pdf_path)
+                if self.logger is not None:
+                    self.logger.info("pdf_started invoice_ref=%s", _safe_filename(display)[:80])
+                get_renderer(html_path.parent).render_pdf(html_path, pdf_path)
                 _atomic_json(metadata_path, {
                     "artifact_key": target["artifact_key"],
                     "html_fingerprint": fingerprint,
@@ -790,9 +875,11 @@ class ArtifactBatchCoordinator:
                 item["cache_keys"],
             )
             self._advance("pdf", display)
+            if self.logger is not None:
+                self.logger.info("pdf_completed invoice_ref=%s", _safe_filename(display)[:80])
         except Exception as error:
             if self.logger is not None:
-                self.logger.warning("artifact_pdf_item_failed error_type=%s", type(error).__name__)
+                self.logger.warning("pdf_failed error_type=%s", type(error).__name__)
             self._advance("pdf", display, failed=True)
 
     @staticmethod
