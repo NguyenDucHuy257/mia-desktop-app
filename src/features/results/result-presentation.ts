@@ -5,7 +5,7 @@ const NUMBER_FIELDS = new Set([
 const PERCENT_FIELDS = new Set(['tsuat']);
 export const MONETARY_FIELDS = new Set([
   'tgtcthue', 'tgtthue', 'ttcktmai', 'tgtphi', 'tgtttbso',
-  'stckhau', 'thtien', 'tthue',
+  'dgia', 'stckhau', 'thtien', 'tthue',
 ]);
 
 function numericValue(value: unknown) {
@@ -30,6 +30,16 @@ export function formatVietnameseNumber(value: unknown) {
   }).format(number);
 }
 
+export function formatMoney(value: unknown) {
+  const number = numericValue(value);
+  if (number === null) return value === null || value === undefined || value === '' ? '—' : String(value);
+  return new Intl.NumberFormat('vi-VN', {
+    useGrouping: true,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(number);
+}
+
 export function formatTaxRate(value: unknown) {
   if (value === null || value === undefined || value === '') return '—';
   const text = String(value).trim();
@@ -41,6 +51,7 @@ export function formatResultCell(column: string, value: unknown, declaredType?: 
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Có' : 'Không';
   if (PERCENT_FIELDS.has(column) || declaredType === 'percent') return formatTaxRate(value);
+  if (MONETARY_FIELDS.has(column)) return formatMoney(value);
   if (NUMBER_FIELDS.has(column) || declaredType === 'number') return formatVietnameseNumber(value);
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);

@@ -45,9 +45,16 @@ function validateExclusion(value) {
   };
 }
 
+function validateSort(value) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['column', 'direction'].includes(key))) throw new TypeError('invalid_result_sort');
+  if (typeof value.column !== 'string' || !/^[A-Za-z0-9_]{1,80}$/.test(value.column) || !['asc', 'desc'].includes(value.direction)) throw new TypeError('invalid_result_sort');
+  return { column: value.column, direction: value.direction };
+}
+
 function validateQuery(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_result_query');
-  const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'query_type', 'date_from', 'date_to', 'column_filters', 'exclusion']);
+  const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'query_type', 'date_from', 'date_to', 'column_filters', 'exclusion', 'sort']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_result_query');
   const limit = value.limit ?? MAX_RESULT_PAGE_SIZE;
   const cursor = value.cursor ?? null;
@@ -73,6 +80,7 @@ function validateQuery(value) {
     date_from: dateFrom, date_to: dateTo,
     column_filters: validateColumnFilters(value.column_filters),
     exclusion: validateExclusion(value.exclusion),
+    sort: validateSort(value.sort),
   };
 }
 
@@ -94,4 +102,4 @@ function createResultBroker(getRuntime) {
   });
 }
 
-module.exports = { MAX_RESULT_CURSOR_LENGTH, MAX_RESULT_PAGE_SIZE, createResultBroker, validateColumnFilters, validateExclusion, validateFacetQuery, validateQuery };
+module.exports = { MAX_RESULT_CURSOR_LENGTH, MAX_RESULT_PAGE_SIZE, createResultBroker, validateColumnFilters, validateExclusion, validateFacetQuery, validateQuery, validateSort };

@@ -20,6 +20,7 @@ import time
 from collections import OrderedDict
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -44,7 +45,7 @@ INVOICE_LEVEL_MONETARY_FIELDS = frozenset({
     "tgtcthue", "tgtthue", "ttcktmai", "tgtphi", "tgtttbso",
 })
 PERCENT_RESULT_FIELDS = frozenset({"tsuat"})
-NUMBER_RESULT_FIELDS = MONETARY_RESULT_FIELDS | frozenset({"tgia", "sluong"})
+NUMBER_RESULT_FIELDS = MONETARY_RESULT_FIELDS | frozenset({"tgia", "dgia", "sluong"})
 
 
 BLOCKED_RESULT_FIELDS = {
@@ -190,6 +191,20 @@ def _as_number(value: Any) -> float | None:
         return None
 
 
+def _as_decimal(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    text = str(value).strip().replace("%", "").replace(" ", "")
+    if text.count(",") == 1 and text.count(".") >= 1:
+        text = text.replace(".", "").replace(",", ".")
+    elif text.count(",") == 1:
+        text = text.replace(",", ".")
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+
+
 def _column_filter_matches(value: Any, rule: Any) -> bool:
     if not isinstance(rule, dict):
         return True
@@ -262,6 +277,30 @@ def _decode_page_cursor(value: str | None) -> tuple[int, str | None]:
     ):
         raise ValueError("invalid_result_cursor")
     return decoded[1], decoded[2]
+
+
+def _encode_sorted_cursor(offset: int) -> str:
+    payload = json.dumps([2, offset], separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
+
+
+def _decode_sorted_cursor(value: str | None) -> int:
+    if not value:
+        return 0
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except Exception as error:
+        raise ValueError("invalid_result_cursor") from error
+    if (
+        not isinstance(decoded, list)
+        or len(decoded) != 2
+        or decoded[0] != 2
+        or not isinstance(decoded[1], int)
+        or decoded[1] < 0
+    ):
+        raise ValueError("invalid_result_cursor")
+    return decoded[1]
 
 
 def _source_template_dir() -> Path:
@@ -491,6 +530,73 @@ def _iter_matching_rows(kind: str, context, schema, search: str, column_filters:
             cursor = str(pagination["next_cursor"])
 
 
+def _result_item(safe: dict[str, Any], projected: dict[str, Any], direction: str, context, excluded_keys) -> dict[str, Any]:
+    raw_id = safe.get("id")
+    if isinstance(raw_id, int):
+        row_id: int | str = raw_id
+    else:
+        fingerprint = json.dumps(
+            safe, ensure_ascii=False, default=str, sort_keys=True
+        ).encode("utf-8")
+        row_id = hashlib.sha256(fingerprint).hexdigest()[:20]
+    invoice_key = _invoice_key(
+        safe, direction, str(safe.get("query_type") or context["query_types"][0])
+    )
+    return {
+        "row_id": row_id,
+        "direction": direction,
+        "invoice_key": invoice_key,
+        "excluded": invoice_key in excluded_keys,
+        "fields": projected,
+    }
+
+
+def _read_sorted_results(kind: str, query: dict[str, Any], context, schema, excluded_keys, analysis, limit: int) -> dict[str, Any]:
+    sort = query.get("sort") or {}
+    column = str(sort.get("column") or "")
+    direction = str(sort.get("direction") or "")
+    columns = [key for key, _ in schema]
+    if column not in columns or direction not in {"asc", "desc"}:
+        raise ValueError("invalid_result_sort")
+    search = str(query.get("search") or "").strip().casefold()
+    filters = query.get("column_filters") or {}
+    rows = list(_iter_matching_rows(kind, context, schema, search, filters))
+    populated = [row for row in rows if row[1].get(column) not in (None, "")]
+    missing = [row for row in rows if row[1].get(column) in (None, "")]
+
+    def key(row):
+        value = row[1].get(column)
+        if column in NUMBER_RESULT_FIELDS or column in PERCENT_RESULT_FIELDS:
+            return _as_decimal(value) or Decimal("0")
+        return _filter_text(value).casefold()
+
+    populated.sort(key=key, reverse=direction == "desc")
+    ordered = populated + missing
+    offset = _decode_sorted_cursor(query.get("cursor"))
+    page_rows = ordered[offset:offset + limit]
+    next_offset = offset + len(page_rows)
+    has_more = next_offset < len(ordered)
+    return {
+        "items": [
+            _result_item(safe, fields, safe["direction"], context, excluded_keys)
+            for safe, fields, _invoice_key_value in page_rows
+        ],
+        "columns": columns,
+        "column_labels": {key: title for key, title in schema},
+        "column_types": {
+            key: "percent" if key in PERCENT_RESULT_FIELDS else "number"
+            for key in columns if key in NUMBER_RESULT_FIELDS or key in PERCENT_RESULT_FIELDS
+        },
+        "total_count": analysis["matching_row_count"],
+        "aggregate": analysis,
+        "pagination": {
+            "limit": limit,
+            "has_more": has_more,
+            "next_cursor": _encode_sorted_cursor(next_offset) if has_more else None,
+        },
+    }
+
+
 def _bounded_cache(cache: OrderedDict, key: tuple[Any, ...], factory, limit: int):
     cached = cache.get(key)
     if cached is not None:
@@ -561,7 +667,7 @@ def _result_analysis(backend, kind: str, context, schema, search: str, column_fi
         matching_row_count = 0
         row_count = 0
         invoice_keys: set[str] = set()
-        totals = {field: 0.0 for field in MONETARY_RESULT_FIELDS}
+        totals = {field: Decimal("0") for field in MONETARY_RESULT_FIELDS}
         for _safe, fields, invoice_key in _iter_matching_rows(
             kind, context, schema, search, column_filters
         ):
@@ -574,14 +680,17 @@ def _result_analysis(backend, kind: str, context, schema, search: str, column_fi
             for field in MONETARY_RESULT_FIELDS:
                 if kind == "details" and field in INVOICE_LEVEL_MONETARY_FIELDS and not first_invoice_row:
                     continue
-                number = _as_number(fields.get(field))
+                number = _as_decimal(fields.get(field))
                 if number is not None:
                     totals[field] += number
         return {
             "matching_row_count": matching_row_count,
             "row_count": row_count,
             "invoice_count": len(invoice_keys),
-            "totals": totals,
+            "totals": {
+                field: int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                for field, value in totals.items()
+            },
         }
 
     return _bounded_cache(_RESULT_ANALYSIS_CACHE, key, build, _RESULT_ANALYSIS_CACHE_LIMIT), excluded
@@ -610,6 +719,10 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     analysis, excluded_keys = _result_analysis(
         backend, kind, context, schema, search, column_filters, query.get("exclusion")
     )
+    if query.get("sort"):
+        return _read_sorted_results(
+            kind, query, context, schema, excluded_keys, analysis, limit
+        )
     direction_index, source_cursor = _decode_page_cursor(query.get("cursor"))
     directions = context["directions"]
 
@@ -645,25 +758,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
             projected = _project_fields(kind, safe, schema, context)
             if not _search_matches(safe, search) or not _matches_column_filters(projected, column_filters):
                 continue
-            raw_id = safe.get("id")
-            if isinstance(raw_id, int):
-                row_id: int | str = raw_id
-            else:
-                fingerprint = json.dumps(
-                    safe, ensure_ascii=False, default=str, sort_keys=True
-                ).encode("utf-8")
-                row_id = hashlib.sha256(fingerprint).hexdigest()[:20]
-            output.append({
-                "row_id": row_id,
-                "direction": direction,
-                "invoice_key": _invoice_key(
-                    safe, direction, str(safe.get("query_type") or context["query_types"][0])
-                ),
-                "excluded": _invoice_key(
-                    safe, direction, str(safe.get("query_type") or context["query_types"][0])
-                ) in excluded_keys,
-                "fields": projected,
-            })
+            output.append(_result_item(safe, projected, direction, context, excluded_keys))
 
         pagination = page.get("pagination") or {}
         page_more = bool(pagination.get("has_more"))

@@ -111,6 +111,7 @@ export interface ResultQuery {
   date_to?: string;
   column_filters?: ColumnFilters;
   exclusion?: ResultExclusion;
+  sort?: ResultSort;
 }
 export type ColumnFilterRule = {
   values?: Array<string | number | boolean | null>;
@@ -120,7 +121,8 @@ export type ColumnFilterRule = {
   value_to?: string | number | boolean | null;
 };
 export type ColumnFilters = Record<string, ColumnFilterRule>;
-export interface ResultFilterState { search: string; column_filters: ColumnFilters }
+export interface ResultSort { column: string; direction: 'asc' | 'desc' }
+export interface ResultFilterState { search: string; column_filters: ColumnFilters; sort?: ResultSort }
 export interface ResultExclusionRule { kind: 'overview' | 'details'; query: ResultQuery; except_keys?: string[] }
 export interface ResultExclusion { keys: string[]; rules: ResultExclusionRule[] }
 export interface ResultFacetQuery extends ResultQuery { kind: 'overview' | 'details'; column: string; facet_limit?: number }

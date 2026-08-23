@@ -113,6 +113,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       limit: PAGE_SIZE,
       search: debouncedSearch,
       column_filters: columnFilters,
+      sort: filtersByMode[mode].sort,
       exclusion,
       direction: direction || null,
       query_type: queryType,
@@ -140,7 +141,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       duration_ms: Math.round(performance.now() - started),
     });
     return result;
-  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, mode, queryType]);
+  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, filtersByMode, mode, queryType]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
     setItems(result.items);
@@ -273,12 +274,20 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     });
   }
 
+  function setColumnSort(column: string, sortDirection: 'asc' | 'desc') {
+    setFiltersByMode(current => ({
+      ...current,
+      [mode]: { ...current[mode], sort: { column, direction: sortDirection } },
+    }));
+  }
+
   const currentResultQuery = useCallback((scope: ResultMode = mode): ResultQuery => ({
     connection_id: connectionId,
     cursor: null,
     limit: PAGE_SIZE,
     search: filtersByMode[scope].search.trim(),
     column_filters: filtersByMode[scope].column_filters,
+    sort: filtersByMode[scope].sort,
     direction: direction || null,
     query_type: queryType,
     date_from: dateFrom,
@@ -498,14 +507,21 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         /></span>
         {columns.map((column) => {
           const label = columnLabels[column] || column;
-          return <span className="results-header-cell" key={column} title={label}>{label}<ColumnFilterPopover
-            column={column}
-            label={label}
-            active={columnFilters[column]}
-            loadValues={() => loadFacet(column)}
-            onApply={rule => setColumnFilter(column, rule)}
-            onClear={() => setColumnFilter(column)}
-          /></span>;
+          return <span className="results-header-slot" key={column}>
+            <div className="result-header-cell">
+              <span className="result-header-title" title={label}>{label}</span>
+              <ColumnFilterPopover
+                column={column}
+                label={label}
+                active={columnFilters[column]}
+                sort={filtersByMode[mode].sort}
+                loadValues={() => loadFacet(column)}
+                onApply={rule => setColumnFilter(column, rule)}
+                onClear={() => setColumnFilter(column)}
+                onSort={sortDirection => setColumnSort(column, sortDirection)}
+              />
+            </div>
+          </span>;
         })}
       </div>
       {items.map((item, rowIndex) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>

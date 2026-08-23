@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { runBrokerCommand } = require('./account-connection-broker.cjs');
-const { validateColumnFilters, validateExclusion } = require('./result-broker.cjs');
+const { validateColumnFilters, validateExclusion, validateSort } = require('./result-broker.cjs');
 
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const EXTENSIONS = new Set(['.xml', '.html', '.pdf', '.xlsx']);
@@ -83,9 +83,9 @@ function validateExportRequest(value) {
   if (!resultFilters || typeof resultFilters !== 'object' || Array.isArray(resultFilters) || Object.keys(resultFilters).some((scope) => !RESULT_SCOPES.has(scope))) throw new TypeError('invalid_result_export_filters');
   const normalizedFilters = {};
   for (const [scope, filter] of Object.entries(resultFilters)) {
-    if (!filter || typeof filter !== 'object' || Array.isArray(filter) || Object.keys(filter).some((key) => !['search', 'column_filters'].includes(key))) throw new TypeError('invalid_result_export_filters');
+    if (!filter || typeof filter !== 'object' || Array.isArray(filter) || Object.keys(filter).some((key) => !['search', 'column_filters', 'sort'].includes(key))) throw new TypeError('invalid_result_export_filters');
     if (filter.search !== undefined && (typeof filter.search !== 'string' || filter.search.length > 200)) throw new TypeError('invalid_result_export_filters');
-    normalizedFilters[scope] = { search: String(filter.search ?? '').trim(), column_filters: validateColumnFilters(filter.column_filters) };
+    normalizedFilters[scope] = { search: String(filter.search ?? '').trim(), column_filters: validateColumnFilters(filter.column_filters), sort: validateSort(filter.sort) };
   }
   return {
     ...base, result_scopes: [...value.result_scopes], date_from: value.date_from,
