@@ -9,6 +9,8 @@ export interface JobProgressView {
   current_query_type?: JobStatusResponse['current_query_type'];
   message?: string | null;
   current_month?: JobStatusResponse['current_month'];
+  scope_progress?: JobStatusResponse['scope_progress'];
+  progress_totals?: JobStatusResponse['progress_totals'];
   error?: JobStatusResponse['error'];
 }
 
@@ -45,17 +47,12 @@ const STAGE_MESSAGES: Record<string, string> = {
   finalize: 'Đang hoàn tất và kiểm tra dữ liệu',
 };
 
-const MONTH_STAGE_LABELS: Record<string, string> = {
+const SCOPE_LABELS: Record<string, string> = {
   overview: 'Tổng quan',
   detail: 'Chi tiết',
   ensure_xml: 'XML',
   mvt: 'MVT',
 };
-
-function formatMonthKey(value?: string | null) {
-  const match = String(value ?? '').match(/^(\d{4})-(\d{2})$/);
-  return match ? `${match[2]}/${match[1]}` : value || '—';
-}
 
 function percentText(value?: number | null) {
   if (value === null || value === undefined || !Number.isFinite(value)) return '';
@@ -74,30 +71,15 @@ function directionLabel(direction?: string | null) {
   return '';
 }
 
-function monthProgress(job: JobProgressView) {
-  const month = job.current_month;
-  const stage = job.stage ?? '';
-  if (!month || !MONTH_STAGE_LABELS[stage]) return null;
-
-  const label = MONTH_STAGE_LABELS[stage];
-  const monthLabel = formatMonthKey(month.key);
+function scopeProgress(job: JobProgressView) {
+  const progress = job.scope_progress;
+  if (!progress || !SCOPE_LABELS[progress.scope]) return null;
+  const label = SCOPE_LABELS[progress.scope];
   const activeDirection = directionLabel(job.current_direction);
-  const prefix = activeDirection ? `${activeDirection} · ` : '';
-
-  // current_month.processed/planned are source-wide month counters. They cover
-  // every selected direction/query type, so label them as the month total while
-  // separately showing the exact source direction currently being executed.
-  if (month.planned > 0) {
-    return `${prefix}${label} ${monthLabel} · tổng tháng ${month.processed}/${month.planned} hóa đơn`;
-  }
-
-  if (month.processed > 0) {
-    return `${prefix}${label} ${monthLabel} · tổng tháng đã xử lý ${month.processed} hóa đơn`;
-  }
-
-  return activeDirection
-    ? `${activeDirection} · Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}`
-    : `Đang xác định dữ liệu ${label.toLocaleLowerCase('vi')} tháng ${monthLabel}`;
+  const prefix = activeDirection ? `${label} - ${activeDirection}` : label;
+  return progress.total > 0
+    ? `${prefix} - ${progress.processed}/${progress.total} hóa đơn`
+    : `${prefix} - Đang xác định tổng số hóa đơn`;
 }
 
 /**
@@ -114,8 +96,11 @@ export function formatSourceJobProgress(job?: JobProgressView | null) {
   if (job.status === 'waiting_account') return 'Đang chờ tài khoản trước hoàn tất';
   if (job.status === 'cancelling') return 'Đang dừng tác vụ đồng bộ';
   if (job.status === 'cancelled') return 'Đã dừng';
-  if (job.status === 'completed') return 'Đã tải xong';
-  if (job.status === 'completed_with_warning') return 'Đã tải xong, có cảnh báo';
+  if (job.status === 'completed' || job.status === 'completed_with_warning') {
+    const total = job.progress_totals?.overview;
+    const suffix = total ? ` - ${total.total}/${total.total} hóa đơn` : '';
+    return `${job.status === 'completed' ? 'Đã tải xong' : 'Đã tải xong, có cảnh báo'}${suffix}`;
+  }
   if (job.status === 'failed') return job.error?.message || 'Job xử lý thất bại';
 
   const raw = String(job.message ?? '').trim();
@@ -135,8 +120,8 @@ export function formatSourceJobProgress(job?: JobProgressView | null) {
     );
   }
 
-  const month = monthProgress(job);
-  if (month) return month;
+  const aggregate = scopeProgress(job);
+  if (aggregate) return aggregate;
 
   if (job.stage && STAGE_MESSAGES[job.stage]) {
     const activeDirection = directionLabel(job.current_direction);

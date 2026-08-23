@@ -5,7 +5,7 @@ import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
 import { normalizeBatch } from './batch-scheduler';
 
-const POLL_MS = 3_000;
+const POLL_MS = 1_000;
 const MAX_RETRIES = 5;
 
 export type BatchPhase = 'queued' | 'starting' | 'stopping' | 'stopped';
@@ -254,6 +254,8 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         status.current_month?.processed,
         status.current_month?.planned,
         status.current_month?.percent,
+        status.scope_progress?.processed,
+        status.scope_progress?.total,
         status.artifact_progress?.processed,
         status.artifact_progress?.completed_xml,
         status.artifact_progress?.completed_html,

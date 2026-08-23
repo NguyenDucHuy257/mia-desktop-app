@@ -96,6 +96,27 @@ def _export_error(code: str) -> dict[str, object]:
     return {"count": 0, "files": [], "error_code": code}
 
 
+def _progress_totals_from_state(state):
+    """Cumulative discovered denominators; moving month never resets counters."""
+    progress_totals = {}
+    for name, module in (state.get("modules") or {}).items():
+        if not isinstance(module, dict):
+            continue
+        discovered = [
+            month for month in module.get("months") or ()
+            if isinstance(month, dict) and month.get("planned") is not None
+        ]
+        total = sum(max(0, int(month.get("planned") or 0)) for month in discovered)
+        processed = sum(
+            min(max(0, int(month.get("processed") or 0)), max(0, int(month.get("planned") or 0)))
+            for month in discovered
+        )
+        if module.get("status") == "completed":
+            processed = total
+        progress_totals[str(name)] = {"processed": processed, "total": total}
+    return progress_totals
+
+
 def cancel_stale_jobs_for_desktop_session(data_dir, logger=None) -> int:
     """Cancel pre-launch work without constructing or starting a crawler."""
     repository = create_local_job_repository(
@@ -322,6 +343,19 @@ class ProductionBackend(SourceBackend):
             job = normalized
         payload = SourceBackend.public_job(job)
         state = dict(getattr(job, "progress_state", None) or {})
+        progress_totals = _progress_totals_from_state(state)
+        payload["progress_totals"] = progress_totals
+        active_stage = str(payload.get("stage") or "")
+        if active_stage in progress_totals:
+            payload["scope_progress"] = {
+                "scope": active_stage,
+                **progress_totals[active_stage],
+            }
+        elif payload.get("status") in {"completed", "completed_with_warning"} and "overview" in progress_totals:
+            payload["scope_progress"] = {
+                "scope": "overview",
+                **progress_totals["overview"],
+            }
         # The source repository already persists stage_progress_percent from its
         # ProgressSnapshot. Expose that value unchanged so the renderer can give
         # detailed auth/finalize feedback without inventing progress.
@@ -367,6 +401,10 @@ class ProductionBackend(SourceBackend):
         # dependency cost. All paging is delegated to source JobResultReader.
         from mia_source_results import read_results
         return read_results(self, kind, query)
+
+    def result_facets(self, query):
+        from mia_source_results import read_result_facets
+        return read_result_facets(self, query)
 
     def artifact_keys_for_export(self, value):
         """Resolve the exact filtered Overview set through the source reader.

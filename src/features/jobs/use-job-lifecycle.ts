@@ -3,7 +3,7 @@ import type { CreateJobRequest } from '../../lib/api/contracts';
 import { backoffDelay, initialJobState, jobReducer, TERMINAL_JOB_STATUSES } from './job-state-machine';
 
 const MAX_RETRIES = 5;
-const POLL_MS = 3_000;
+const POLL_MS = 1_000;
 
 export function useJobLifecycle() {
   const [state, dispatch] = useReducer(jobReducer, initialJobState);

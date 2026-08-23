@@ -26,7 +26,6 @@ interface InvoiceRow {
   selected: boolean;
   progress: number;
   progressLabel: string;
-  monthProgress?: number;
   failureHint?: string;
   actionsReady?: boolean;
 }
@@ -37,7 +36,7 @@ const ACCOUNT_PAGE_SIZE = 20;
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
   { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT', failureHint: 'Vui lòng kiểm tra lại MST hoặc mật khẩu.' },
-  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Mua vào · Chi tiết 08/2026 · tổng tháng 45/120 hóa đơn', monthProgress: 37.5 },
+  { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Chi tiết - Mua vào - 45/120 hóa đơn' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
     taxCode: '0401122334',
     company: `Công ty CP Đầu tư ${letter}`,
@@ -82,23 +81,17 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
     );
   }
 
-  const hasMonthProgress = row.monthProgress !== undefined;
   const overallProgress = clampProgress(row.progress);
-  const monthProgress = clampProgress(row.monthProgress ?? 0);
 
   return (
-    <div className="progress-cell" data-status={row.status} data-has-month={hasMonthProgress}>
+    <div className="progress-cell" data-status={row.status}>
       <div className="progress-section progress-section--overall">
         <div className="progress-copy">
-          <span>{hasMonthProgress ? 'Tiến trình tổng' : row.progressLabel}</span>
+          <span>{row.progressLabel}</span>
           <span>{Math.round(overallProgress)}%</span>
         </div>
         <div className="progress-track progress-track--overall"><span style={{ width: `${overallProgress}%` }} /></div>
       </div>
-      {hasMonthProgress ? <div className="month-progress">
-        <div className="month-progress-copy">{row.progressLabel}</div>
-        <div className="month-progress-track"><span style={{ width: `${monthProgress}%` }} /></div>
-      </div> : null}
     </div>
   );
 }
@@ -256,7 +249,6 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     const item = batchItems[account.connection_id];
     const job = item?.status ?? item?.record;
     const runtimeStatus = job?.status;
-    const currentMonth = job?.current_month;
     const errorCode = job?.error?.code ?? item?.errorCode;
     const sourceError = job?.error?.message;
     const inlineError = item?.error;
@@ -298,9 +290,6 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
               : status === 'ready'
                 ? 'Chưa đồng bộ'
                 : formatSourceJobProgress(job);
-    const monthProgress = !phase && runtimeStatus === 'running' && currentMonth
-      ? Number(currentMonth.percent ?? 0)
-      : undefined;
     return {
       taxCode: account.username,
       company: account.company_name || '—',
@@ -308,7 +297,6 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       selected: selectedAccountIds.includes(account.connection_id),
       progress,
       progressLabel,
-      monthProgress,
       failureHint: status === 'failed'
         ? accountNeedsAuth && !errorCode
           ? 'Vui lòng nhập lại MST và mật khẩu.'

@@ -80,6 +80,8 @@ export interface JobStatusResponse {
     planned: number;
     percent: number;
   };
+  scope_progress?: { scope: string; processed: number; total: number } | null;
+  progress_totals?: Record<string, { processed: number; total: number }>;
   updated_at: string;
   error: null | { code: string; message: string; retryable: boolean };
 }
