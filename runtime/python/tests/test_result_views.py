@@ -18,7 +18,7 @@ from mia_source_results import _available_path
 
 
 class SourceJobIntentTests(unittest.TestCase):
-    def test_sync_mode_snapshots_baseline_and_forces_selected_range_query(self):
+    def test_supplement_snapshots_baseline_without_forcing_all_requested_months(self):
         backend = object.__new__(ProductionBackend)
         backend.repository = SimpleNamespace(desktop_job_metadata=None)
         backend.service = Mock()
@@ -43,9 +43,32 @@ class SourceJobIntentTests(unittest.TestCase):
                 },
             })
         body = backend.service.create_job.call_args.args[0]
-        self.assertTrue(body.force_refresh)
+        self.assertFalse(body.force_refresh)
+        self.assertFalse(body.refresh_latest_month)
         self.assertEqual(captured, {"sync_mode": "supplement", "baseline_invoice_count": 1245})
         self.assertIsNone(backend.repository.desktop_job_metadata)
+
+    def test_new_mode_force_refreshes_the_complete_requested_range(self):
+        backend = object.__new__(ProductionBackend)
+        backend.repository = SimpleNamespace(desktop_job_metadata=None)
+        backend.service = Mock()
+        backend.service.get_account_connection.return_value = SimpleNamespace(username="0100000000")
+        backend.service.create_job.return_value = SimpleNamespace(job_id="job-new")
+        with patch.object(backend, "_invoice_direction_metrics", return_value={"invoice_count": 99}), patch.object(
+            ProductionBackend, "public_job", return_value={"job_id": "job-new", "status": "queued"}
+        ):
+            backend.start({
+                "idempotency_key": "new-test",
+                "intent": {
+                    "connection_id": "conn_123456", "date_from": "2025-01-01", "date_to": "2025-08-31",
+                    "directions": ["sold"], "query_types": ["sco-query"],
+                    "scopes": ["overview"], "data_types": ["invoice"],
+                    "force_refresh": False, "refresh_latest_month": True, "sync_mode": "new",
+                },
+            })
+        body = backend.service.create_job.call_args.args[0]
+        self.assertTrue(body.force_refresh)
+        self.assertFalse(body.refresh_latest_month)
 
     def test_refresh_options_are_forwarded_to_source_create_job_body(self):
         backend = object.__new__(ProductionBackend)

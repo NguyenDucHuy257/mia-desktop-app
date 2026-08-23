@@ -1,10 +1,14 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
+from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+from app.worker_runtime.coverage_planner import CoveragePlanner
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
 
@@ -64,6 +68,100 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         )
         self.assertEqual(payload["sync_mode"], "supplement")
         self.assertTrue(payload["restart_coverage"])
+
+    @staticmethod
+    def _business_now(year=2026, month=8, day=23):
+        return datetime(year, month, day, 10, tzinfo=timezone(timedelta(hours=7)))
+
+    def _coverage_actions(self, *, mode, synced, directions=("purchase",), date_from="2026-01-01", date_to="2026-08-31", now=None):
+        now = now or self._business_now()
+        parameters = {
+            "date_from": date_from,
+            "date_to": date_to,
+            "directions": list(directions),
+            "query_types": ["sco-query"],
+            "force_refresh": mode == "new",
+            "refresh_latest_month": False,
+            "sync_mode": mode,
+        }
+        pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+        pipeline.clock = lambda: now
+
+        def checkpoint(_repository, **kwargs):
+            key = (kwargs["direction"], kwargs["from_date"][:7])
+            return {"checkpoint_status": "finalized", "expected_total": 1} if key in synced else None
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            InvoiceOverviewRepository, "get_overview_checkpoint", new=checkpoint
+        ), patch(
+            "app.services.invoice_overview_storage_service.InvoiceOverviewStorageService.verify_finalized_overview_range",
+            return_value=True,
+        ):
+            plan = CoveragePlanner(Path(directory)).plan(
+                company_tax_code="0100000000",
+                date_from=date.fromisoformat(date_from),
+                date_to=date.fromisoformat(date_to),
+                directions=list(directions),
+                query_types=["sco-query"],
+                business_now=now,
+                force_refresh=mode == "new",
+                force_slices=pipeline._latest_month_force_slices(parameters),
+            )
+        return {
+            (item.direction, item.from_date.strftime("%Y-%m")): item.classification
+            for item in plan.decisions
+        }
+
+    def test_new_force_refreshes_every_requested_month_even_when_finalized(self):
+        synced = {("purchase", f"2026-{month:02d}") for month in range(1, 9)}
+        actions = self._coverage_actions(mode="new", synced=synced)
+        self.assertEqual(len(actions), 8)
+        self.assertTrue(all(value == "realtime_refresh" for value in actions.values()))
+
+    def test_new_force_refreshes_one_finalized_historical_month(self):
+        actions = self._coverage_actions(
+            mode="new",
+            synced={("purchase", "2025-05")},
+            date_from="2025-05-01",
+            date_to="2025-05-31",
+        )
+        self.assertEqual(actions[("purchase", "2025-05")], "realtime_refresh")
+
+    def test_supplement_skips_finalized_history_but_rechecks_previous_and_current_month(self):
+        synced = {("purchase", f"2026-{month:02d}") for month in range(1, 9)}
+        actions = self._coverage_actions(mode="supplement", synced=synced)
+        refreshed = {month for (_direction, month), action in actions.items() if action != "stable_finalized_skip"}
+        self.assertEqual(refreshed, {"2026-07", "2026-08"})
+
+    def test_supplement_adds_missing_history_to_realtime_window(self):
+        synced = {
+            ("purchase", f"2026-{month:02d}")
+            for month in (1, 2, 4, 5, 6, 7, 8)
+        }
+        actions = self._coverage_actions(mode="supplement", synced=synced)
+        refreshed = {month for (_direction, month), action in actions.items() if action != "stable_finalized_skip"}
+        self.assertEqual(refreshed, {"2026-03", "2026-07", "2026-08"})
+
+    def test_supplement_coverage_is_direction_specific(self):
+        actions = self._coverage_actions(
+            mode="supplement",
+            synced={("purchase", "2025-05")},
+            directions=("purchase", "sold"),
+            date_from="2025-05-01",
+            date_to="2025-05-31",
+        )
+        self.assertEqual(actions[("purchase", "2025-05")], "stable_finalized_skip")
+        self.assertEqual(actions[("sold", "2025-05")], "missing")
+
+    def test_supplement_realtime_window_rolls_over_the_year_boundary(self):
+        actions = self._coverage_actions(
+            mode="supplement",
+            synced={("purchase", "2026-12"), ("purchase", "2027-01")},
+            date_from="2026-12-01",
+            date_to="2027-01-31",
+            now=self._business_now(2027, 1, 10),
+        )
+        self.assertEqual(set(actions.values()), {"realtime_refresh"})
 
     def test_source_detail_plan_is_materialized_once_and_reused_by_month(self):
         decisions = [

@@ -326,8 +326,8 @@ test('keeps exactly one purchase/sold direction and sends the selected sync mode
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   await page.getByRole('menuitem', { name: /Đồng bộ bổ sung/ }).click();
-  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[]; sync_mode?: string } }).capturedIntent);
-  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement' });
+  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[]; sync_mode?: string; force_refresh?: boolean; refresh_latest_month?: boolean } }).capturedIntent);
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: false });
 });
 
 test('active sync overrides coverage and refreshes committed invoice counts realtime', async ({ page }) => {

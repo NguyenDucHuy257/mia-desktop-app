@@ -199,6 +199,36 @@ class SyncStateTests(unittest.TestCase):
             "0100000000", "purchase", "query", "2025-05-01", "2025-05-31"
         ), 107)
 
+    def test_source_business_key_upsert_replaces_existing_invoice_values(self):
+        database = Path(self.temporary.name) / "force-refresh.sqlite3"
+        repository = InvoiceOverviewRepository(database)
+        common = dict(
+            company_tax_code="0100000000", direction="sold", query_type="sco-query",
+            invoice_category="invoice", raw_json_path="",
+        )
+        identity = {
+            "nbmst": "buyer-1", "khhdon": "AA/25E", "shdon": "42",
+            "khmshdon": "1", "nlap": "2025-05-10",
+        }
+        repository.upsert_items(
+            items=[{**identity, "_public_fields": {"tthai": "OLD", "tgtttbso": 100}}],
+            timestamp="2026-08-01T00:00:00+00:00", **common,
+        )
+        repository.upsert_items(
+            items=[{**identity, "_public_fields": {"tthai": "NEW", "tgtttbso": 125}}],
+            timestamp="2026-08-02T00:00:00+00:00", **common,
+        )
+
+        self.assertEqual(repository.count_overview_items(
+            "0100000000", "sold", "sco-query", "2025-05-01", "2025-05-31"
+        ), 1)
+        with closing(sqlite3.connect(database)) as connection:
+            values = dict(connection.execute(
+                """SELECT field_name, value_json FROM invoice_overview_attributes
+                   ORDER BY field_name"""
+            ).fetchall())
+        self.assertEqual(values, {"tgtttbso": "125", "tthai": '"NEW"'})
+
 
 if __name__ == "__main__":
     unittest.main()

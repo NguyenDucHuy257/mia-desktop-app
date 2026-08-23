@@ -121,6 +121,10 @@ describe('invoice result control presentation', () => {
     expect(page).not.toContain('setDirections');
     expect(page).toContain('Đồng bộ mới');
     expect(page).toContain('Đồng bộ bổ sung');
+    expect(page).toContain("force_refresh: syncMode === 'new'");
+    expect(page).toContain('refresh_latest_month: false');
+    expect(page).toContain('kể cả các tháng đã đồng bộ trước đó');
+    expect(page).toContain('tháng trước, tháng hiện tại');
     expect(page).toContain('Đã có trong hệ thống: {format(state.invoice_count)} hóa đơn');
     expect(page).toContain("phase === 'queued' || phase === 'starting') ? 'running' as const");
     expect(page).not.toContain('<span>Tải mới dữ liệu</span>');
