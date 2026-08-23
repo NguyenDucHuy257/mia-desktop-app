@@ -178,6 +178,26 @@ class LocalSequentialJobRepository:
             now=now,
         )
 
+    def merge_job_parameters(self, job_id: str, values: dict[str, object]):
+        """Durably add desktop worker metadata without changing source schema."""
+        if not values:
+            return self.delegate.get_job(job_id)
+        with closing(sqlite3.connect(self.delegate.database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            with connection:
+                row = connection.execute(
+                    "SELECT parameters_json FROM crawl_jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError(job_id)
+                parameters = json.loads(row[0])
+                parameters.update(values)
+                connection.execute(
+                    "UPDATE crawl_jobs SET parameters_json=? WHERE job_id=?",
+                    (json.dumps(parameters, ensure_ascii=False, sort_keys=True), job_id),
+                )
+        return self.delegate.get_job(job_id)
+
 
 def create_local_job_repository(*, sqlite_path: Path | str, **_ignored):
     return LocalSequentialJobRepository(sqlite_path)

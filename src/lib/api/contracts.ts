@@ -49,6 +49,8 @@ export interface InvoiceSyncState {
   invoice_count: number;
   baseline_invoice_count: number | null;
   added_invoice_count: number | null;
+  replaced_old_count?: number | null;
+  downloaded_new_count?: number | null;
   last_job_id: string | null;
   sync_mode: 'new' | 'supplement' | null;
 }

@@ -134,8 +134,10 @@ function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
 function InvoiceCountCell({ state }: { state?: InvoiceSyncState }) {
   const format = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
   const current = state?.invoice_count ?? 0;
-  const baseline = state?.baseline_invoice_count ?? current;
-  const added = state?.added_invoice_count ?? 0;
+  const replacement = state?.sync_mode === 'new' && state.replaced_old_count !== null
+    && state.replaced_old_count !== undefined;
+  const baseline = replacement ? state?.replaced_old_count ?? 0 : state?.baseline_invoice_count ?? current;
+  const added = replacement ? state?.downloaded_new_count ?? 0 : state?.added_invoice_count ?? 0;
   return <div className="invoice-count-cell">
     <strong className="invoice-count-current">{format(current)}</strong>
     <span className="invoice-count-added">(+{format(added)} mới)</span>
@@ -333,6 +335,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           sync_from: persistedSyncState?.sync_from ?? null, sync_until: persistedSyncState?.sync_until ?? null,
           invoice_count: persistedSyncState?.invoice_count ?? 0,
           baseline_invoice_count: persistedSyncState?.invoice_count ?? 0, added_invoice_count: 0,
+          replaced_old_count: null, downloaded_new_count: null,
           last_job_id: null, sync_mode: null,
         }
       : persistedSyncState;

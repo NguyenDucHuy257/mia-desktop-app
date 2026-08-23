@@ -156,7 +156,11 @@ class ProductionBackend(SourceBackend):
     def _invoice_direction_metrics(self, tax_code: str, direction: str, job=None):
         database = self.data_root / tax_code / "db" / "invoices.sqlite3"
         if not database.is_file():
-            return {"invoice_count": 0, "added_count": 0, "sync_from": None, "sync_until": None}
+            return {
+                "invoice_count": 0, "added_count": 0,
+                "replaced_old_count": None, "downloaded_new_count": None,
+                "sync_from": None, "sync_until": None,
+            }
         with closing(sqlite3.connect(database, timeout=5)) as connection:
             connection.execute("PRAGMA busy_timeout = 5000")
             count = int(connection.execute(
@@ -176,9 +180,30 @@ class ProductionBackend(SourceBackend):
             # metadata poll. Do not infer inserts from crawler processed/planned
             # progress: UPSERTed duplicates do not increase this delta.
             added = max(0, count - int(baseline)) if baseline is not None else 0
+            replaced = (
+                job.parameters.get("replaced_old_count") if job is not None else None
+            )
+            downloaded = None
+            if (
+                job is not None
+                and job.parameters.get("sync_mode") == "new"
+                and job.parameters.get("replacement_prepared")
+                and replaced is not None
+            ):
+                downloaded = int(connection.execute(
+                    """SELECT COUNT(*) FROM invoice_overview_items
+                       WHERE company_tax_code=? AND direction=?
+                         AND nlap_date BETWEEN ? AND ?""",
+                    (
+                        tax_code, direction, str(job.parameters.get("date_from")),
+                        str(job.parameters.get("date_to")),
+                    ),
+                ).fetchone()[0])
         return {
             "invoice_count": count,
             "added_count": added,
+            "replaced_old_count": int(replaced) if replaced is not None else None,
+            "downloaded_new_count": downloaded,
             "sync_from": coverage[0] if coverage else None,
             "sync_until": coverage[1] if coverage else None,
         }
@@ -206,7 +231,10 @@ class ProductionBackend(SourceBackend):
     def start(self, value: dict[str, object]) -> dict[str, object]:
         intent = dict(value.get("intent") or {})
         mode = intent.get("sync_mode")
-        direction = str((intent.get("directions") or [""])[0])
+        directions = list(intent.get("directions") or ())
+        if mode in {"new", "supplement"} and len(directions) != 1:
+            raise ValueError("sync_mode_requires_one_direction")
+        direction = str((directions or [""])[0])
         if mode in {"new", "supplement"}:
             # New is a force refresh of every requested month. Supplement uses
             # finalized Overview coverage and the desktop pipeline's current +
@@ -299,6 +327,8 @@ class ProductionBackend(SourceBackend):
                 "invoice_count": metrics["invoice_count"],
                 "baseline_invoice_count": int(baseline) if baseline is not None else None,
                 "added_invoice_count": metrics["added_count"] if baseline is not None else None,
+                "replaced_old_count": metrics["replaced_old_count"],
+                "downloaded_new_count": metrics["downloaded_new_count"],
                 "last_job_id": job.job_id if job else None,
                 "sync_mode": job.parameters.get("sync_mode") if job else None,
             })
