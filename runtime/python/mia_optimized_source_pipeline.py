@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import closing
+from datetime import date, timedelta
 from pathlib import Path
 import sys
 
@@ -45,6 +46,39 @@ def _detail_key(company_tax_code, direction, query_type, nbmst, khhdon, shdon, k
 
 class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
     """One-worker source pipeline with redundant local verification/scans removed."""
+
+    def _latest_month_force_slices(self, parameters):
+        """Force only the two mutable calendar months for supplement jobs.
+
+        The source planner remains authoritative for missing/finalized coverage.
+        This desktop policy merely prevents a finalized previous/current month
+        from being skipped; it does not force an arbitrary latest requested
+        month when the selected range is entirely historical.
+        """
+        if parameters.get("sync_mode") != "supplement":
+            return super()._latest_month_force_slices(parameters)
+
+        request_from = date.fromisoformat(parameters["date_from"])
+        request_to = date.fromisoformat(parameters["date_to"])
+        current_begin = self.clock().date().replace(day=1)
+        previous_end = current_begin - timedelta(days=1)
+        previous_begin = previous_end.replace(day=1)
+        next_month = (current_begin.replace(day=28) + timedelta(days=4)).replace(day=1)
+        current_end = next_month - timedelta(days=1)
+
+        slices = set()
+        for month_begin, month_end in (
+            (previous_begin, previous_end),
+            (current_begin, current_end),
+        ):
+            begin = max(request_from, month_begin)
+            end = min(request_to, month_end)
+            if begin > end:
+                continue
+            for direction in parameters["directions"]:
+                for query_type in parameters["query_types"]:
+                    slices.add((direction, query_type, begin, end))
+        return frozenset(slices)
 
     def run(self, job, worker_id: str, lease_token: str):
         # The pipeline object is reused by the single local supervisor, so all

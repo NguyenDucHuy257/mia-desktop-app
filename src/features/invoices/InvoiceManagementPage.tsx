@@ -280,8 +280,8 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       query_types: ['query', 'sco-query'],
       scopes,
       data_types: ['invoice'],
-      force_refresh: true,
-      refresh_latest_month: true,
+      force_refresh: syncMode === 'new',
+      refresh_latest_month: false,
       sync_mode: syncMode,
     })));
     setMenu(null);
@@ -410,8 +410,8 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
               <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
             </button>
             {menu === 'sync' ? <div className="sync-mode-menu" role="menu" aria-label="Chọn cách đồng bộ">
-              <button type="button" role="menuitem" onClick={() => startJob('new')}><SyncNewIcon /><span><strong>Đồng bộ mới</strong><small>Lấy toàn bộ dữ liệu từ hệ thống hóa đơn điện tử của Thuế về MIA WT. Dùng cho khoảng thời gian chưa từng đồng bộ.</small></span></button>
-              <button type="button" role="menuitem" onClick={() => startJob('supplement')}><SyncSupplementIcon /><span><strong>Đồng bộ bổ sung</strong><small>Kiểm tra lại dữ liệu trên hệ thống Thuế, so sánh với dữ liệu đã có và chỉ bổ sung hóa đơn mới.</small></span></button>
+              <button type="button" role="menuitem" onClick={() => startJob('new')}><SyncNewIcon /><span><strong>Đồng bộ mới</strong><small>Tải lại toàn bộ dữ liệu trong khoảng thời gian đã chọn, kể cả các tháng đã đồng bộ trước đó.</small></span></button>
+              <button type="button" role="menuitem" onClick={() => startJob('supplement')}><SyncSupplementIcon /><span><strong>Đồng bộ bổ sung</strong><small>Chỉ tải các tháng chưa đồng bộ và kiểm tra lại tháng trước, tháng hiện tại để cập nhật dữ liệu mới.</small></span></button>
             </div> : null}
           </div>
           <StorageFolderPicker

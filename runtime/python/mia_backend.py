@@ -187,9 +187,11 @@ class ProductionBackend(SourceBackend):
         mode = intent.get("sync_mode")
         direction = str((intent.get("directions") or [""])[0])
         if mode in {"new", "supplement"}:
-            # Both choices must query the selected range again. Supplement is
-            # made non-destructive by the desktop pipeline/handler adapter.
-            intent["force_refresh"] = True
+            # New is a force refresh of every requested month. Supplement uses
+            # finalized Overview coverage and the desktop pipeline's current +
+            # previous month realtime window to select only incremental work.
+            intent["force_refresh"] = mode == "new"
+            intent["refresh_latest_month"] = False
             connection = self.service.get_account_connection(
                 str(intent["connection_id"]), owner_id=source_backend_module.OWNER_ID
             )
@@ -462,7 +464,8 @@ class ProductionBackend(SourceBackend):
         payload = SourceBackend.public_job(job)
         if job.parameters.get("sync_mode") in {"new", "supplement"}:
             payload["intent"]["sync_mode"] = job.parameters["sync_mode"]
-            payload["intent"]["force_refresh"] = True
+            payload["intent"]["force_refresh"] = job.parameters["sync_mode"] == "new"
+            payload["intent"]["refresh_latest_month"] = False
         state = dict(getattr(job, "progress_state", None) or {})
         progress_totals = _progress_totals_from_state(state)
         payload["progress_totals"] = progress_totals
