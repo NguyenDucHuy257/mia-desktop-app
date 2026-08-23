@@ -68,8 +68,28 @@ describe('invoice result control presentation', () => {
     expect(popover).toContain("event.key === 'Escape'");
     expect(popover).not.toContain('â–¼');
     expect(styles).toContain('.result-column-filter-menu');
-    expect(styles).toContain('border-radius: 10px');
+    expect(styles).toContain('border-radius: var(--mia-radius-ui)');
+    expect(styles).toContain('background: #fff');
+    expect(styles).toContain('border: 1px solid #d0d5dd');
     expect(styles).toContain('.results-exclude-confirm');
+  });
+
+  it('keeps the result schema mounted for empty filtered pages', async () => {
+    const page = await source('src/features/results/ResultsPage.tsx');
+    expect(page).toContain("{columns.length ? <div className=\"results-table");
+    expect(page).toContain('className="results-table-empty"');
+    expect(page).toContain('Không có dữ liệu phù hợp với bộ lọc hiện tại.');
+    expect(page).not.toContain('{items.length && columns.length ?');
+  });
+
+  it('uses one six-pixel radius token for non-circular interface surfaces', async () => {
+    const tokens = await source('src/styles/tokens.css');
+    expect(tokens).toContain('--mia-radius-ui: 6px');
+    expect(tokens).toContain('--mia-radius-sm: var(--mia-radius-ui)');
+    const styleNames = await import('node:fs/promises').then(({ readdir }) => readdir(path.join(root, 'src/styles')));
+    const styles = await Promise.all(styleNames.filter(name => name.endsWith('.css')).map(name => source(`src/styles/${name}`)));
+    const declarations = styles.flatMap(css => [...css.matchAll(/border-radius:\s*([^;]+);/g)].map(match => match[1].trim()));
+    expect(declarations.every(value => value.includes('var(--mia-radius-ui)') || ['999px', '50%', 'inherit'].includes(value))).toBe(true);
   });
 
   it('uses real account pages, a stable calendar control, and the HDDT back copy', async () => {

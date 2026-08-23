@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('column filters are nested, interactive, portalled and use the Excel-like workflow', async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
   await page.addInitScript(() => {
     const account = { connection_id: 'conn_filter', username: '0100000000', company_name: 'Công ty Filter', status: 'connected', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
     const record = { job_id: 'job_filter', connection_id: account.connection_id, intent: {}, idempotency_key: 'filter', created_at: 'now', updated_at: 'now', status: 'running' };
@@ -15,11 +15,13 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
     ];
     const result = async (query: Record<string, unknown>) => {
       calls.push(structuredClone(query));
+      const filters = (query.column_filters ?? {}) as Record<string, unknown>;
+      const visibleRows = filters.tgtttbso ? [] : rows;
       return {
-        items: rows, columns, column_labels: labels,
+        items: visibleRows, columns, column_labels: labels,
         column_types: { stt: 'number', tgtttbso: 'number', tsuat: 'percent' },
-        total_count: 2,
-        aggregate: { matching_row_count: 2, row_count: 2, invoice_count: 2, totals: { tgtttbso: 3794728 } },
+        total_count: visibleRows.length,
+        aggregate: { matching_row_count: visibleRows.length, row_count: visibleRows.length, invoice_count: visibleRows.length, totals: { tgtttbso: visibleRows.length ? 3794728 : 0 } },
         pagination: { limit: 50, has_more: false, next_cursor: null },
       };
     };
@@ -62,7 +64,9 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   const moneyMenu = page.locator('.result-column-filter-menu[data-column="tgtttbso"]');
   await expect(moneyMenu).toBeVisible();
   expect(await moneyMenu.evaluate((node) => node.parentElement === document.body)).toBe(true);
-  await expect(moneyMenu).toHaveCSS('border-radius', '10px');
+  await expect(moneyMenu).toHaveCSS('border-radius', '6px');
+  await expect(moneyMenu).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(moneyMenu).toHaveCSS('border-top-color', 'rgb(208, 213, 221)');
   await expect(moneyMenu).toContainText('Sắp xếp tăng dần');
   await expect(moneyMenu.locator('.result-filter-values')).toContainText('1.924.546');
   await expect(moneyMenu.locator('.result-filter-values')).not.toContainText('7000000002');
@@ -102,8 +106,25 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(viewport.width);
   await page.screenshot({ path: 'test-results/results-filter-ui.png', fullPage: true });
+  await moneyMenu.getByRole('button', { name: 'Sắp xếp tăng dần' }).click();
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ sort: { column: 'tgtttbso', direction: 'asc' } });
+  await moneyButton.click();
   await moneyMenu.getByRole('button', { name: 'Sắp xếp giảm dần' }).click();
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ sort: { column: 'tgtttbso', direction: 'desc' } });
   await expect(moneyButton).toHaveAttribute('data-active', 'true');
+
+  await moneyButton.click();
+  await moneyMenu.getByLabel('Điều kiện Tổng tiền thanh toán').selectOption('gt');
+  await moneyMenu.getByLabel('Giá trị lọc Tổng tiền thanh toán').fill('999999999');
+  await moneyMenu.getByRole('button', { name: 'Áp dụng' }).click();
+  await expect(page.locator('.results-table-empty')).toHaveText('Không có dữ liệu phù hợp với bộ lọc hiện tại.');
+  await expect(page.locator('.results-header-slot')).toHaveCount(5);
+  await expect(moneyButton).toBeVisible();
+  await page.screenshot({ path: 'test-results/results-filter-empty-header.png', fullPage: true });
+  await moneyButton.click();
+  await expect(moneyMenu).toBeVisible();
+  await moneyMenu.getByRole('button', { name: 'Xóa bộ lọc' }).click();
+  await expect(page.locator('.results-row:not(.results-row--header):not(.results-row--total)')).toHaveCount(2);
 
   await page.getByLabel('Tìm kiếm kết quả').fill('Alpha toàn cục');
   await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ search: 'Alpha toàn cục' });
@@ -113,6 +134,6 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   await page.getByRole('button', { name: /Loại khỏi tải xuống/ }).click();
   const confirm = page.locator('.results-exclude-confirm');
   await expect(confirm).toBeVisible();
-  await expect(confirm).toHaveCSS('border-radius', '10px');
+  await expect(confirm).toHaveCSS('border-radius', '6px');
   await expect(confirm).toContainText('Loại 1 hóa đơn khỏi file tải xuống?');
 });

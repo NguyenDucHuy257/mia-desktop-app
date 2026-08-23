@@ -10,6 +10,7 @@ from mia_source_results import (
     _EXCLUSION_CACHE,
     _RESULT_ANALYSIS_CACHE,
     _RESULT_COUNT_CACHE,
+    _as_decimal,
 )
 
 
@@ -161,17 +162,61 @@ class ResultFilteringTests(unittest.TestCase):
         self.assertIsInstance(result["aggregate"]["totals"]["tgtcthue"], int)
 
     def test_explicit_sort_uses_all_matching_rows_and_keeps_cursor_pages(self):
-        first = self.backend.results("overview", self.query(
+        descending = self.backend.results("overview", self.query(
             limit=10, sort={"column": "shdon", "direction": "desc"}
         ))
-        self.assertEqual(first["items"][0]["fields"]["shdon"], "9")
-        self.assertTrue(first["pagination"]["has_more"])
+        self.assertEqual(descending["items"][0]["fields"]["shdon"], "60")
+        self.assertTrue(descending["pagination"]["has_more"])
         second = self.backend.results("overview", self.query(
-            limit=10, cursor=first["pagination"]["next_cursor"],
+            limit=10, cursor=descending["pagination"]["next_cursor"],
             sort={"column": "shdon", "direction": "desc"},
         ))
         self.assertEqual(len(second["items"]), 10)
-        self.assertNotEqual(first["items"][0]["row_id"], second["items"][0]["row_id"])
+        self.assertNotEqual(descending["items"][0]["row_id"], second["items"][0]["row_id"])
+
+        ascending = self.backend.results("overview", self.query(
+            limit=10, sort={"column": "shdon", "direction": "asc"}
+        ))
+        self.assertEqual(ascending["items"][0]["fields"]["shdon"], "1")
+        by_name = self.backend.results("overview", self.query(
+            limit=10, sort={"column": "nbten", "direction": "asc"}
+        ))
+        self.assertEqual(by_name["items"][0]["fields"]["nbten"], "Dịch vụ Alpha")
+        descending_again = self.backend.results("overview", self.query(
+            limit=10, sort={"column": "shdon", "direction": "desc"}
+        ))
+        self.assertEqual(descending_again["items"][0]["fields"]["shdon"], "60")
+
+    def test_numeric_sort_parses_grouping_currency_and_keeps_invalid_values_last(self):
+        values = ["VND 1.234,50", "$9,876.25", " 900 ", None, "", "không hợp lệ"]
+        for row, value in zip(FakeResultReader.rows, values):
+            row["tgtcthue"] = value
+        invoice_filter = {"shdon": {"values": [str(value) for value in range(1, 7)]}}
+        descending = self.backend.results("overview", self.query(
+            limit=6, column_filters=invoice_filter,
+            sort={"column": "tgtcthue", "direction": "desc"},
+        ))
+        self.assertEqual(
+            [item["fields"]["tgtcthue"] for item in descending["items"][:3]],
+            ["$9,876.25", "VND 1.234,50", " 900 "],
+        )
+        self.assertCountEqual(
+            [item["fields"]["tgtcthue"] for item in descending["items"][3:]],
+            [None, "", "không hợp lệ"],
+        )
+        ascending = self.backend.results("overview", self.query(
+            limit=6, column_filters=invoice_filter,
+            sort={"column": "tgtcthue", "direction": "asc"},
+        ))
+        self.assertEqual(
+            [item["fields"]["tgtcthue"] for item in ascending["items"][:3]],
+            [" 900 ", "VND 1.234,50", "$9,876.25"],
+        )
+        self.assertCountEqual(
+            [item["fields"]["tgtcthue"] for item in ascending["items"][3:]],
+            [None, "", "không hợp lệ"],
+        )
+        self.assertEqual(_as_decimal("(EUR 1.234,50)"), -_as_decimal("1234.50"))
 
 
 class CumulativeProgressTests(unittest.TestCase):
