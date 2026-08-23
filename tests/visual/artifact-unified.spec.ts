@@ -50,9 +50,11 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.locator('.artifact-quantity')).toContainText('XML 4/12');
   await expect(page.locator('.artifact-quantity')).toContainText('HTML 3/12');
   await expect(page.locator('.artifact-quantity')).toContainText('PDF 2/12');
-  await expect(page.getByLabel('Định dạng tải xuống').locator('label').filter({ hasText: 'XML' })).toHaveAttribute('data-active', 'true');
-  await expect(page.getByLabel('Định dạng tải xuống').locator('label').filter({ hasText: 'HTML' })).toHaveAttribute('data-active', 'true');
-  await expect(page.getByLabel('Định dạng tải xuống').locator('label').filter({ hasText: 'PDF' })).toHaveAttribute('data-active', 'false');
+  await page.getByRole('button', { name: 'XML + HTML' }).click();
+  await expect(page.getByLabel('Định dạng tải xuống').getByLabel('XML')).toBeChecked();
+  await expect(page.getByLabel('Định dạng tải xuống').getByLabel('HTML')).toBeChecked();
+  await expect(page.getByLabel('Định dạng tải xuống').getByLabel('PDF')).not.toBeChecked();
+  await page.keyboard.press('Escape');
   await page.evaluate(() => document.fonts.ready);
   await expect(page).toHaveScreenshot('unified-artifact-account-1500x1024.png', {
     animations: 'disabled', maxDiffPixelRatio: 0.02, threshold: 0.25,
@@ -64,10 +66,10 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   const calls = await page.evaluate(() => (window as typeof window & { artifactCalls: { snapshots: unknown[]; starts: Array<Record<string, unknown>> } }).artifactCalls);
   expect(calls.snapshots.length).toBeGreaterThanOrEqual(1);
   expect(calls.starts).toHaveLength(1);
-  expect(calls.starts[0]).toMatchObject({ connection_ids: ['conn_download'], directions: ['purchase', 'sold'], kinds: ['xml', 'html'], pdf_concurrency: 7 });
+  expect(calls.starts[0]).toMatchObject({ connection_ids: ['conn_download'], directions: ['purchase'], kinds: ['xml', 'html'], pdf_concurrency: 7 });
 });
 
-test('directions allow an empty selection and validate only when downloading', async ({ page }) => {
+test('direction selector always keeps exactly one direction', async ({ page }) => {
   await page.addInitScript(({ accountValue }) => {
     Object.defineProperty(window, 'miaRuntime', { value: {
       accountConnections: { list: async () => [accountValue] },
@@ -81,16 +83,15 @@ test('directions allow an empty selection and validate only when downloading', a
   }, { accountValue: account });
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
-  const accountButton = page.locator('.artifact-account-body .selection-button').first();
-  if (await accountButton.locator('.selection-box').getAttribute('data-checked') !== 'true') await accountButton.click();
+  await page.getByRole('button', { name: 'Mua vào' }).click();
   const directions = page.getByLabel('Loại hóa đơn');
-  await directions.getByText('Mua vào').click();
-  await directions.getByText('Bán ra').click();
-  await expect(directions.locator('input:checked')).toHaveCount(0);
-  await expect(page.getByRole('alertdialog')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Tải xuống', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('Vui lòng chọn ít nhất Mua vào hoặc Bán ra.');
+  await expect(directions.getByLabel('Mua vào')).toBeChecked();
+  await expect(directions.getByLabel('Bán ra')).not.toBeChecked();
+  await directions.getByText('Bán ra', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Bán ra' })).toBeVisible();
+  await page.getByRole('button', { name: 'Bán ra' }).click();
+  await expect(page.getByLabel('Loại hóa đơn').getByLabel('Mua vào')).not.toBeChecked();
+  await expect(page.getByLabel('Loại hóa đơn').getByLabel('Bán ra')).toBeChecked();
 });
 
 test('missing local coverage blocks downloads without starting an invoice sync job', async ({ page }) => {
@@ -140,6 +141,7 @@ test('PDF can be selected alone and per-format cancellation stays independent', 
 
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  await page.getByRole('button', { name: 'XML + HTML' }).click();
   const formats = page.getByLabel('Định dạng tải xuống');
   await formats.getByText('XML').click();
   await formats.getByText('HTML').click();
@@ -176,6 +178,102 @@ test('artifact date range and account selection transfer back to invoice managem
   await expect(page.getByLabel('Từ ngày đồng bộ nhập tay')).toHaveValue('01/08/2026');
   await expect(page.getByLabel('Đến ngày đồng bộ nhập tay')).toHaveValue('23/08/2026');
   await expect(page.getByRole('button', { name: 'Chọn 0100000000' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
+});
+
+test('latest direction coverage wins and remains deterministic across tab remounts', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    const requests: string[] = [];
+    Object.defineProperty(window, 'coverageDirections', { value: requests });
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        snapshot: async (request: { directions: string[] }) => {
+          const direction = request.directions[0];
+          requests.push(direction);
+          await new Promise((resolve) => window.setTimeout(resolve, direction === 'purchase' ? 120 : 5));
+          return { ...request, accounts: [{
+            connection_id: accountValue.connection_id,
+            ready: direction === 'purchase',
+            missing_ranges: direction === 'purchase' ? [] : [{ date_from: '2026-04-01', date_to: '2026-05-31' }],
+            total: direction === 'purchase' ? 40 : 20,
+            cached: { xml: direction === 'purchase' ? 40 : 10, html: 0, pdf: 0 },
+          }] };
+        },
+        startBatch: async () => ({ task_id: 'unused', status: 'running' }), batchStatus: async () => ({}), cancelBatch: async () => ({ cancelled: true }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  await page.getByRole('button', { name: 'Mua vào' }).click();
+  await page.getByLabel('Loại hóa đơn').getByText('Bán ra', { exact: true }).click();
+  await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/05/2026');
+  await page.waitForTimeout(180);
+  await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/05/2026');
+  await expect(page.locator('.artifact-quantity')).toContainText('XML 10/20');
+
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).click();
+    await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Bán ra' })).toBeVisible();
+    await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/05/2026');
+  }
+
+  await page.getByRole('button', { name: 'Bán ra' }).click();
+  await page.getByLabel('Loại hóa đơn').getByText('Mua vào', { exact: true }).click();
+  await expect(page.locator('.artifact-account-status')).toHaveText('Sẵn sàng tải');
+  await expect(page.locator('.artifact-quantity')).toContainText('XML 40/40');
+  const directions = await page.evaluate(() => (window as typeof window & { coverageDirections: string[] }).coverageDirections);
+  expect(directions).toContain('purchase');
+  expect(directions).toContain('sold');
+  expect(directions.every((direction) => direction === 'purchase' || direction === 'sold')).toBe(true);
+});
+
+test('active source polling refreshes persisted coverage after every finalized month', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    let finalizedThrough = 1;
+    const record = {
+      job_id: 'source-monthly', connection_id: accountValue.connection_id,
+      intent: {}, idempotency_key: 'monthly', created_at: 'now', updated_at: 'now', status: 'running',
+    };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: {
+        resumeAll: async () => [record], latestAll: async () => [record],
+        status: async () => {
+          if (finalizedThrough === 1) await new Promise((resolve) => window.setTimeout(resolve, 1_500));
+          finalizedThrough = Math.min(5, finalizedThrough + 1);
+          return { job_id: record.job_id, status: finalizedThrough === 5 ? 'completed' : 'running', stage: 'overview', overall_percent: finalizedThrough * 20, current_month: { key: `2026-${String(finalizedThrough).padStart(2, '0')}`, processed: 1, planned: 1, percent: 100 }, updated_at: 'now', error: null };
+        },
+        summary: async () => ({}), start: async () => ({}), cancel: async () => ({}), clear: async () => undefined,
+      },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        snapshot: async (request: unknown) => {
+          const nextMonth = finalizedThrough + 1;
+          return { ...(request as object), accounts: [{
+            connection_id: accountValue.connection_id,
+            ready: finalizedThrough >= 5,
+            missing_ranges: finalizedThrough >= 5 ? [] : [{ date_from: `2026-${String(nextMonth).padStart(2, '0')}-01`, date_to: '2026-05-31' }],
+            total: 10, cached: { xml: 0, html: 0, pdf: 0 },
+          }] };
+        },
+        startBatch: async () => ({ task_id: 'unused', status: 'running' }), batchStatus: async () => ({}), cancelBatch: async () => ({ cancelled: true }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  const status = page.locator('.artifact-account-status');
+  await expect(status).toContainText('01/02/2026 - 31/05/2026');
+  await expect(status).toContainText('01/03/2026 - 31/05/2026');
+  await expect(status).toContainText('01/04/2026 - 31/05/2026', { timeout: 4_500 });
+  await expect(status).toContainText('01/05/2026 - 31/05/2026', { timeout: 4_500 });
+  await expect(status).toHaveText('Sẵn sàng tải', { timeout: 4_500 });
 });
 
 for (const width of [1024, 1280, 1500, 1600]) {
