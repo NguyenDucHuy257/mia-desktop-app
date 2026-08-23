@@ -86,4 +86,51 @@ async function readSanitizedLogs(userDataDirectory) {
   return entries.slice(-500).map((item) => item.line);
 }
 
-module.exports = { DEFAULTS, DEFAULT_EXPORT_FOLDER, LOCAL_CONCURRENCY, readPreferences, readSanitizedLogs, validatePreferences, writePreferences };
+function parseLogEntry(line, index) {
+  const match = line.match(/^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(INFO|WARN|WARNING|ERROR)\s+([^\s]+)\s*(.*)$/i);
+  if (!match) {
+    return { id: `legacy-${index}`, timestamp: '', level: 'info', source: 'system', event: 'legacy_log', details: line };
+  }
+  const [, source, timestamp, rawLevel, event, rawDetails] = match;
+  const level = rawLevel.toLowerCase() === 'warning' ? 'warn' : rawLevel.toLowerCase();
+  let details = rawDetails;
+  try {
+    const value = JSON.parse(rawDetails);
+    details = Object.keys(value).length ? JSON.stringify(value, null, 2) : '';
+  } catch {
+    // Runtime/crawler logs are not guaranteed to use the renderer JSON format.
+  }
+  return {
+    id: `${timestamp}-${source}-${event}-${index}`,
+    timestamp,
+    level,
+    source,
+    event,
+    details: sanitizeLogLine(details),
+  };
+}
+
+async function readSanitizedLogEntries(userDataDirectory) {
+  const lines = await readSanitizedLogs(userDataDirectory);
+  return lines.map(parseLogEntry).reverse();
+}
+
+async function clearDiagnosticLogs(userDataDirectory) {
+  const files = [
+    path.join(userDataDirectory, 'logs', 'electron.log'),
+    path.join(userDataDirectory, 'logs', 'renderer.log'),
+    path.join(userDataDirectory, 'offline-runtime', 'logs', 'runtime.log'),
+    path.join(userDataDirectory, 'offline-runtime', 'logs', 'crawler.log'),
+  ];
+  await Promise.all(files.flatMap((filename) => [filename, `${filename}.1`, `${filename}.2`]).map(async (filename) => {
+    try { await fs.writeFile(filename, '', { encoding: 'utf8', mode: 0o600 }); }
+    catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  }));
+  return true;
+}
+
+module.exports = {
+  DEFAULTS, DEFAULT_EXPORT_FOLDER, LOCAL_CONCURRENCY,
+  clearDiagnosticLogs, readPreferences, readSanitizedLogEntries, readSanitizedLogs,
+  validatePreferences, writePreferences,
+};

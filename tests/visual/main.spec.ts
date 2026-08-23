@@ -193,7 +193,7 @@ test('verified runtime account immediately shows portal company information', as
 test('invoice scope menu follows Figma node 4:654 and closes outside', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole('button', { name: 'Chi tiết' }).click();
+  await page.getByRole('button', { name: 'Tổng quan' }).click();
   await expect(page.locator('[data-node-id="4:654"]')).toHaveScreenshot('figma-declaration-type-4-654.png', {
     maxDiffPixelRatio: 0.12, threshold: 0.25,
   });
@@ -255,8 +255,12 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   await expect(page.getByLabel('Loại giao dịch').getByLabel('Bán ra')).not.toBeChecked();
   await page.getByLabel('Loại giao dịch').getByText('Bán ra', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Bán ra' })).toBeVisible();
-  await page.getByRole('button', { name: 'Chi tiết' }).click();
+  await expect(page.getByRole('button', { name: 'Tổng quan' })).toBeVisible();
+  await page.getByRole('button', { name: 'Tổng quan' }).click();
+  await expect(page.locator('[data-node-id="4:654"]').getByLabel('Tổng quan')).toBeChecked();
+  await expect(page.locator('[data-node-id="4:654"]').getByLabel('Chi tiết')).not.toBeChecked();
   await page.locator('[data-node-id="4:654"]').getByText('Tổng quan', { exact: true }).click();
+  await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
   await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
   await page.getByLabel('Từ ngày đồng bộ nhập tay').fill('01/01/2026');
   await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('31/01/2026');
@@ -422,7 +426,7 @@ test('settings persist scheduler limits and logs are filtered after main-process
   await page.getByRole('button', { name: 'Nhật ký' }).click();
   await expect(page.locator('.utility-log-list')).toContainText('storage_initialized');
   await page.getByLabel('Tìm kiếm Nhật ký').fill('retry');
-  await expect(page.locator('.utility-log-list li')).toHaveCount(1);
+  await expect(page.locator('.utility-log-row')).toHaveCount(1);
   await expect(page.locator('.utility-log-list')).toContainText('retry_scheduled');
 });
 

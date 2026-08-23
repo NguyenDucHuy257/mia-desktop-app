@@ -124,7 +124,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
 }) {
   const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | null>(null);
-  const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
+  const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview']);
   const [direction, setDirection] = useState<InvoiceDirection>(initialDirection);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -346,7 +346,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
             </div> : null}
           </div>
           <div className="select-wrap">
-            <button className="compact-select compact-select--detail" type="button" aria-expanded={menu === 'scope'} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}>Chi tiết <i className="chevron" /></button>
+            <button className="compact-select compact-select--detail" type="button" aria-expanded={menu === 'scope'} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}>{scopes.length === 2 ? 'Tổng quan + Chi tiết' : scopes[0] === 'detail' ? 'Chi tiết' : 'Tổng quan'} <i className="chevron" /></button>
             {menu === 'scope' ? <div className="figma-option-menu figma-scope-menu" data-node-id="4:654">
               <OptionCheck checked={scopes.includes('overview')} label="Tổng quan" onChange={() => toggleScope('overview')} />
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />

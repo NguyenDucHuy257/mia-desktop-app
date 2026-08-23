@@ -5,7 +5,10 @@ import { diagnosticLog } from '../../lib/diagnostic-logger';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
 import { normalizeBatch } from './batch-scheduler';
 
-const POLL_MS = 3_000;
+// Keep progress and persisted day-range coverage responsive without adding a
+// second polling loop. The runtime status request is lightweight; XML/HTML/PDF
+// reloads its SQLite checkpoint snapshot from this same cadence.
+const POLL_MS = 1_000;
 const MAX_RETRIES = 5;
 
 export type BatchPhase = 'queued' | 'starting' | 'stopping' | 'stopped';

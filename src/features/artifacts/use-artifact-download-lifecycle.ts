@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ArtifactBatchRequest, ArtifactBatchStatus, InvoiceArtifactKind } from '../../lib/runtime-bridge';
+import { diagnosticLog } from '../../lib/diagnostic-logger';
 
 const TERMINAL = new Set(['completed', 'failed', 'stopped']);
 
@@ -14,6 +15,9 @@ export function useArtifactDownloadLifecycle() {
     if (token !== generation.current) return;
     setStatus(next);
     if (TERMINAL.has(next.status)) {
+      diagnosticLog(next.status === 'failed' ? 'artifact_download_failed' : 'artifact_download_completed', {
+        task_id: id, status: next.status, warning_count: next.warning_count, error: next.error,
+      }, next.status === 'failed' ? 'error' : 'info');
       setTaskId(null);
       setMessage(next.status === 'completed'
         ? `Đã hoàn thành tải XML/HTML/PDF${next.warning_count ? `; ${next.warning_count} hóa đơn không có gói dữ liệu đã được ghi nhật ký.` : '.'}`
@@ -35,11 +39,16 @@ export function useArtifactDownloadLifecycle() {
     setMessage(null);
     setStatus(null);
     try {
+      diagnosticLog('artifact_download_requested', {
+        account_count: request.connection_ids.length, directions: request.directions,
+        date_from: request.date_from, date_to: request.date_to, kinds: request.kinds,
+      });
       const started = await window.miaRuntime!.artifacts.startBatch(request);
       if (token !== generation.current) return false;
       setTaskId(started.task_id);
       return true;
-    } catch {
+    } catch (error) {
+      diagnosticLog('artifact_download_failed', { phase: 'start', code: (error as { code?: string })?.code }, 'error');
       if (token === generation.current) setMessage('Không thể bắt đầu tải XML/HTML/PDF.');
       return false;
     }

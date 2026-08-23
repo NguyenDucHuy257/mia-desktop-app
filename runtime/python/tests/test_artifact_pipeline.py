@@ -178,6 +178,34 @@ class ArtifactPipelineTests(unittest.TestCase):
             [(date(2026, 2, 1), date(2026, 2, 28))],
         )
 
+    def test_day_granular_checkpoint_reports_only_the_remaining_fifteen_days(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            rows = []
+            for query_type in ("query", "sco-query"):
+                filters = [str(value) for value in ELECTRONIC_STATUSES] if query_type == "query" else ["all"]
+                rows.extend((
+                    "0101234567", "purchase", query_type, "2026-08-01", "2026-08-16",
+                    item, "finalized", 0, 0, 1,
+                ) for item in filters)
+            with closing(sqlite3.connect(database)) as connection:
+                connection.executemany(
+                    """INSERT INTO invoice_overview_checkpoints(
+                        company_tax_code,direction,query_type,from_date,to_date,
+                        status_filter,checkpoint_status,fetched_count,expected_total,page_number
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?)""", rows,
+                )
+                connection.commit()
+            snapshot = ArtifactInspector(FakeBackend(root)).snapshot({
+                "connection_ids": ["conn_1"], "directions": ["purchase"],
+                "date_from": "2026-08-01", "date_to": "2026-08-31",
+            })["accounts"][0]
+            self.assertFalse(snapshot["ready"])
+            self.assertEqual(snapshot["missing_ranges"], [{
+                "date_from": "2026-08-17", "date_to": "2026-08-31",
+            }])
+
     def test_html_is_ready_only_with_local_references_and_required_assets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

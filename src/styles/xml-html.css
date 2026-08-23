@@ -8,6 +8,7 @@
 .artifact-account-content { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .artifact-account-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .artifact-account-filters > div { display: flex; align-items: center; gap: 10px; }
+.artifact-account-filters .search-box { display: block; flex: 0 0 300px; background: #fff; }
 .artifact-account-page.invoice-page .artifact-account-content .artifact-download-button { position: static; width: 118px; }
 .artifact-account-page.invoice-page .artifact-account-content .artifact-global-stop { position: static; width: 113px; }
 .artifact-progress-cards { display: grid; grid-template-columns: repeat(var(--artifact-card-count, 3), minmax(240px, 360px)); justify-content: center; gap: 12px; }
