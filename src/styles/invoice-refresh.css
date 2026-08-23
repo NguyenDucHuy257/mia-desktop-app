@@ -96,7 +96,22 @@
 .invoice-page .sync-state-cell[data-status='failed'] strong { color: #b91c1c; }
 .invoice-page .sync-state-cell[data-status='cancelled'] strong,
 .invoice-page .sync-state-cell[data-status='not_synced'] strong { color: #64748b; }
-.invoice-page .invoice-count-cell strong { color: #334155; }
+.invoice-page .invoice-count-current {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 15px;
+}
+
+.invoice-page .invoice-count-added {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.invoice-page .invoice-count-baseline {
+  color: #64748b;
+  font-weight: 500;
+}
 
 .invoice-page .company-name {
   position: relative;

@@ -43,6 +43,7 @@ export interface InvoiceSyncState {
   direction: InvoiceDirection;
   status: 'not_synced' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
   current_month: string | null;
+  current_until?: string | null;
   sync_from: string | null;
   sync_until: string | null;
   invoice_count: number;

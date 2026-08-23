@@ -97,9 +97,19 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-function monthLabel(value: string | null | undefined, shortYear = false) {
+function dateLabel(value: string | null | undefined) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? '');
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : null;
+}
+
+function monthEndIso(value: string | null | undefined, selectedUntil?: string) {
   const match = /^(\d{4})-(\d{2})/.exec(value ?? '');
-  return match ? `${match[2]}/${shortYear ? match[1]!.slice(-2) : match[1]}` : null;
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const monthEnd = `${match[1]}-${match[2]}-${String(lastDay).padStart(2, '0')}`;
+  return selectedUntil && selectedUntil < monthEnd ? selectedUntil : monthEnd;
 }
 
 function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
@@ -109,20 +119,28 @@ function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
         : state.status === 'failed' ? 'Đồng bộ lỗi'
           : state.status === 'cancelled' ? 'Đồng bộ bị hủy'
             : 'Đã đồng bộ';
-  const detail = state?.status === 'running' && state.current_month
-    ? `Đang đồng bộ đến ${monthLabel(state.current_month)}`
-    : state?.status === 'completed' && state.sync_from && state.sync_until
-      ? `Từ ${monthLabel(state.sync_from)} tới ${monthLabel(state.sync_until, true)}`
+  const processingUntil = state?.current_until ?? monthEndIso(state?.current_month);
+  const processingLabel = dateLabel(processingUntil);
+  const syncFromLabel = dateLabel(state?.sync_from);
+  const syncUntilLabel = dateLabel(state?.sync_until);
+  const detail = state?.status === 'running' && processingLabel
+    ? `Đang xử lý đến ${processingLabel}`
+    : state?.status === 'completed' && syncFromLabel && syncUntilLabel
+      ? `Từ ${syncFromLabel} đến ${syncUntilLabel}`
       : null;
   return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
 function InvoiceCountCell({ state }: { state?: InvoiceSyncState }) {
   const format = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
-  if (state?.baseline_invoice_count !== null && state?.baseline_invoice_count !== undefined) {
-    return <div className="invoice-count-cell"><span>Đã có trong hệ thống: {format(state.invoice_count)} hóa đơn</span><strong>{format(state.added_invoice_count ?? 0)} hóa đơn bổ sung</strong></div>;
-  }
-  return <div className="invoice-count-cell"><strong>{format(state?.invoice_count ?? 0)} hóa đơn</strong></div>;
+  const current = state?.invoice_count ?? 0;
+  const baseline = state?.baseline_invoice_count ?? current;
+  const added = state?.added_invoice_count ?? 0;
+  return <div className="invoice-count-cell">
+    <strong className="invoice-count-current">{format(current)}</strong>
+    <span className="invoice-count-added">(+{format(added)} mới)</span>
+    <span className="invoice-count-baseline">{format(baseline)} cũ</span>
+  </div>;
 }
 
 export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
@@ -311,7 +329,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       : null;
     const syncState: InvoiceSyncState | undefined = transientSyncStatus
       ? {
-          connection_id: account.connection_id, direction, status: transientSyncStatus, current_month: dateFrom.slice(0, 7),
+          connection_id: account.connection_id, direction, status: transientSyncStatus, current_month: dateFrom.slice(0, 7), current_until: monthEndIso(dateFrom, dateTo),
           sync_from: persistedSyncState?.sync_from ?? null, sync_until: persistedSyncState?.sync_until ?? null,
           invoice_count: persistedSyncState?.invoice_count ?? 0,
           baseline_invoice_count: persistedSyncState?.invoice_count ?? 0, added_invoice_count: 0,

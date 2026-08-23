@@ -13,6 +13,7 @@ import sqlite3
 import threading
 import time
 import types
+from calendar import monthrange
 from contextlib import closing
 from dataclasses import replace
 from datetime import datetime
@@ -182,6 +183,26 @@ class ProductionBackend(SourceBackend):
             "sync_until": coverage[1] if coverage else None,
         }
 
+    @staticmethod
+    def _current_processing_until(job, state, month_key):
+        if not job or not month_key:
+            return None
+        stage = str(state.get("current_stage") or getattr(job, "current_stage", "") or "")
+        module = (state.get("modules") or {}).get(stage)
+        if isinstance(module, dict):
+            for month in module.get("months") or ():
+                if isinstance(month, dict) and str(month.get("key") or "") == month_key:
+                    to_date = str(month.get("to_date") or "")
+                    if len(to_date) == 10:
+                        return to_date
+        try:
+            year, month = (int(part) for part in month_key.split("-", 1))
+            month_end = f"{year:04d}-{month:02d}-{monthrange(year, month)[1]:02d}"
+        except (TypeError, ValueError):
+            return None
+        job_to = str(job.parameters.get("date_to") or "")
+        return min(month_end, job_to) if len(job_to) == 10 else month_end
+
     def start(self, value: dict[str, object]) -> dict[str, object]:
         intent = dict(value.get("intent") or {})
         mode = intent.get("sync_mode")
@@ -231,9 +252,13 @@ class ProductionBackend(SourceBackend):
                 "processing", "downloading", "syncing", "cancelling",
             }
             overview_requested = "overview" in set(job.parameters.get("scopes") or ()) if job else False
-            if raw_status in active_statuses:
+            if raw_status in active_statuses and overview_complete:
+                # Overview is the business completion boundary. Detail may
+                # continue in the same source job without delaying this state.
+                status = "completed"
+            elif raw_status in active_statuses:
                 # A current job always wins over finalized coverage from older
-                # jobs. This remains running while detail follows overview.
+                # jobs until its Overview module reaches the business boundary.
                 status = "running"
             elif raw_status in {"failed", "abandoned"}:
                 status = "failed"
@@ -255,13 +280,22 @@ class ProductionBackend(SourceBackend):
                 date_from = str(job.parameters.get("date_from") or "")
                 month_key = date_from[:7] if len(date_from) >= 7 else None
             baseline = job.parameters.get("baseline_invoice_count") if job else None
+            sync_from = metrics["sync_from"]
+            sync_until = metrics["sync_until"]
+            if status == "completed" and job:
+                job_from = str(job.parameters.get("date_from") or "")
+                job_until = str(job.parameters.get("date_to") or "")
+                sync_from = job_from if len(job_from) == 10 else sync_from
+                sync_until = job_until if len(job_until) == 10 else sync_until
             output.append({
                 "connection_id": str(connection_id),
                 "direction": direction,
                 "status": status,
                 "current_month": month_key,
-                "sync_from": metrics["sync_from"],
-                "sync_until": metrics["sync_until"],
+                "current_until": self._current_processing_until(job, state, month_key)
+                if status == "running" else None,
+                "sync_from": sync_from,
+                "sync_until": sync_until,
                 "invoice_count": metrics["invoice_count"],
                 "baseline_invoice_count": int(baseline) if baseline is not None else None,
                 "added_invoice_count": metrics["added_count"] if baseline is not None else None,
