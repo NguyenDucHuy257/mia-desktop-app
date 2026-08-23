@@ -409,7 +409,8 @@ class ProductionBackend(SourceBackend):
         return read_artifact_targets(self, query)
 
     def ensure_invoice_packages(
-        self, value, *, progress_callback=None, cancel_callback=None
+        self, value, *, progress_callback=None, cancel_callback=None,
+        ready_callback=None,
     ):
         """Fetch source XML packages from persisted Overview identities only.
 
@@ -423,6 +424,13 @@ class ProductionBackend(SourceBackend):
         if not kinds or set(kinds) - {"xml", "html"}:
             raise ValueError("invalid_artifact_kind")
         targets = self.artifact_targets_for_export(value)
+        allowed_keys = value.get("_artifact_keys")
+        if allowed_keys is not None:
+            allowed_keys = set(allowed_keys)
+            targets = [
+                target for target in targets
+                if target.get("artifact_key") in allowed_keys
+            ]
         if not targets:
             return {"processed": 0, "failed": 0, "targets": 0, "keys": set()}
         connection_id = str((value.get("connection_ids") or ())[0])
@@ -460,6 +468,14 @@ class ProductionBackend(SourceBackend):
             for target_index, target in enumerate(targets, start=1):
                 if cancel_callback and cancel_callback():
                     raise ValueError("artifact_cancelled")
+                # The source repository verifies the HTML file itself. Desktop
+                # additionally requires the complete offline asset bundle; an
+                # incomplete cache row is requeued before the shared package
+                # call so the source can repair it with one ZIP request.
+                from mia_artifact_pipeline import invalidate_incomplete_html_bundle
+                invalidate_incomplete_html_bundle(
+                    self.data_root, job.company_tax_code, target
+                )
                 for kind in kinds:
                     emit(target, kind, "running")
                 payload = {
@@ -477,6 +493,7 @@ class ProductionBackend(SourceBackend):
                     outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
                 except Exception as error:
                     state = "failed"
+                    outcome_name = "failed"
                     outcomes["failed"] += 1
                     if self.logger is not None:
                         self.logger.warning(
@@ -488,6 +505,8 @@ class ProductionBackend(SourceBackend):
                     if state == "failed":
                         failed += 1
                     emit(target, kind, state)
+                if ready_callback is not None:
+                    ready_callback(target, state, outcome_name)
         if self.logger is not None:
             self.logger.info(
                 "artifact_source_batch_complete targets=%s kinds=%s downloaded=%s "

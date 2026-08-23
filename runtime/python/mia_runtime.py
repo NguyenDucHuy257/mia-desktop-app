@@ -254,6 +254,21 @@ def _artifact_task_view(task_id: str) -> dict[str, Any]:
         }
 
 
+def _run_unified_artifact_task(task_id: str, coordinator: Any) -> None:
+    global _artifact_task
+    try:
+        result = coordinator.run()
+        status = str(result.get("status") or "completed")
+        error = None
+    except Exception:
+        result, status, error = None, "failed", "internal_error"
+        if logger is not None:
+            logger.exception("unified_artifact_task_failed task_id=%s", task_id)
+    with _artifact_task_lock:
+        if _artifact_task and _artifact_task.get("task_id") == task_id:
+            _artifact_task.update(status=status, result=result, error=error)
+
+
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
 
@@ -492,8 +507,70 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 logger.exception("pdf_runtime_unavailable")
             raise RpcError(-32061, "pdf_runtime_unavailable") from None
 
-    if method == "artifacts.export.start":
+    if method == "artifacts.snapshot":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_artifact_pipeline import ArtifactInspector
+            return ArtifactInspector(_production_backend()).snapshot(dict(params)), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+
+    if method == "artifacts.batch.start":
         global _artifact_task
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_artifact_pipeline import ArtifactBatchCoordinator
+            coordinator = ArtifactBatchCoordinator(
+                _production_backend(), dict(params), logger=logger,
+            )
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+        with _artifact_task_lock:
+            if _artifact_task and _artifact_task.get("status") in {
+                "running", "cancelling"
+            }:
+                raise RpcError(-32064, "artifact_task_active")
+            task_id = f"artifact_{uuid.uuid4().hex}"
+            _artifact_task = {
+                "task_id": task_id, "status": "running", "result": None,
+                "error": None, "coordinator": coordinator,
+            }
+        threading.Thread(
+            target=_run_unified_artifact_task,
+            args=(task_id, coordinator),
+            name="mia-unified-artifact-export", daemon=True,
+        ).start()
+        return {"task_id": task_id, "status": "running"}, False
+
+    if method == "artifacts.batch.status":
+        task_id = str(params.get("task_id") or "")
+        with _artifact_task_lock:
+            if not _artifact_task or _artifact_task.get("task_id") != task_id:
+                raise RpcError(-32063, "artifact_task_not_found")
+            coordinator = _artifact_task.get("coordinator")
+            status = _artifact_task["status"]
+            error = _artifact_task.get("error")
+            result = _artifact_task.get("result")
+        view = coordinator.view() if coordinator is not None else (result or {})
+        return {"task_id": task_id, **view, "status": status, "error": error}, False
+
+    if method == "artifacts.batch.cancel":
+        task_id = str(params.get("task_id") or "")
+        kind = params.get("kind")
+        if kind is not None and kind not in {"xml", "html", "pdf"}:
+            raise RpcError(-32602, "invalid_params")
+        with _artifact_task_lock:
+            if not _artifact_task or _artifact_task.get("task_id") != task_id:
+                raise RpcError(-32063, "artifact_task_not_found")
+            coordinator = _artifact_task.get("coordinator")
+        if coordinator is None:
+            raise RpcError(-32063, "artifact_task_not_found")
+        coordinator.cancel(kind)
+        return {"task_id": task_id, "cancelled": True, "kind": kind}, False
+
+    if method == "artifacts.export.start":
         if data_directory is None or storage is None:
             raise RpcError(-32011, "storage_not_initialized")
         value = dict(params)

@@ -46,6 +46,10 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     cancel: () => invokeResult('mia:artifacts:cancel'),
     targets: (request) => invokeResult('mia:artifacts:targets', request),
     list: (request) => invokeResult('mia:artifacts:list', request),
+    snapshot: (request) => invokeResult('mia:artifacts:snapshot', request),
+    startBatch: (request) => invokeResult('mia:artifacts:batch-start', request),
+    batchStatus: (request) => invokeResult('mia:artifacts:batch-status', request),
+    cancelBatch: (request) => invokeResult('mia:artifacts:batch-cancel', request),
     openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
     onExportProgress: (listener) => {
       if (typeof listener !== 'function') throw new TypeError('invalid export progress listener');
