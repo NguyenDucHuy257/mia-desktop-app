@@ -14,6 +14,8 @@ describe('local source job lifecycle IPC broker', () => {
     expect(validateIntent(intent)).toEqual(intent);
     expect(validateIntent({ ...intent, force_refresh: true })).toEqual({ ...intent, force_refresh: true });
     expect(validateIntent({ ...intent, refresh_latest_month: true })).toEqual({ ...intent, refresh_latest_month: true });
+    expect(validateIntent({ ...intent, sync_mode: 'supplement' })).toEqual({ ...intent, sync_mode: 'supplement' });
+    expect(() => validateIntent({ ...intent, sync_mode: 'replace' })).toThrow();
     expect(() => validateIntent({ ...intent, force_refresh: 'yes' })).toThrow();
     expect(() => validateIntent({ ...intent, detail_limit: 1 })).toThrow();
     expect(() => validateIntent({ ...intent, date_from: '2026-02-01' })).toThrow();
