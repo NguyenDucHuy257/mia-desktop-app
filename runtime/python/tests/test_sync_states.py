@@ -48,7 +48,7 @@ class SyncStateTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_overview_completion_controls_status_while_detail_is_running(self):
+    def test_active_detail_job_overrides_previous_overview_completion(self):
         job = SimpleNamespace(
             job_id="job_purchase", status="running", current_stage="detail",
             created_at="2026-08-01T00:00:00+00:00", finished_at=None,
@@ -61,8 +61,8 @@ class SyncStateTests(unittest.TestCase):
         )
         self.backend.repository.latest_invoice_job_for_direction.return_value = job
         state = self.backend.sync_states(["conn_one"], "purchase")[0]
-        self.assertEqual(state["status"], "completed")
-        self.assertIsNone(state["current_month"])
+        self.assertEqual(state["status"], "running")
+        self.assertEqual(state["current_month"], "2025-08")
         self.assertEqual(state["invoice_count"], 2)
         self.assertEqual(state["baseline_invoice_count"], 1)
         self.assertEqual(state["added_invoice_count"], 1)
@@ -91,6 +91,92 @@ class SyncStateTests(unittest.TestCase):
         state = self.backend.sync_states(["conn_one"], "purchase")[0]
         self.assertEqual(state["status"], "running")
         self.assertEqual(state["current_month"], "2025-05")
+
+    def test_queued_job_is_active_and_uses_selected_start_month(self):
+        job = SimpleNamespace(
+            job_id="job_queued", status="queued", current_stage=None,
+            created_at="2026-08-01T00:00:00+00:00", finished_at=None,
+            parameters={
+                "directions": ["purchase"], "scopes": ["overview", "detail"],
+                "sync_mode": "new", "baseline_invoice_count": 2,
+                "date_from": "2025-05-01",
+            },
+            progress_state={},
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = job
+        state = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual(state["status"], "running")
+        self.assertEqual(state["current_month"], "2025-05")
+        self.assertEqual(state["added_invoice_count"], 0)
+
+    def test_active_job_counts_committed_invoices_realtime_from_baseline(self):
+        database = self.backend.data_root / "0100000000" / "db" / "invoices.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                "DELETE FROM invoice_overview_items WHERE company_tax_code=? AND direction=?",
+                ("0100000000", "purchase"),
+            )
+            connection.executemany(
+                "INSERT INTO invoice_overview_items VALUES (?,?,?,?,?)",
+                [
+                    (index, "0100000000", "purchase", "query", "2025-01-01T00:00:00+00:00")
+                    for index in range(1000, 1450)
+                ],
+            )
+            connection.commit()
+        job = SimpleNamespace(
+            job_id="job_realtime", status="running", current_stage="detail",
+            created_at="2026-08-01T00:00:00+00:00", finished_at=None,
+            parameters={
+                "directions": ["purchase"], "scopes": ["overview", "detail"],
+                "sync_mode": "new", "baseline_invoice_count": 450,
+                "date_from": "2025-05-01",
+            },
+            progress_state={
+                "current_stage": "detail", "current_month": {"key": "2025-08"},
+                "modules": {"overview": {"status": "completed"}, "detail": {"status": "running"}},
+            },
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = job
+
+        initial = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual((initial["invoice_count"], initial["added_invoice_count"]), (450, 0))
+        self.assertEqual(initial["status"], "running")
+
+        with closing(sqlite3.connect(database)) as connection:
+            connection.executemany(
+                "INSERT INTO invoice_overview_items VALUES (?,?,?,?,?)",
+                [
+                    (index, "0100000000", "purchase", "query", "2026-08-01T00:00:01+00:00")
+                    for index in range(1450, 1456)
+                ],
+            )
+            connection.commit()
+        after_six = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual((after_six["invoice_count"], after_six["added_invoice_count"]), (456, 6))
+
+        with closing(sqlite3.connect(database)) as connection:
+            connection.executemany(
+                "INSERT INTO invoice_overview_items VALUES (?,?,?,?,?)",
+                [
+                    (index, "0100000000", "purchase", "query", "2026-08-01T00:00:02+00:00")
+                    for index in range(1456, 1460)
+                ],
+            )
+            connection.commit()
+        after_ten = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual((after_ten["invoice_count"], after_ten["added_invoice_count"]), (460, 10))
+        self.assertEqual(after_ten["current_month"], "2025-08")
+
+        job.status = "completed"
+        job.current_stage = None
+        job.finished_at = "2026-08-01T00:01:00+00:00"
+        job.progress_state = {
+            "modules": {"overview": {"status": "completed"}, "detail": {"status": "completed"}}
+        }
+        completed = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual((completed["invoice_count"], completed["added_invoice_count"]), (460, 10))
 
     def test_source_business_key_upsert_adds_only_missing_supplement_invoices(self):
         database = Path(self.temporary.name) / "supplement.sqlite3"

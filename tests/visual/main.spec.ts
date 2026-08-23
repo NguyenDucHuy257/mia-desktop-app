@@ -330,6 +330,46 @@ test('keeps exactly one purchase/sold direction and sends the selected sync mode
   expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement' });
 });
 
+test('active sync overrides coverage and refreshes committed invoice counts realtime', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_realtime', username: '0100000000', company_name: 'Công ty Realtime', status: 'connected', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    const record = { job_id: 'job_realtime', connection_id: account.connection_id, intent: {}, idempotency_key: 'desktop-realtime', created_at: 'now', updated_at: 'now', status: 'running' };
+    let invoiceCount = 456;
+    Object.defineProperty(window, 'advanceRealtimeInvoiceCount', { value: () => { invoiceCount = 460; } });
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], create: async () => account, get: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      jobs: {
+        resume: async () => record, resumeAll: async () => [record],
+        syncStates: async () => [{
+          connection_id: account.connection_id, direction: 'purchase', status: 'running', current_month: '2025-08',
+          sync_from: '2025-05-01', sync_until: '2025-08-31', invoice_count: invoiceCount,
+          baseline_invoice_count: 450, added_invoice_count: invoiceCount - 450,
+          last_job_id: record.job_id, sync_mode: 'new',
+        }],
+        status: async () => ({
+          job_id: record.job_id, status: 'running', stage: 'detail', overall_percent: 61,
+          current_month: { key: '2025-08', index: 4, total: 4, processed: 145, planned: 149, percent: 97 },
+          scope_progress: { scope: 'detail', direction: 'purchase', processed: 145, total: 149 },
+          updated_at: 'now', error: null,
+        }),
+        summary: async () => ({}), start: async () => ({ record, accepted: {} }), cancel: async () => ({}), clear: async () => undefined,
+      },
+    } });
+  });
+  await gotoApp(page, '/');
+  await expect(page.locator('.progress-cell')).toContainText('145/149 hóa đơn');
+  await expect(page.locator('.progress-cell')).toContainText('61%');
+  await expect(page.locator('.sync-state-cell')).toContainText('Đang đồng bộ');
+  await expect(page.locator('.sync-state-cell')).toContainText('Đang đồng bộ đến 08/2025');
+  await expect(page.locator('.invoice-count-cell')).toContainText('Đã có trong hệ thống: 456 hóa đơn');
+  await expect(page.locator('.invoice-count-cell')).toContainText('6 hóa đơn bổ sung');
+
+  await page.evaluate(() => (window as typeof window & { advanceRealtimeInvoiceCount(): void }).advanceRealtimeInvoiceCount());
+  await expect(page.locator('.invoice-count-cell')).toContainText('Đã có trong hệ thống: 460 hóa đơn', { timeout: 3_000 });
+  await expect(page.locator('.invoice-count-cell')).toContainText('10 hóa đơn bổ sung');
+  await expect(page.locator('.sync-state-cell')).not.toContainText('Đã đồng bộ');
+});
+
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
   await page.addInitScript(() => {
     const account = { connection_id: 'conn_demo', username: '0101234567', company_name: 'Công ty Retry', status: 'connected', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };

@@ -121,6 +121,8 @@ describe('invoice result control presentation', () => {
     expect(page).not.toContain('setDirections');
     expect(page).toContain('Đồng bộ mới');
     expect(page).toContain('Đồng bộ bổ sung');
+    expect(page).toContain('Đã có trong hệ thống: {format(state.invoice_count)} hóa đơn');
+    expect(page).toContain("phase === 'queued' || phase === 'starting') ? 'running' as const");
     expect(page).not.toContain('<span>Tải mới dữ liệu</span>');
     expect(page).toContain('<span>Trạng thái đồng bộ</span><span>Số lượng hóa đơn</span>');
     expect(invoiceStyles).toContain('.invoice-page .sync-mode-menu');
