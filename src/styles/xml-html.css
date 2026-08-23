@@ -1,32 +1,22 @@
 .artifact-account-page { height: 100%; min-height: 720px; padding: 28px 28px 24px; background: #fff; color: var(--mia-text-strong); display: flex; flex-direction: column; gap: 16px; }
 .artifact-account-header h1 { margin: 0; font-size: 26px; line-height: 34px; }
 .artifact-account-header p { margin: 4px 0 0; color: var(--mia-text-muted); font-size: 13px; }
-.artifact-toolbar-card { position: relative; min-height: 106px; padding: 12px 12px 50px; border: 1px solid var(--mia-border-warm); border-radius: var(--mia-radius-ui, 6px); background: var(--mia-surface-sidebar); display: flex; align-items: flex-start; gap: 9px; }
-.artifact-toolbar-card .storage-folder-picker { position: absolute; left: 12px; bottom: 8px; width: min(640px, calc(100% - 24px)); }
-.artifact-direction-options { height: 42px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: var(--mia-radius-ui, 6px); background: #fff; display: flex; align-items: center; gap: 12px; }
-.artifact-direction-options label { display: inline-flex; align-items: center; gap: 6px; color: #475569; font-size: 12px; font-weight: 700; cursor: pointer; }
-.artifact-direction-options input { position: absolute; opacity: 0; pointer-events: none; }
-.artifact-kind-options { height: 42px; display: flex; gap: 7px; }
-.artifact-kind-options label { min-width: 70px; padding: 0 12px; border: 1px solid #cbd5e1; border-radius: var(--mia-radius-ui, 6px); background: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: #52606d; font-size: 12px; font-weight: 800; cursor: pointer; }
-.artifact-kind-options label[data-active='true'] { border-color: #16a34a; background: #f0fdf4; color: #166534; }
-.artifact-kind-options input { accent-color: #15803d; }
+.artifact-toolbar-card { min-height: 110px; flex: 0 0 110px; padding-bottom: 50px; }
+.artifact-toolbar-card .invoice-export-folder { left: 12px; width: min(640px, calc(100% - 24px)); }
+.artifact-format-select > .compact-select { width: 180px; }
+.artifact-format-menu { width: 204px; height: 126px; }
 .artifact-account-content { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .artifact-account-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .artifact-account-filters > div { display: flex; align-items: center; gap: 10px; }
-.artifact-download-button, .artifact-global-stop { height: 38px; padding: 0 18px; border-radius: var(--mia-radius-ui, 6px); font-size: 12px; font-weight: 800; }
-.primary-download-button { border: 1px solid #2563b8; background: #2563b8; color: #fff; }
-.primary-download-button:hover:not(:disabled) { border-color: #1e4f96; background: #1e5aa8; color: #fff; }
-.primary-download-button:active:not(:disabled) { border-color: #193f78; background: #194b8e; color: #fff; }
-.primary-download-button:focus-visible { outline: 0; color: #fff; box-shadow: 0 0 0 3px rgb(59 130 246 / 25%); }
-.primary-download-button:disabled { background: #8caedb; color: #f8fbff; opacity: .68; }
-.artifact-global-stop { position: static; width: auto; }
+.artifact-account-page.invoice-page .artifact-account-content .artifact-download-button { position: static; width: 118px; }
+.artifact-account-page.invoice-page .artifact-account-content .artifact-global-stop { position: static; width: 113px; }
 .artifact-progress-cards { display: grid; grid-template-columns: repeat(var(--artifact-card-count, 3), minmax(240px, 360px)); justify-content: center; gap: 12px; }
 .artifact-progress-cards[data-count='1'] { --artifact-card-count: 1; }
 .artifact-progress-cards[data-count='2'] { --artifact-card-count: 2; }
 .artifact-progress-cards[data-count='3'] { --artifact-card-count: 3; }
-.artifact-progress-card { min-width: 0; min-height: 118px; padding: 10px 12px; border: 1px solid #bbdfc8; border-left: 4px solid #15803d; border-radius: var(--mia-radius-ui, 6px); background: #f7fcf8; box-shadow: 0 2px 8px rgb(15 23 42 / 6%); display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; }
-.artifact-progress-card[data-kind='html'] { border-color: #bfd5f5; border-left-color: #2563eb; background: #f7faff; }
-.artifact-progress-card[data-kind='pdf'] { border-color: #efc3cd; border-left-color: #a33b55; background: #fff8fa; }
+.artifact-progress-card { min-width: 0; min-height: 118px; padding: 10px 12px; border-left: 4px solid #15803d; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; }
+.artifact-progress-card[data-kind='html'] { border-left-color: #2563eb; }
+.artifact-progress-card[data-kind='pdf'] { border-left-color: #a33b55; }
 .artifact-progress-card > header { grid-column: 1 / -1; display: flex; align-items: center; gap: 9px; }
 .artifact-progress-card h2 { margin: 0; font-size: 15px; }
 .artifact-progress-card header span { color: #64748b; font-size: 11px; }
@@ -41,11 +31,10 @@
 .artifact-progress-card p { min-width: 0; min-height: 15px; margin: 0; overflow: hidden; color: #64748b; font-size: 10px; line-height: 15px; white-space: nowrap; text-overflow: ellipsis; }
 .artifact-progress-card footer { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .artifact-progress-card footer small { color: #475569; }
-.artifact-progress-card footer button { height: 28px; padding: 0 9px; border: 1px solid #ef4444; border-radius: var(--mia-radius-ui, 6px); background: #fff; color: #dc2626; font-size: 10px; font-weight: 700; }
-.artifact-account-table { min-height: 360px; flex: 1; overflow: auto; border: 1px solid var(--mia-border-cool); border-radius: var(--mia-radius-ui, 6px); }
-.artifact-account-row { min-width: 1080px; min-height: 58px; display: grid; grid-template-columns: 52px 120px minmax(220px, 1fr) 150px minmax(190px, 1fr) 150px 70px; align-items: center; border-bottom: 1px solid #edf1f5; background: #fff; }
-.artifact-account-row--head { min-height: 44px; background: #f7f9fb; color: #344054; font-size: 12px; font-weight: 800; }
-.artifact-account-row > span, .artifact-account-row > strong { min-width: 0; padding: 7px 10px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.artifact-progress-card footer button { height: 30px; padding: 0 9px; border: 1px solid var(--mia-danger); border-radius: var(--mia-radius-ui); background: #fff; color: var(--mia-danger); font-size: 10px; font-weight: 700; }
+.artifact-account-table { min-height: 360px; flex: 1; overflow: auto; }
+.artifact-account-table .table-grid { min-width: 1080px; grid-template-columns: 52px 120px minmax(220px, 1fr) 150px minmax(190px, 1fr) 150px 70px; }
+.artifact-account-row > span, .artifact-account-row > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
 .artifact-account-row > strong { white-space: nowrap; }
 .artifact-account-row > .selection-button { justify-self: center; margin-left: 6px; }
 .artifact-account-row:not(.artifact-account-row--head):hover { background: #f8fafc; }
@@ -61,9 +50,8 @@
 .artifact-row-progress em { width: 30px; font-style: normal; font-size: 10px; }
 .artifact-row-action { text-align: center; color: #94a3b8; }
 .artifact-table-state { min-height: 120px; display: grid; place-items: center; color: #64748b; font-size: 12px; }
-.artifact-direction-options label:hover, .artifact-kind-options label:hover { border-color: #86b99a; color: #166534; }
-.artifact-direction-options label:active, .artifact-kind-options label:active, .artifact-progress-card footer button:active { transform: translateY(1px); }
-.artifact-direction-options label:focus-within, .artifact-kind-options label:focus-within, .artifact-progress-card footer button:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }
-.artifact-direction-options label:has(input:disabled), .artifact-kind-options label:has(input:disabled) { cursor: not-allowed; opacity: .55; }
+.artifact-progress-card footer button:hover,
+.artifact-progress-card footer button:focus-visible { background: #fff1f2; outline: 0; }
+.artifact-progress-card footer button:active { background: #ffe4e6; }
 @media (max-width: 1180px) { .artifact-toolbar-card { flex-wrap: wrap; padding-bottom: 54px; } .artifact-progress-cards { grid-template-columns: repeat(2, minmax(240px, 360px)); } }
 @media (max-width: 760px) { .artifact-progress-cards { grid-template-columns: minmax(240px, 420px); } .artifact-account-filters { align-items: stretch; flex-direction: column; } }

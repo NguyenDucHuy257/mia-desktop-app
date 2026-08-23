@@ -57,7 +57,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const [exportFolder, setExportFolder] = useState(DEFAULT_EXPORT_FOLDER);
   const [pdfConcurrency, setPdfConcurrency] = useState(5);
-  const [artifactSelection, setArtifactSelection] = useState<ArtifactSelectionState>({ dateFrom: '2023-10-01', dateTo: '2023-10-31', directions: ['purchase', 'sold'] });
+  const [artifactSelection, setArtifactSelection] = useState<ArtifactSelectionState>({ dateFrom: '2023-10-01', dateTo: '2023-10-31', direction: 'purchase' });
   const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
@@ -181,9 +181,11 @@ export default function App() {
             onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
             initialDateFrom={artifactSelection.dateFrom}
             initialDateTo={artifactSelection.dateTo}
+            initialDirection={artifactSelection.direction}
             onDateRangeChange={(dateFrom, dateTo) => setArtifactSelection((current) => ({ ...current, dateFrom, dateTo }))}
+            onDirectionChange={(direction) => setArtifactSelection((current) => ({ ...current, direction }))}
           />
-        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} pdfConcurrency={pdfConcurrency} />
+        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} coverageRevision={invoiceJobs.coverageRevision} pdfConcurrency={pdfConcurrency} />
           : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} onPdfConcurrencyChange={setPdfConcurrency} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />

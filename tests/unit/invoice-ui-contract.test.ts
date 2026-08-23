@@ -56,24 +56,25 @@ describe('invoice result control presentation', () => {
     expect(addAccount).not.toContain('Quay lại Quản lý tải');
   });
 
-  it('keeps Results and XML HTML download buttons blue in every interactive state', async () => {
-    const [results, page, styles] = await Promise.all([
+  it('reuses the invoice-management action button for XML HTML downloads', async () => {
+    const [results, page, artifactStyles, invoiceStyles] = await Promise.all([
       source('src/features/results/ResultsPage.tsx'),
       source('src/features/artifacts/XmlHtmlPage.tsx'),
       source('src/styles/xml-html.css'),
+      source('src/styles/invoice-refresh.css'),
     ]);
     expect(results).toContain('results-export-trigger primary-download-button');
-    expect(page).toContain('primary-download-button artifact-download-button');
-    expect(styles).toContain('.primary-download-button:hover:not(:disabled)');
-    expect(styles).toContain('.primary-download-button:active:not(:disabled)');
-    expect(styles).toContain('background: #2563b8');
-    expect(styles).toContain('color: #fff');
-    expect(styles).not.toContain('.primary-download-button { background: linear-gradient');
+    expect(page).toContain('sync-button artifact-download-button');
+    expect(invoiceStyles).toContain('.invoice-page .sync-button:not(:disabled):hover');
+    expect(invoiceStyles).toContain('.invoice-page .sync-button:not(:disabled):active');
+    expect(artifactStyles).not.toContain('.primary-download-button');
+    expect(artifactStyles).not.toContain('linear-gradient');
   });
 
   it('uses one account-based XML HTML PDF surface without sync controls', async () => {
-    const [page, styles] = await Promise.all([
+    const [page, invoicePage, styles] = await Promise.all([
       source('src/features/artifacts/XmlHtmlPage.tsx'),
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
       source('src/styles/xml-html.css'),
     ]);
     expect(page).toContain('Tải XML, HTML và PDF từ dữ liệu hóa đơn đã đồng bộ.');
@@ -86,10 +87,17 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('PDF');
     expect(page).toContain('artifact-account-row--head');
     expect(page).toContain('Dừng tải');
-    expect(page).toContain('Vui lòng chọn ít nhất Mua vào hoặc Bán ra.');
+    expect(page).toContain('direction: InvoiceDirection');
+    expect(page).toContain('directions: [selection.direction]');
+    expect(page).toContain('compact-select compact-select--direction');
+    expect(page).toContain("import { OptionCheck } from '../../components/OptionCheck'");
+    expect(invoicePage).toContain("import { OptionCheck } from '../../components/OptionCheck'");
+    expect(page).not.toContain('Vui lòng chọn ít nhất Mua vào hoặc Bán ra.');
     expect(page).not.toContain('Mở thư mục');
     expect(styles).toContain('.artifact-progress-cards[data-count=');
     expect(styles).toContain("[data-kind='pdf']");
     expect(styles).toContain('grid-template-columns: 52px 120px');
+    expect(styles).not.toContain('translateY');
+    expect(styles).not.toContain('scale(');
   });
 });

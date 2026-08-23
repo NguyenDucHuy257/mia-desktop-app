@@ -59,6 +59,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
   const [message, setMessage] = useState<{ kind: 'notice' | 'error' | 'success'; text: string } | null>(null);
   const [active, setActive] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [coverageRevision, setCoverageRevision] = useState(0);
   const itemsRef = useRef<Record<string, BatchItem>>({});
   const activeRef = useRef(false);
   const stoppingRef = useRef(false);
@@ -230,6 +231,10 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
     try {
       const status = await window.miaRuntime.jobs.status(jobId);
       if (token !== generation.current) return;
+      // The source may finalize one monthly Overview checkpoint while the
+      // overall multi-month job is still active. Consumers can re-read the
+      // persisted coverage on this existing lifecycle cadence.
+      setCoverageRevision((current) => current + 1);
       updateItems((current) => ({
         ...current,
         [connectionId]: {
@@ -467,6 +472,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
     items,
     active,
     stopping,
+    coverageRevision,
     startMany,
     cancelAll,
     message,

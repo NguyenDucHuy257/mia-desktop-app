@@ -58,7 +58,10 @@ class ArtifactPipelineTests(unittest.TestCase):
             """)
         return database
 
-    def _checkpoint_month(self, database: Path, month: int, status: str = "finalized") -> None:
+    def _checkpoint_month(
+        self, database: Path, month: int, status: str = "finalized",
+        direction: str = "purchase",
+    ) -> None:
         begin = date(2026, month, 1)
         end = date(2026, month + 1, 1) if month < 12 else date(2027, 1, 1)
         end = end.fromordinal(end.toordinal() - 1)
@@ -66,7 +69,7 @@ class ArtifactPipelineTests(unittest.TestCase):
         for query_type in ("query", "sco-query"):
             filters = [str(value) for value in ELECTRONIC_STATUSES] if query_type == "query" else ["all"]
             rows.extend((
-                "0101234567", "purchase", query_type, begin.isoformat(),
+                "0101234567", direction, query_type, begin.isoformat(),
                 end.isoformat(), item, status, 0, 0, 0,
             ) for item in filters)
         with closing(sqlite3.connect(database)) as connection:
@@ -115,6 +118,56 @@ class ArtifactPipelineTests(unittest.TestCase):
             for month in (1, 2, 3):
                 self._checkpoint_month(database, month)
             self.assertTrue(self._snapshot(root)["ready"])
+
+    def test_coverage_advances_after_each_persisted_month_finalize(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            inspector = ArtifactInspector(FakeBackend(root))
+            request = {
+                "connection_ids": ["conn_1"], "directions": ["purchase"],
+                "date_from": "2026-02-01", "date_to": "2026-05-31",
+            }
+
+            expected_missing_starts = (
+                (2, "2026-03-01"),
+                (3, "2026-04-01"),
+                (4, "2026-05-01"),
+            )
+            for month, missing_start in expected_missing_starts:
+                self._checkpoint_month(database, month)
+                snapshot = inspector.snapshot(request)["accounts"][0]
+                self.assertFalse(snapshot["ready"])
+                self.assertEqual(snapshot["missing_ranges"][0]["date_from"], missing_start)
+                self.assertEqual(snapshot["missing_ranges"][-1]["date_to"], "2026-05-31")
+
+            self._checkpoint_month(database, 5)
+            snapshot = inspector.snapshot(request)["accounts"][0]
+            self.assertTrue(snapshot["ready"])
+            self.assertEqual(snapshot["missing_ranges"], [])
+
+    def test_coverage_is_scoped_to_the_selected_direction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            for month in (2, 3, 4, 5):
+                self._checkpoint_month(database, month, direction="purchase")
+            for month in (2, 3):
+                self._checkpoint_month(database, month, direction="sold")
+            inspector = ArtifactInspector(FakeBackend(root))
+            common = {
+                "connection_ids": ["conn_1"],
+                "date_from": "2026-02-01", "date_to": "2026-05-31",
+            }
+
+            purchase = inspector.snapshot({**common, "directions": ["purchase"]})["accounts"][0]
+            sold = inspector.snapshot({**common, "directions": ["sold"]})["accounts"][0]
+            self.assertTrue(purchase["ready"])
+            self.assertFalse(sold["ready"])
+            self.assertEqual(
+                sold["missing_ranges"],
+                [{"date_from": "2026-04-01", "date_to": "2026-05-31"}],
+            )
 
     def test_missing_interval_helper_detects_internal_holes(self):
         self.assertEqual(
