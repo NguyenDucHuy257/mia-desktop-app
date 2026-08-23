@@ -71,6 +71,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const pageCache = useRef(new Map<number, LocalResultPage<ResultItem>>());
   const cursorByPage = useRef(new Map<number, string | null>([[1, null]]));
   const exportRoot = useRef<HTMLDivElement>(null);
+  const schemaContext = `${mode}|${direction}|${queryType}|${dateFrom}|${dateTo}`;
+  const previousSchemaContext = useRef(schemaContext);
+  const hasActiveFilter = Boolean(debouncedSearch || Object.keys(columnFilters).length);
 
   const crawlJob = crawlItem?.status ?? crawlItem?.record;
   const crawlStatus = crawlJob?.status;
@@ -206,15 +209,18 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     cursorByPage.current.clear();
     cursorByPage.current.set(1, null);
     setItems([]);
-    setColumns([]);
-    setColumnLabels({});
-    setColumnTypes({});
+    if (previousSchemaContext.current !== schemaContext) {
+      previousSchemaContext.current = schemaContext;
+      setColumns([]);
+      setColumnLabels({});
+      setColumnTypes({});
+    }
     setPagination(null);
     setTotalCount(null);
     setAggregate(null);
     setPageNumber(1);
     void loadPage(1, token);
-  }, [loadPage]);
+  }, [loadPage, schemaContext]);
 
   // The result view is allowed while the source job is still running. Refresh
   // from persisted SQLite whenever the polled source progress changes so rows
@@ -493,9 +499,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
     {feedback ? <div className="results-feedback" role="status">{feedback}</div> : null}
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
-    {state === 'loading' && items.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
-    {state === 'ready' && items.length === 0 ? <div className="results-state results-empty">{crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không tồn tại hóa đơn trong thời gian này.'}</div> : null}
-    {items.length && columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
+    {state === 'loading' && items.length === 0 && columns.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
+    {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
+    {columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
         <span className="results-checkbox-cell"><input
           type="checkbox"
@@ -524,6 +530,15 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           </span>;
         })}
       </div>
+      {items.length === 0 ? <div className="results-table-empty" role="status">
+        {state === 'loading'
+          ? 'Đang tải...'
+          : hasActiveFilter
+            ? 'Không có dữ liệu phù hợp với bộ lọc hiện tại.'
+            : crawlActive
+              ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.'
+              : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}
+      </div> : null}
       {items.map((item, rowIndex) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>
         <span className="results-checkbox-cell"><input type="checkbox" aria-label={`Chọn hóa đơn ${item.invoice_key}`} disabled={item.excluded} checked={item.excluded || invoiceSelected(selection, item.invoice_key)} onChange={() => setSelection(current => toggleInvoice(current, item.invoice_key))} /></span>
         {columns.map((column) => {
@@ -534,7 +549,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           return <span key={column} title={display}>{display}</span>;
         })}
       </div>)}
-      {aggregate ? <div className="results-row results-row--total" style={{ gridTemplateColumns }}>
+      {aggregate && items.length > 0 ? <div className="results-row results-row--total" style={{ gridTemplateColumns }}>
         <span className="results-checkbox-cell" />
         {columns.map(column => {
           const rawValue = column === 'stt'

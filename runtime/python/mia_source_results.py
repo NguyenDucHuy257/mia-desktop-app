@@ -46,6 +46,7 @@ INVOICE_LEVEL_MONETARY_FIELDS = frozenset({
 })
 PERCENT_RESULT_FIELDS = frozenset({"tsuat"})
 NUMBER_RESULT_FIELDS = MONETARY_RESULT_FIELDS | frozenset({"tgia", "dgia", "sluong"})
+CONDITIONAL_NUMBER_RESULT_FIELDS = frozenset({"stt", "shdon"})
 
 
 BLOCKED_RESULT_FIELDS = {
@@ -173,32 +174,42 @@ def _filter_text(value: Any) -> str:
     return str(value)
 
 
-def _as_number(value: Any) -> float | None:
-    if isinstance(value, bool) or value is None or value == "":
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip().replace("%", "").replace(" ", "")
-    # Source numeric strings use a dot as decimal separator. Accept Vietnamese
-    # display input as well without changing stored source values.
-    if text.count(",") == 1 and text.count(".") >= 1:
-        text = text.replace(".", "").replace(",", ".")
-    elif text.count(",") == 1:
-        text = text.replace(",", ".")
-    try:
-        return float(text)
-    except (TypeError, ValueError):
-        return None
-
-
 def _as_decimal(value: Any) -> Decimal | None:
     if isinstance(value, bool) or value is None or value == "":
         return None
-    text = str(value).strip().replace("%", "").replace(" ", "")
-    if text.count(",") == 1 and text.count(".") >= 1:
-        text = text.replace(".", "").replace(",", ".")
-    elif text.count(",") == 1:
-        text = text.replace(",", ".")
+    if isinstance(value, (int, float, Decimal)):
+        text = str(value)
+    else:
+        text = re.sub(r"\s+", "", str(value).strip())
+        negative_parentheses = text.startswith("(") and text.endswith(")")
+        if negative_parentheses:
+            text = text[1:-1]
+        text = re.sub(r"(?i)(VND|VNĐ|USD|EUR|GBP|JPY|CNY|RMB)", "", text)
+        text = text.replace("%", "").replace("₫", "").replace("đ", "").replace("Đ", "")
+        text = text.replace("$", "").replace("€", "").replace("£", "").replace("¥", "")
+        if negative_parentheses:
+            text = f"-{text}"
+    if not re.fullmatch(r"[+-]?[0-9.,]+", text):
+        return None
+
+    sign = ""
+    if text[:1] in {"+", "-"}:
+        sign, text = text[0], text[1:]
+    dots = text.count(".")
+    commas = text.count(",")
+    if dots and commas:
+        decimal_separator = "." if text.rfind(".") > text.rfind(",") else ","
+        grouping_separator = "," if decimal_separator == "." else "."
+        text = text.replace(grouping_separator, "")
+        text = text.replace(decimal_separator, ".")
+    elif dots or commas:
+        separator = "." if dots else ","
+        parts = text.split(separator)
+        grouping = len(parts) > 2 and all(len(part) == 3 for part in parts[1:])
+        if len(parts) == 2 and len(parts[1]) == 3:
+            grouping = True
+        text = "".join(parts) if grouping else "".join(parts[:-1]) + "." + parts[-1]
+    text = sign + text
     try:
         return Decimal(text)
     except (InvalidOperation, ValueError):
@@ -233,8 +244,8 @@ def _column_filter_matches(value: Any, rule: Any) -> bool:
             "not_equals": normalized != expected,
         }
         return checks[operator]
-    actual_number = _as_number(value)
-    expected_number = _as_number(operand)
+    actual_number = _as_decimal(value)
+    expected_number = _as_decimal(operand)
     if actual_number is None or expected_number is None:
         return False
     if operator == "gt": return actual_number > expected_number
@@ -243,7 +254,7 @@ def _column_filter_matches(value: Any, rule: Any) -> bool:
     if operator == "lte": return actual_number <= expected_number
     if operator == "number_equals": return actual_number == expected_number
     if operator == "between":
-        upper = _as_number(rule.get("value_to"))
+        upper = _as_decimal(rule.get("value_to"))
         return upper is not None and expected_number <= actual_number <= upper
     return True
 
@@ -561,17 +572,28 @@ def _read_sorted_results(kind: str, query: dict[str, Any], context, schema, excl
     search = str(query.get("search") or "").strip().casefold()
     filters = query.get("column_filters") or {}
     rows = list(_iter_matching_rows(kind, context, schema, search, filters))
-    populated = [row for row in rows if row[1].get(column) not in (None, "")]
-    missing = [row for row in rows if row[1].get(column) in (None, "")]
+    raw_populated = [row for row in rows if row[1].get(column) not in (None, "")]
+    parsed = [(row, _as_decimal(row[1].get(column))) for row in raw_populated]
+    numeric_ratio = sum(value is not None for _row, value in parsed) / max(1, len(parsed))
+    numeric_sort = (
+        column in NUMBER_RESULT_FIELDS
+        or column in PERCENT_RESULT_FIELDS
+        or column in CONDITIONAL_NUMBER_RESULT_FIELDS and numeric_ratio >= 0.8
+    )
+    if numeric_sort:
+        populated = [(row, value) for row, value in parsed if value is not None]
+        missing = [row for row, value in parsed if value is None]
+        missing.extend(row for row in rows if row[1].get(column) in (None, ""))
+    else:
+        populated = [(row, None) for row in raw_populated]
+        missing = [row for row in rows if row[1].get(column) in (None, "")]
 
-    def key(row):
-        value = row[1].get(column)
-        if column in NUMBER_RESULT_FIELDS or column in PERCENT_RESULT_FIELDS:
-            return _as_decimal(value) or Decimal("0")
-        return _filter_text(value).casefold()
+    def key(entry):
+        row, numeric_value = entry
+        return numeric_value if numeric_sort else _filter_text(row[1].get(column)).casefold()
 
     populated.sort(key=key, reverse=direction == "desc")
-    ordered = populated + missing
+    ordered = [row for row, _value in populated] + missing
     offset = _decode_sorted_cursor(query.get("cursor"))
     page_rows = ordered[offset:offset + limit]
     next_offset = offset + len(page_rows)
