@@ -7,6 +7,7 @@ const DEFAULTS = Object.freeze({
   concurrency: LOCAL_CONCURRENCY,
   retries: 5,
   exportFolder: DEFAULT_EXPORT_FOLDER,
+  pdfConcurrency: 5,
 });
 
 function validatePreferences(value) {
@@ -16,10 +17,12 @@ function validatePreferences(value) {
   const requestedConcurrency = Number(value.concurrency ?? LOCAL_CONCURRENCY);
   const retries = Number(value.retries);
   const exportFolder = value.exportFolder ?? DEFAULT_EXPORT_FOLDER;
+  const pdfConcurrency = Number(value.pdfConcurrency ?? 5);
   if (!Number.isInteger(requestedConcurrency) || requestedConcurrency < 1 || requestedConcurrency > 4) throw new TypeError('invalid_concurrency');
   if (!Number.isInteger(retries) || retries < 0 || retries > 5) throw new TypeError('invalid_retries');
   if (typeof exportFolder !== 'string' || exportFolder.length > 1024 || /[\x00-\x1f]/.test(exportFolder)) throw new TypeError('invalid_export_folder');
-  return { concurrency: LOCAL_CONCURRENCY, retries, exportFolder };
+  if (!Number.isInteger(pdfConcurrency) || pdfConcurrency < 1 || pdfConcurrency > 100) throw new TypeError('invalid_pdf_concurrency');
+  return { concurrency: LOCAL_CONCURRENCY, retries, exportFolder, pdfConcurrency };
 }
 
 async function readPreferences(userDataDirectory) {

@@ -1,199 +1,172 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DateRangePicker } from '../../components/DateRangePicker';
-import { readLastSyncDateRange } from '../../components/date-input-utils';
-import { paginationTokens } from '../../components/pagination-utils';
+import { pageBounds, paginationTokens } from '../../components/pagination-utils';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { NoticeDialog } from '../../components/NoticeDialog';
-import previousIcon from '../../assets/figma/artifact-previous.svg';
-import nextIcon from '../../assets/figma/artifact-next.svg';
-import syncIcon from '../../assets/figma/sync.png';
+import searchIcon from '../../assets/figma/search.png';
 import checkIcon from '../../assets/figma/check.svg';
-import type { AccountConnection, InvoiceDirection, InvoiceQueryType } from '../../lib/api/contracts';
-import type { LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
-import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
-import type { InvoiceArtifactKind, XmlHtmlDownloadLifecycle } from './use-xml-html-download-lifecycle';
-import type { InvoiceArtifactState } from './use-xml-html-download-lifecycle';
+import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
+import type { ArtifactAccountSnapshot, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
+import type { ArtifactDownloadLifecycle } from './use-artifact-download-lifecycle';
 import '../../styles/xml-html.css';
 
-const PAGE_SIZE = 50;
-const DEFAULT_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
-export const XML_HTML_GRID = '55px 130px 130px 130px 160px minmax(300px, 1fr) 150px 140px 150px';
+const ACCOUNT_PAGE_SIZE = 20;
+type RowStatus = 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped';
 
-function text(value: unknown) { return value === null || value === undefined ? '' : String(value); }
-function money(value: unknown) {
-  const amount = Number(value);
-  return Number.isFinite(amount) ? new Intl.NumberFormat('vi-VN').format(amount) : text(value);
-}
-export function artifactRowKey(row: OverviewResult, queryType: InvoiceQueryType) {
-  const f = row.fields;
-  return [row.direction, queryType, text(f.nbmst), text(f.khhdon), text(f.shdon), text(f.khmshdon)].join('|');
-}
-export type XmlHtmlRowStatus = 'Chưa xử lý' | 'Đang tải' | 'Hoàn tất' | 'Lỗi';
-export function resolveArtifactRowStatus(value: {
-  selectedKinds: InvoiceArtifactKind[];
-  states?: Record<InvoiceArtifactKind, InvoiceArtifactState>;
-  batchRelevant: boolean;
-}): XmlHtmlRowStatus {
-  if (!value.batchRelevant || !value.states) return 'Chưa xử lý';
-  if (value.selectedKinds.some((kind) => value.states?.[kind] === 'failed')) return 'Lỗi';
-  if (value.selectedKinds.every((kind) => value.states?.[kind] === 'completed')) return 'Hoàn tất';
-  if (value.selectedKinds.some((kind) => value.states?.[kind] === 'running')) return 'Đang tải';
-  return 'Chưa xử lý';
-}
-export function artifactCounterText(
-  kinds: InvoiceArtifactKind[], total: number,
-  completedKeys: Record<InvoiceArtifactKind, Set<string>>,
-) {
-  return kinds.map((kind) => `${kind.toUpperCase()} ${completedKeys[kind].size}/${total}`).join(' · ');
-}
-function StopIcon() {
-  return <svg className="stop-button-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="4" y="4" width="10" height="10" rx="1.5" /></svg>;
-}
-function DownloadIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>;
+export interface ArtifactSelectionState {
+  dateFrom: string;
+  dateTo: string;
+  directions: InvoiceDirection[];
 }
 
-export function XmlHtmlPage({ accounts, selectedConnectionIds, folder, onFolder, lifecycle }: {
+export async function loadArtifactSnapshots(request: ArtifactSnapshotRequest) {
+  const chunks: string[][] = [];
+  for (let index = 0; index < request.connection_ids.length; index += 50) chunks.push(request.connection_ids.slice(index, index + 50));
+  const results = await Promise.all(chunks.map((connection_ids) => window.miaRuntime!.artifacts.snapshot({ ...request, connection_ids })));
+  return results.flatMap((result) => result.accounts);
+}
+
+function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
+  return <span className="selection-box" data-checked={checked || indeterminate}>{indeterminate ? '−' : checked ? '✓' : ''}</span>;
+}
+
+function OptionCheck({ checked, label, onChange }: { checked: boolean; label: string; onChange(): void }) {
+  return <label><input className="option-input" type="checkbox" checked={checked} onChange={onChange} /><span className="option-box" data-checked={checked}>{checked ? <img src={checkIcon} alt="" /> : null}</span>{label}</label>;
+}
+
+function formatDate(value: string) {
+  const [year, month, day] = value.split('-');
+  return year && month && day ? `${day}/${month}/${year}` : value;
+}
+
+function Quantity({ snapshot }: { snapshot?: ArtifactAccountSnapshot }) {
+  const total = snapshot?.total ?? 0;
+  return <span className="artifact-quantity">{(['xml', 'html', 'pdf'] as const).map((kind) => <span key={kind}><strong>{kind.toUpperCase()}</strong> {(snapshot?.cached[kind] ?? 0).toLocaleString('vi-VN')}/{total.toLocaleString('vi-VN')}</span>)}</span>;
+}
+
+function FormatIcon({ kind }: { kind: InvoiceArtifactKind }) {
+  return <span className="artifact-format-icon" data-kind={kind} aria-hidden="true">{kind === 'xml' ? '</>' : kind === 'html' ? '<H>' : 'PDF'}</span>;
+}
+
+function ProgressCard({ kind, lifecycle }: { kind: InvoiceArtifactKind; lifecycle: ArtifactDownloadLifecycle }) {
+  const progress = lifecycle.status?.formats[kind];
+  if (!progress) return null;
+  const label = kind === 'pdf'
+    ? progress.status === 'preparing' ? 'Đang chuẩn bị dữ liệu...' : progress.status === 'completed' ? 'Đã xuất PDF' : 'Đang xuất PDF...'
+    : progress.status === 'completed' ? `Đã tải ${kind.toUpperCase()}` : `Đang tải ${kind.toUpperCase()}...`;
+  return <article className="artifact-progress-card" data-kind={kind} data-status={progress.status}>
+    <header><FormatIcon kind={kind} /><div><h2>{kind.toUpperCase()}</h2><span>{label}</span></div></header>
+    <div className="artifact-progress-copy"><span>Tiến độ: {progress.processed.toLocaleString('vi-VN')} / {progress.total.toLocaleString('vi-VN')}</span><strong>{Math.round(progress.percent)}%</strong></div>
+    <div className="artifact-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }} /></div>
+    <p title={progress.current_invoice ?? ''}>{progress.current_invoice ? `Đang xử lý: ${progress.current_invoice}` : kind === 'pdf' && progress.status === 'preparing' ? 'Đang chờ HTML và tài nguyên offline đầu tiên.' : 'Đang chuẩn bị danh sách hóa đơn...'}</p>
+    <footer><small>{progress.processed - progress.failed} {kind.toUpperCase()}{progress.failed ? ` · ${progress.failed} lỗi` : ''}</small><button type="button" disabled={['completed', 'stopped', 'failed', 'stopping'].includes(progress.status)} onClick={() => void lifecycle.stop(kind)}>Dừng {kind.toUpperCase()}</button></footer>
+  </article>;
+}
+
+export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, lifecycle, selection, onSelectionChange, pdfConcurrency }: {
   accounts: AccountConnection[];
   selectedConnectionIds: string[];
+  onSelectAccount(id: string): void;
+  onSelectAccounts(ids: string[]): void;
   folder: string;
   onFolder(value: string): void;
-  lifecycle: XmlHtmlDownloadLifecycle;
+  lifecycle: ArtifactDownloadLifecycle;
+  selection: ArtifactSelectionState;
+  onSelectionChange(value: ArtifactSelectionState): void;
+  pdfConcurrency: number;
 }) {
-  const initialRange = useRef(readLastSyncDateRange() ?? DEFAULT_RANGE).current;
-  const [connectionId, setConnectionId] = useState(selectedConnectionIds[0] ?? accounts[0]?.connection_id ?? '');
-  const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
-  const [dateTo, setDateTo] = useState(initialRange.dateTo);
-  const [direction, setDirection] = useState<InvoiceDirection | ''>('');
-  const [queryType, setQueryType] = useState<InvoiceQueryType>('query');
-  const [forceRefresh, setForceRefresh] = useState(false);
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [kinds, setKinds] = useState<InvoiceArtifactKind[]>(['xml', 'html']);
-  const [items, setItems] = useState<OverviewResult[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [pagination, setPagination] = useState<LocalResultPage<OverviewResult>['pagination'] | null>(null);
+  const [snapshots, setSnapshots] = useState<Record<string, ArtifactAccountSnapshot>>({});
+  const [snapshotState, setSnapshotState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [page, setPage] = useState(1);
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [feedback, setFeedback] = useState('');
-  const cache = useRef(new Map<number, LocalResultPage<OverviewResult>>());
-  const cursors = useRef(new Map<number, string | null>([[1, null]]));
+  const [feedback, setFeedback] = useState<string | null>(null);
   const generation = useRef(0);
+  const accountIds = useMemo(() => accounts.map((account) => account.connection_id), [accounts]);
 
-  useEffect(() => { if (!connectionId && accounts[0]) setConnectionId(accounts[0].connection_id); }, [accounts, connectionId]);
-  useEffect(() => { const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250); return () => clearTimeout(timer); }, [search]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const outside = (event: PointerEvent) => { if (event.target instanceof Element && !event.target.closest('.artifact-direction-wrap')) setMenuOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [menuOpen]);
 
-  const query = useMemo(() => ({
-    connection_id: connectionId, limit: PAGE_SIZE, search: debouncedSearch,
-    direction: direction || null, query_type: queryType, date_from: dateFrom, date_to: dateTo,
-  }), [connectionId, dateFrom, dateTo, debouncedSearch, direction, queryType]);
-
-  const loadPage = useCallback(async (target: number, token = generation.current) => {
-    if (!connectionId || target < 1) { setItems([]); setTotalCount(0); setState('ready'); return; }
-    setState('loading');
-    try {
-      for (let current = 1; current <= target; current += 1) {
-        let result = cache.current.get(current);
-        if (!result) {
-          const cursor = cursors.current.get(current);
-          if (cursor === undefined) return;
-          result = await window.miaRuntime!.results.overview({ ...query, cursor });
-          if (token !== generation.current) return;
-          cache.current.set(current, result);
-        }
-        if (result.pagination.has_more && result.pagination.next_cursor) cursors.current.set(current + 1, result.pagination.next_cursor);
-        if (current === target || !result.pagination.has_more) {
-          setItems(result.items); setPagination(result.pagination);
-          setTotalCount(result.total_count ?? result.items.length); setPage(current); setState('ready');
-          return;
-        }
-      }
-    } catch { if (token === generation.current) setState('error'); }
-  }, [connectionId, query]);
-
-  const resetAndLoad = useCallback(() => {
+  useEffect(() => {
     const token = ++generation.current;
-    cache.current.clear(); cursors.current.clear(); cursors.current.set(1, null); setPage(1);
-    void loadPage(1, token);
-  }, [loadPage]);
-  useEffect(resetAndLoad, [resetAndLoad, lifecycle.syncRevision]);
+    if (!accountIds.length || !selection.directions.length) { setSnapshots({}); setSnapshotState('ready'); return; }
+    setSnapshotState('loading');
+    const timer = window.setTimeout(() => {
+      void loadArtifactSnapshots({ connection_ids: accountIds, directions: selection.directions, date_from: selection.dateFrom, date_to: selection.dateTo }).then((items) => {
+        if (token !== generation.current) return;
+        setSnapshots(Object.fromEntries(items.map((item) => [item.connection_id, item])));
+        setSnapshotState('ready');
+      }).catch(() => { if (token === generation.current) setSnapshotState('error'); });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [accountIds, lifecycle.status?.status, selection.dateFrom, selection.dateTo, selection.directions]);
 
-  function toggleKind(kind: InvoiceArtifactKind) {
-    setKinds((current) => current.includes(kind) ? current.filter((value) => value !== kind) : [...current, kind]);
+  const rows = accounts.map((account) => {
+    const task = lifecycle.status?.accounts[account.connection_id];
+    const snapshot = task ?? snapshots[account.connection_id];
+    const status: RowStatus = task?.status === 'downloading' ? 'downloading' : task?.status === 'completed' ? 'completed' : task?.status === 'error' ? 'error' : task?.status === 'stopped' ? 'stopped' : snapshot?.ready ? 'ready' : 'not_ready';
+    return { account, snapshot, status };
+  });
+  const filteredRows = rows.filter(({ account, status }) => {
+    const term = search.trim().toLocaleLowerCase('vi');
+    return (!term || `${account.username} ${account.company_name ?? ''}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || status === statusFilter);
+  });
+  const { currentPage, totalPages, start, end } = pageBounds(filteredRows.length, page, ACCOUNT_PAGE_SIZE);
+  const pageRows = filteredRows.slice(start, end);
+  const tokens = paginationTokens(totalPages, currentPage);
+  const filteredIds = filteredRows.map((row) => row.account.connection_id);
+  const selectedFiltered = filteredIds.filter((id) => selectedConnectionIds.includes(id));
+  const selectedSnapshots = selectedConnectionIds.map((id) => snapshots[id]).filter(Boolean);
+  const coverageReady = selectedSnapshots.length === selectedConnectionIds.length && selectedSnapshots.every((item) => item.ready);
+  useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [currentPage, page]);
+
+  function toggleDirection(direction: InvoiceDirection) {
+    const directions = selection.directions.includes(direction) ? selection.directions.filter((item) => item !== direction) : [...selection.directions, direction];
+    if (!directions.length) { setFeedback('Vui lòng giữ ít nhất một lựa chọn Mua vào hoặc Bán ra.'); return; }
+    onSelectionChange({ ...selection, directions });
   }
+  function toggleKind(kind: InvoiceArtifactKind) { setKinds((current) => current.includes(kind) ? current.filter((item) => item !== kind) : [...current, kind]); }
   async function chooseFolder() { const selected = await window.miaRuntime?.artifacts.selectDirectory(); if (selected) onFolder(selected); }
-  function syncOverview() {
-    if (!connectionId) { setFeedback('Vui lòng chọn tài khoản.'); return; }
-    lifecycle.startSync({ connectionId, dateFrom, dateTo, direction: direction || null, queryType, forceRefresh });
-  }
-  function startDownload() {
-    if (!connectionId) { setFeedback('Vui lòng chọn tài khoản.'); return; }
+  async function startDownload() {
+    if (!selectedConnectionIds.length) { setFeedback('Vui lòng chọn ít nhất một tài khoản.'); return; }
+    if (!kinds.length) { setFeedback('Vui lòng chọn ít nhất một định dạng XML, HTML hoặc PDF.'); return; }
     if (!folder.trim()) { setFeedback('Vui lòng chọn thư mục lưu trữ.'); return; }
-    if (!kinds.length) { setFeedback('Vui lòng chọn XML, HTML hoặc cả hai.'); return; }
-    if (totalCount === 0) {
-      setFeedback('Chưa có dữ liệu hóa đơn trong khoảng thời gian này. Vui lòng Đồng bộ dữ liệu trước.');
-      return;
-    }
-    setFeedback('');
-    lifecycle.start({ connectionId, dateFrom, dateTo, direction: direction || null, queryType, search: debouncedSearch, kinds, destination: folder, totalRows: totalCount });
+    if (!coverageReady) { setFeedback(`Khoảng thời gian ${formatDate(selection.dateFrom)} - ${formatDate(selection.dateTo)} chưa được đồng bộ đầy đủ. Vui lòng sang Quản lý HĐĐT để đồng bộ trước.`); return; }
+    await lifecycle.start({ destination: folder, connection_ids: selectedConnectionIds, directions: selection.directions, kinds, date_from: selection.dateFrom, date_to: selection.dateTo, pdf_concurrency: pdfConcurrency });
   }
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
-  const tokens = paginationTokens(totalPages, page);
-  const batchOnCurrentAccount = lifecycle.request?.connectionId === connectionId;
-  const selectedBatchKinds = batchOnCurrentAccount ? lifecycle.request?.kinds ?? kinds : kinds;
-
-  function progressFor(row: OverviewResult) {
-    const key = artifactRowKey(row, queryType);
-    return resolveArtifactRowStatus({
-      selectedKinds: selectedBatchKinds,
-      states: lifecycle.artifactStates[key],
-      batchRelevant: batchOnCurrentAccount && lifecycle.targetKeys.has(key),
-    });
-  }
-
-  const progressKinds = lifecycle.request?.kinds ?? kinds;
-  const progressTotal = lifecycle.request?.totalRows ?? totalCount;
-  const counterText = artifactCounterText(progressKinds, progressTotal, lifecycle.completedKeys);
-  const downloadTitle = progressKinds.length === 1 ? `Đang tải ${progressKinds[0].toUpperCase()}` : 'Đang tải XML/HTML';
-  const syncLabel = lifecycle.syncActive && lifecycle.job ? formatSourceJobProgress(lifecycle.job) : '';
-  const filterSettled = debouncedSearch === search.trim();
-
-  return <section className="xml-html-page" aria-labelledby="xml-html-title">
-    <header><div><h1 id="xml-html-title">XML/HTML</h1><p>Tra cứu XML/HTML các hóa đơn đã/chưa đồng bộ</p></div></header>
-
-    <section className="xml-html-control-block" aria-label="Thiết lập XML HTML">
-      <div className="xml-html-control-row">
-        <DateRangePicker disabled={lifecycle.active} dateFrom={dateFrom} dateTo={dateTo} onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
-        <select disabled={lifecycle.active} className="xml-html-company" aria-label="Chọn công ty" title={accounts.find((account) => account.connection_id === connectionId)?.company_name || ''} value={connectionId} onChange={(event) => setConnectionId(event.target.value)}>{accounts.map((account) => <option key={account.connection_id} value={account.connection_id}>{account.company_name || account.username}</option>)}</select>
-        <select disabled={lifecycle.active} className="xml-html-query-type" aria-label="Loại hóa đơn" value={queryType} onChange={(event) => setQueryType(event.target.value as InvoiceQueryType)}><option value="query">Hóa đơn điện tử</option><option value="sco-query">Máy tính tiền</option></select>
-        <select disabled={lifecycle.active} className="xml-html-direction" aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as InvoiceDirection | '')}><option value="">Mua vào và Bán ra</option><option value="purchase">Mua vào</option><option value="sold">Bán ra</option></select>
-        <label className="xml-html-refresh"><input disabled={lifecycle.active} type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" /><span data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>Tải mới dữ liệu</label>
-        <button className="xml-html-sync" type="button" disabled={lifecycle.active} onClick={syncOverview}><img src={syncIcon} alt="" />{lifecycle.syncActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}</button>
-      </div>
-      <div className="xml-html-control-row xml-html-control-row--storage">
-        <StorageFolderPicker value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Thư mục lưu trữ XML/HTML" />
-        <div className="xml-html-kind-options" aria-label="Định dạng tải xuống">{(['xml', 'html'] as const).map((kind) => <label key={kind} data-active={kinds.includes(kind)}><input disabled={lifecycle.active} type="checkbox" checked={kinds.includes(kind)} onChange={() => toggleKind(kind)} /><span>{kind.toUpperCase()}</span></label>)}</div>
-        <input disabled={lifecycle.active} className="xml-html-search" aria-label="Tìm kiếm hóa đơn" placeholder="Số HĐ, ký hiệu, MST..." value={search} onChange={(event) => setSearch(event.target.value)} />
-      </div>
+  return <section className="artifact-account-page" aria-labelledby="artifact-title">
+    <header className="artifact-account-header"><h1 id="artifact-title">XML/HTML/PDF</h1><p>Tải artifact từ dữ liệu Tổng quan đã đồng bộ trong MIA WT.</p></header>
+    <section className="artifact-toolbar-card" aria-label="Thiết lập tải artifact">
+      <DateRangePicker disabled={lifecycle.active} dateFrom={selection.dateFrom} dateTo={selection.dateTo} onChange={(dateFrom, dateTo) => onSelectionChange({ ...selection, dateFrom, dateTo })} />
+      <div className="artifact-direction-wrap"><button className="compact-select" type="button" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}>{selection.directions.length === 2 ? 'Mua vào và Bán ra' : selection.directions[0] === 'sold' ? 'Bán ra' : 'Mua vào'} <i className="chevron" /></button>{menuOpen ? <div className="figma-option-menu artifact-direction-menu"><OptionCheck checked={selection.directions.includes('purchase')} label="Mua vào" onChange={() => toggleDirection('purchase')} /><OptionCheck checked={selection.directions.includes('sold')} label="Bán ra" onChange={() => toggleDirection('sold')} /></div> : null}</div>
+      <div className="artifact-kind-options" aria-label="Định dạng tải xuống">{(['xml', 'html', 'pdf'] as const).map((kind) => <label key={kind} data-active={kinds.includes(kind)}><input type="checkbox" checked={kinds.includes(kind)} disabled={lifecycle.active} onChange={() => toggleKind(kind)} /><span>{kind.toUpperCase()}</span></label>)}</div>
+      <StorageFolderPicker value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Thư mục lưu trữ XML HTML PDF" />
     </section>
-
-    <div className="xml-html-download-actions">
-      <button className="primary-download-button xml-html-download" type="button" disabled={lifecycle.active || kinds.length === 0 || !filterSettled} onClick={startDownload}><DownloadIcon />Tải xuống kết quả</button>
-      <button className="stop-button xml-html-stop" type="button" disabled={!lifecycle.canStop} onClick={() => void lifecycle.stop()}><StopIcon />{lifecycle.phase === 'stopping' ? 'Đang dừng…' : 'Dừng tải'}</button>
-    </div>
-
-    {lifecycle.syncActive ? <div className="xml-html-sync-progress" role="status"><strong>Đang đồng bộ dữ liệu</strong><span>{syncLabel}</span><i><b style={{ width: `${lifecycle.sourcePercent}%` }} /></i><em>{Math.round(lifecycle.sourcePercent)}%</em></div> : null}
-    {lifecycle.downloadActive && batchOnCurrentAccount ? <div className="xml-html-progress" role="status"><div><strong>{downloadTitle}</strong><b>{Math.round(lifecycle.percent)}%</b></div><small>{counterText}</small><span><i style={{ width: `${lifecycle.percent}%` }} /></span></div> : null}
-
-    {state === 'error' ? <div className="xml-html-state">Không thể đọc dữ liệu hóa đơn đã đồng bộ.</div> : null}
-    {state === 'loading' && !items.length ? <div className="xml-html-state">Đang tải...</div> : null}
-    {state === 'ready' && !items.length ? <div className="xml-html-state">Không tồn tại hóa đơn trong thời gian này.</div> : null}
-    {items.length ? <div className="xml-html-table" tabIndex={0} aria-label="Danh sách hóa đơn XML HTML">
-      <div className="xml-html-row xml-html-row--head" style={{ gridTemplateColumns: XML_HTML_GRID }}><span>STT</span><span>Ngày hóa đơn</span><span>Ký hiệu</span><span>Số hóa đơn</span><span>MST đối tác</span><span>Đối tác</span><span>Tổng tiền</span><span>Trạng thái</span><span>Tiến trình</span></div>
-      {items.map((row, index) => { const f = row.fields; const purchase = row.direction === 'purchase'; const partner = text(purchase ? f.nbten : f.nmten); const values = [(page - 1) * PAGE_SIZE + index + 1, text(f.tdlap || f.nlap), text(f.khhdon), text(f.shdon), text(purchase ? f.nbmst : f.nmmst), partner, money(f.tgtttbso || f.tgtttbchu), text(f.tthai), progressFor(row)]; return <div className="xml-html-row" style={{ gridTemplateColumns: XML_HTML_GRID }} key={`${row.direction}:${row.row_id}`}>{values.map((value, cell) => <span key={cell} className={cell === 6 ? 'xml-html-amount' : undefined} data-progress={cell === 8 ? String(value) : undefined} title={cell === 8 ? undefined : String(value)}>{value}</span>)}</div>; })}
-    </div> : null}
-    {(items.length > 0 || page > 1) ? <footer className="artifact-pager"><span>Tổng {totalCount} hàng · tối đa {PAGE_SIZE} hàng/trang</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={page === 1 || state === 'loading'} onClick={() => void loadPage(page - 1)}><img src={previousIcon} alt="" /></button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`e-${index}`}>...</span> : <button type="button" key={token} data-active={page === token} onClick={() => void loadPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={!pagination?.has_more || state === 'loading'} onClick={() => void loadPage(page + 1)}><img src={nextIcon} alt="" /></button></div></footer> : null}
-    {(feedback || lifecycle.message) ? <NoticeDialog kind={lifecycle.phase === 'completed' && lifecycle.failedCount === 0 ? 'success' : 'notice'} message={feedback || lifecycle.message || ''} onClose={() => { setFeedback(''); lifecycle.clearMessage(); }} /> : null}
+    <section className="artifact-account-content">
+      <div className="artifact-account-filters"><div><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản artifact" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái artifact" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="ready">Sẵn sàng tải</option><option value="not_ready">Chưa đồng bộ</option><option value="downloading">Đang tải</option><option value="completed">Hoàn thành</option><option value="error">Lỗi tài khoản</option><option value="stopped">Đã dừng</option></select></div><div><button className="primary-download-button artifact-download-button" type="button" disabled={lifecycle.active || !selectedConnectionIds.length || !kinds.length || snapshotState !== 'ready'} onClick={() => void startDownload()}>Tải xuống</button><button className="stop-button artifact-global-stop" type="button" disabled={!lifecycle.active} onClick={() => void lifecycle.stop()}>Dừng tải</button></div></div>
+      {lifecycle.status?.current_account_id ? <div className="artifact-progress-cards" data-count={Object.keys(lifecycle.status.formats).length}>{kinds.map((kind) => <ProgressCard key={kind} kind={kind} lifecycle={lifecycle} />)}</div> : null}
+      <div className="artifact-account-table">
+        <div className="artifact-account-row artifact-account-row--head"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản artifact đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span>Số lượng</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span></div>
+        <div className="artifact-account-body">{pageRows.map(({ account, snapshot, status }) => {
+          const formats = lifecycle.status?.current_account_id === account.connection_id ? lifecycle.status.formats : null;
+          const progress = formats ? Math.round(Object.values(formats).reduce((sum, item) => sum + (item?.percent ?? 0), 0) / Math.max(1, Object.keys(formats).length)) : status === 'completed' ? 100 : 0;
+          const statusText = status === 'ready' ? 'Sẵn sàng tải' : status === 'not_ready' ? `Chưa đồng bộ từ ${formatDate(selection.dateFrom)} - ${formatDate(selection.dateTo)}` : status === 'downloading' ? 'Đang tải' : status === 'completed' ? 'Hoàn thành' : status === 'error' ? 'Lỗi tài khoản' : 'Đã dừng';
+          return <div className="artifact-account-row" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><span className="artifact-account-status" data-status={status}>{statusText}</span><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action">—</span></div>;
+        })}</div>
+        {snapshotState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{snapshotState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra trạng thái artifact.</div> : null}{snapshotState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
+      </div>
+      <footer className="pagination"><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
+      <div className="artifact-open-folder"><button type="button" disabled={!folder.trim()} onClick={() => void window.miaRuntime?.artifacts.openDirectory(folder).catch(() => setFeedback('Không thể mở thư mục lưu trữ.'))}>Mở thư mục</button></div>
+    </section>
+    {(feedback || lifecycle.message) ? <NoticeDialog kind={lifecycle.status?.status === 'completed' ? 'success' : 'notice'} message={feedback || lifecycle.message || ''} onClose={() => { setFeedback(null); lifecycle.clearMessage(); }} /> : null}
   </section>;
 }
