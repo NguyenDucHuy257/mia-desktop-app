@@ -18,6 +18,35 @@ from mia_source_results import _available_path
 
 
 class SourceJobIntentTests(unittest.TestCase):
+    def test_sync_mode_snapshots_baseline_and_forces_selected_range_query(self):
+        backend = object.__new__(ProductionBackend)
+        backend.repository = SimpleNamespace(desktop_job_metadata=None)
+        backend.service = Mock()
+        backend.service.get_account_connection.return_value = SimpleNamespace(username="0100000000")
+        captured = {}
+
+        def create_job(_body, **_kwargs):
+            captured.update(backend.repository.desktop_job_metadata or {})
+            return SimpleNamespace(job_id="job-supplement")
+
+        backend.service.create_job.side_effect = create_job
+        with patch.object(backend, "_invoice_direction_metrics", return_value={"invoice_count": 1245}), patch.object(
+            ProductionBackend, "public_job", return_value={"job_id": "job-supplement", "status": "queued"}
+        ):
+            backend.start({
+                "idempotency_key": "supplement-test",
+                "intent": {
+                    "connection_id": "conn_123456", "date_from": "2025-01-01", "date_to": "2025-08-31",
+                    "directions": ["purchase"], "query_types": ["query", "sco-query"],
+                    "scopes": ["overview", "detail"], "data_types": ["invoice"],
+                    "force_refresh": False, "refresh_latest_month": True, "sync_mode": "supplement",
+                },
+            })
+        body = backend.service.create_job.call_args.args[0]
+        self.assertTrue(body.force_refresh)
+        self.assertEqual(captured, {"sync_mode": "supplement", "baseline_invoice_count": 1245})
+        self.assertIsNone(backend.repository.desktop_job_metadata)
+
     def test_refresh_options_are_forwarded_to_source_create_job_body(self):
         backend = object.__new__(ProductionBackend)
         source_job = SimpleNamespace(job_id="job-source")

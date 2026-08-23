@@ -48,7 +48,16 @@ test('account forms validate input and submit through the browser demo adapter',
   await page.getByRole('button', { name: 'Đóng' }).click();
   await expect(page.getByLabel('Mật khẩu')).toHaveValue('');
 
+  const beforeTabs = await page.getByRole('tab').evaluateAll((tabs) => tabs.map((tab) => {
+    const box = tab.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }));
   await page.getByRole('tab', { name: 'Thêm hàng loạt' }).click();
+  const afterTabs = await page.getByRole('tab').evaluateAll((tabs) => tabs.map((tab) => {
+    const box = tab.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  }));
+  expect(afterTabs).toEqual(beforeTabs);
   await page.getByLabel('Nhập danh sách tài khoản (MST|PASSWORD)').fill(
     '0309876543|password-one\ninvalid-line',
   );
@@ -68,7 +77,7 @@ test('local account list starts empty, persists in the gateway and supports dele
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await expect(page.getByText('Hiển thị 1–1 trên tổng 1 tài khoản')).toBeVisible();
-  await expect(page.getByText('—')).toBeVisible();
+  await expect(page.getByTitle('—')).toBeVisible();
   await expect(page.getByText('Chưa kiểm tra đăng nhập')).toBeVisible();
   const accountSelection = page.getByRole('button', { name: 'Chọn 0101234567' }).locator('.selection-box');
   await expect(accountSelection).toHaveAttribute('data-checked', 'true');
@@ -139,6 +148,7 @@ test('detail results retain total rows on page two and empty export is stopped b
       accountConnections: { list: async () => [account], create: async () => account, get: async () => account, reconnect: async () => account, revoke: async () => undefined },
       jobs: {
         resume: async () => record,
+        resumeAll: async () => [record],
         start: async () => ({ record, accepted: {} }),
         status: async () => ({ job_id: record.job_id, status: 'completed', stage: null, overall_percent: 100, current_month: null, updated_at: 'now', error: null }),
         summary: async () => ({ job_id: record.job_id, status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
@@ -206,6 +216,15 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
     const record = { job_id: 'job-1', connection_id: 'conn_demo', intent: {}, idempotency_key: 'desktop-fixed', created_at: 'now', updated_at: 'now' };
     Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
       resume: async () => null,
+      syncStates: async (connectionIds: string[], direction: string) => connectionIds.map((connection_id) => direction === 'purchase' ? ({
+        connection_id, direction, status: 'completed', current_month: null,
+        sync_from: '2025-01-01', sync_until: '2025-08-31', invoice_count: 1320,
+        baseline_invoice_count: null, added_invoice_count: null, last_job_id: 'old-purchase', sync_mode: 'new',
+      }) : ({
+        connection_id, direction, status: 'not_synced', current_month: null,
+        sync_from: null, sync_until: null, invoice_count: 0,
+        baseline_invoice_count: null, added_invoice_count: null, last_job_id: null, sync_mode: null,
+      })),
       start: async () => ({ record, accepted: { job_id: 'job-1', status: 'queued', current_stage: null, worker_slot_id: null } }),
       status: async () => ({ job_id: 'job-1', status: ++calls === 1 ? 'running' : 'running', stage: 'overview', overall_percent: 35, current_month: { key: '2026-01', index: 1, total: 1, processed: 35, planned: 100, percent: 35 }, updated_at: 'now', error: null }),
       summary: async () => ({ job_id: 'job-1', status: 'cancelled', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
@@ -220,17 +239,29 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
+  await expect(page.getByText('1.320 hóa đơn')).toBeVisible();
+  await expect(page.getByText('Đã đồng bộ', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  await expect(page.getByRole('status')).toContainText('35% tổng thể');
-  await expect(page.getByRole('status')).toContainText('35/100');
+  await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
+  await expect(page.locator('.progress-cell')).toContainText('35%');
+  await expect(page.locator('.progress-cell')).toContainText('Đang chuẩn bị dữ liệu tổng quan');
   await page.getByRole('button', { name: 'Dừng tải' }).click();
-  await expect(page.getByRole('status')).toContainText('cancelling');
+  await expect(page.getByRole('button', { name: 'Đồng bộ dữ liệu' })).toContainText('Đang dừng');
 });
 
-test('allows combined overview/detail and multi-select purchase/sold directions', async ({ page }) => {
+test('keeps exactly one purchase/sold direction and sends the selected sync mode', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
       resume: async () => null,
+      syncStates: async (connectionIds: string[], direction: string) => connectionIds.map((connection_id) => direction === 'purchase' ? ({
+        connection_id, direction, status: 'completed', current_month: null,
+        sync_from: '2025-01-01', sync_until: '2025-08-31', invoice_count: 1320,
+        baseline_invoice_count: null, added_invoice_count: null, last_job_id: 'old-purchase', sync_mode: 'new',
+      }) : ({
+        connection_id, direction, status: 'not_synced', current_month: null,
+        sync_from: null, sync_until: null, invoice_count: 0,
+        baseline_invoice_count: null, added_invoice_count: null, last_job_id: null, sync_mode: null,
+      })),
       start: async (intent: unknown) => {
         (window as typeof window & { capturedIntent?: unknown }).capturedIntent = intent;
         return { record: { job_id: 'job-options', connection_id: 'conn_demo', intent, idempotency_key: 'desktop-options', created_at: 'now', updated_at: 'now' }, accepted: { job_id: 'job-options', status: 'queued', current_stage: null, worker_slot_id: null } };
@@ -247,15 +278,24 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
+  await expect(page.getByText('1.320 hóa đơn')).toBeVisible();
+  await expect(page.getByText('Đã đồng bộ', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Mua vào' }).click();
   await expect(page.getByLabel('Loại giao dịch').getByText('Mua vào')).toBeVisible();
   await expect(page.getByLabel('Loại giao dịch').getByText('Bán ra')).toBeVisible();
   await page.getByLabel('Loại giao dịch').getByText('Mua vào', { exact: true }).click();
-  await page.getByLabel('Loại giao dịch').getByText('Bán ra', { exact: true }).click();
-  await expect(page.getByLabel('Loại giao dịch').getByLabel('Mua vào')).not.toBeChecked();
+  await expect(page.getByLabel('Loại giao dịch').getByLabel('Mua vào')).toBeChecked();
   await expect(page.getByLabel('Loại giao dịch').getByLabel('Bán ra')).not.toBeChecked();
   await page.getByLabel('Loại giao dịch').getByText('Bán ra', { exact: true }).click();
-  await page.getByRole('button', { name: 'Mua vào' }).click();
+  await expect(page.getByLabel('Loại giao dịch').getByLabel('Mua vào')).not.toBeChecked();
+  await expect(page.getByLabel('Loại giao dịch').getByLabel('Bán ra')).toBeChecked();
+  await expect(page.getByText('0 hóa đơn')).toBeVisible();
+  await expect(page.locator('.sync-state-cell').getByText('Chưa đồng bộ', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Bán ra' }).click();
+  await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await expect(page.getByRole('menu', { name: 'Chọn cách đồng bộ' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menu', { name: 'Chọn cách đồng bộ' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await expect(page.locator('[data-node-id="4:654"] .option-box[data-checked="true"]')).toHaveCount(2);
   await page.locator('[data-node-id="4:654"]').getByText('Tổng quan', { exact: true }).click();
@@ -268,6 +308,7 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('31/01/2026');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
   await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Vui lòng chọn ít nhất');
   await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
   await page.getByRole('button', { name: 'Đóng' }).click();
@@ -275,8 +316,9 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'] });
+  await page.getByRole('menuitem', { name: /Đồng bộ bổ sung/ }).click();
+  const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[]; sync_mode?: string } }).capturedIntent);
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement' });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
@@ -292,7 +334,7 @@ test('shows bounded polling failure and lets the user retry', async ({ page }) =
   await expect(page.getByText('Mất kết nối tạm thời, đang thử lại…')).toBeVisible();
 });
 
-test('shows job errors in a centered red error dialog', async ({ page }) => {
+test('shows sanitized job start errors in the account row', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
       resume: async () => null,
@@ -308,9 +350,9 @@ test('shows job errors in a centered red error dialog', async ({ page }) => {
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Thông báo lỗi' })).toContainText('Không thể tạo job');
-  await expect(page.locator('.notice-icon[data-kind="error"]')).toHaveText('×');
-  await expect(page.getByRole('button', { name: 'Đóng' })).toBeVisible();
+  await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
+  await expect(page.locator('.failure-message')).toContainText('Không thể tạo tác vụ đồng bộ');
+  await expect(page.locator('.failure-message')).not.toContainText('sanitized failure');
 });
 
 test('opens local overview/detail results and paginates by cursor', async ({ page }) => {

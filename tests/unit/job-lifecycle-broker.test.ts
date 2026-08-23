@@ -14,6 +14,8 @@ describe('local source job lifecycle IPC broker', () => {
     expect(validateIntent(intent)).toEqual(intent);
     expect(validateIntent({ ...intent, force_refresh: true })).toEqual({ ...intent, force_refresh: true });
     expect(validateIntent({ ...intent, refresh_latest_month: true })).toEqual({ ...intent, refresh_latest_month: true });
+    expect(validateIntent({ ...intent, sync_mode: 'supplement' })).toEqual({ ...intent, sync_mode: 'supplement' });
+    expect(() => validateIntent({ ...intent, sync_mode: 'replace' })).toThrow();
     expect(() => validateIntent({ ...intent, force_refresh: 'yes' })).toThrow();
     expect(() => validateIntent({ ...intent, detail_limit: 1 })).toThrow();
     expect(() => validateIntent({ ...intent, date_from: '2026-02-01' })).toThrow();
@@ -21,6 +23,15 @@ describe('local source job lifecycle IPC broker', () => {
     expect(() => validateIntent({ ...intent, data_types: [] })).toThrow();
     expect(() => validateIntent({ ...intent, connection_id: 'legacy-account-id' })).toThrow();
     expect(() => validateJobId('../secret')).toThrow();
+  });
+
+  it('validates direction-specific sync state reads before crossing IPC', async () => {
+    const invoke = vi.fn().mockResolvedValue([]);
+    const broker = createJobLifecycleBroker(() => ({ invoke }));
+    await expect(broker.syncStates(['conn_123456'], 'purchase')).resolves.toMatchObject({ ok: true, data: [] });
+    expect(invoke).toHaveBeenCalledWith('source.sync.states', { connection_ids: ['conn_123456'], direction: 'purchase' });
+    await expect(broker.syncStates(['../bad'], 'purchase')).resolves.toMatchObject({ ok: false, error: { code: 'invalid_connection_id' } });
+    await expect(broker.syncStates(['conn_123456'], 'both')).resolves.toMatchObject({ ok: false, error: { code: 'invalid_job_input' } });
   });
 
   it('derives the same idempotency key for equivalent normalized intents', () => {

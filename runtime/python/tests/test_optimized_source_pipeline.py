@@ -56,6 +56,15 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         )
         self.assertEqual(planner.calls, 0)
 
+    def test_supplement_mode_is_propagated_to_overview_units(self):
+        payload = OptimizedInvoiceCrawlPipeline._overview_payload(
+            {"session_hash": "session", "sync_mode": "supplement"},
+            "purchase", "query",
+            {"from_date": "2025-05-01", "to_date": "2025-05-31"},
+        )
+        self.assertEqual(payload["sync_mode"], "supplement")
+        self.assertTrue(payload["restart_coverage"])
+
     def test_source_detail_plan_is_materialized_once_and_reused_by_month(self):
         decisions = [
             SimpleNamespace(

@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   AccountGatewayError,
+  accountErrorMessage,
   createAccountConnectionsInBatches,
   InMemoryAccountConnectionGateway,
 } from '../../src/features/accounts/account-gateway';
 
 describe('account connection gateway', () => {
+  it('normalizes portal authentication failures without exposing raw backend errors', () => {
+    for (const code of ['invalid_credentials', 'authentication_failed', 'invalid_source_credentials', 'source_account_locked', 'source_login_rejected', 'source_token_missing']) {
+      expect(accountErrorMessage(Object.assign(new Error('raw secret'), { code }))).toBe('Tên đăng nhập hoặc mật khẩu không đúng');
+    }
+    expect(accountErrorMessage(Object.assign(new Error('raw secret'), { code: 'unexpected_auth_error' }))).toBe('Tên đăng nhập hoặc mật khẩu không đúng');
+  });
   it('supports create, get, reconnect, reuse, and revoke in the browser demo adapter', async () => {
     let time = '2026-08-17T00:00:00.000Z';
     const gateway = new InMemoryAccountConnectionGateway(() => time, () => 'demo-connection-1');

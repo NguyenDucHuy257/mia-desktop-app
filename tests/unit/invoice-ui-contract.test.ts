@@ -16,7 +16,8 @@ describe('invoice result control presentation', () => {
     expect(component).not.toContain("? `Đang tạo Excel");
     expect(component).not.toContain('<ResultExportProgressBar');
     expect(styles).toContain(".invoice-export-all-button[data-exporting='true']");
-    expect(styles).toContain('background: #e8f0fc');
+    expect(styles).toContain('background: #2563b8');
+    expect(styles).toContain('color: #fff');
   });
 
   it('uses a vector stop icon and reserves a wider company column', async () => {
@@ -28,7 +29,7 @@ describe('invoice result control presentation', () => {
     expect(component).toContain('className="stop-button-icon"');
     expect(component).not.toContain("assets/figma/stop.png");
     expect(component).toContain('title={row.company}');
-    expect(styles).toContain('minmax(240px, 340px)');
+    expect(styles).toContain('minmax(170px, 1.2fr)');
   });
 
   it('uses one cumulative sync progress bar without monthly progress UI', async () => {
@@ -104,6 +105,28 @@ describe('invoice result control presentation', () => {
     expect(datePicker).toContain('date-range-calendar-control');
     expect(addAccount).toContain('Quay lại Quản lý HDDT');
     expect(addAccount).not.toContain('Quay lại Quản lý tải');
+  });
+
+  it('keeps account tabs geometrically stable and exposes the two sync modes', async () => {
+    const [page, styles, invoiceStyles] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/styles/global.css'),
+      source('src/styles/invoice-refresh.css'),
+    ]);
+    expect(styles).toContain('.account-tabs {');
+    expect(styles).toContain('gap: 16px');
+    expect(styles).toContain('border-bottom: 2px solid transparent');
+    expect(styles).not.toContain('.account-tab[data-active="false"] { margin-left');
+    expect(page).toContain("useState<InvoiceDirection>('purchase')");
+    expect(page).not.toContain('setDirections');
+    expect(page).toContain('Đồng bộ mới');
+    expect(page).toContain('Đồng bộ bổ sung');
+    expect(page).not.toContain('<span>Tải mới dữ liệu</span>');
+    expect(page).toContain('<span>Trạng thái đồng bộ</span><span>Số lượng hóa đơn</span>');
+    expect(invoiceStyles).toContain('.invoice-page .sync-mode-menu');
+    expect(invoiceStyles).toContain('border-radius: var(--mia-radius-ui)');
+    expect(invoiceStyles).toContain('background: #fff');
+    expect(invoiceStyles).toContain('border: 1px solid #d0d5dd');
   });
 
   it('keeps Results and XML HTML download buttons blue in every interactive state', async () => {
