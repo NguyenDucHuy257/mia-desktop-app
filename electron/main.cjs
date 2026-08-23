@@ -180,6 +180,26 @@ ipcMain.handle('mia:artifacts:list', (event, request) => {
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
   return artifactBroker.list(request);
 });
+ipcMain.handle('mia:artifacts:snapshot', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.snapshot(request);
+});
+ipcMain.handle('mia:artifacts:batch-start', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.startBatch(request);
+});
+ipcMain.handle('mia:artifacts:batch-status', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.batchStatus(request);
+});
+ipcMain.handle('mia:artifacts:batch-cancel', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.cancelBatch(request);
+});
 ipcMain.handle('mia:artifacts:open-directory', async (event, directory) => {
   assertTrustedSender(event);
   if (typeof directory !== 'string' || !path.isAbsolute(directory) || directory.length > 1024) throw new TypeError('invalid_artifact_directory');

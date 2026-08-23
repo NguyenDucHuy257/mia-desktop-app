@@ -97,6 +97,25 @@ function validateListRequest(value) {
   return { connection_ids: base.connection_ids, kind: value.kind, direction: value.direction ?? null, query_type: value.query_type ?? null, search: value.search ?? '', cursor: value.cursor ?? null, limit, date_from: value.date_from ?? null, date_to: value.date_to ?? null };
 }
 
+function validateArtifactSnapshotRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_snapshot');
+  if (Object.keys(value).some((key) => !['connection_ids', 'directions', 'date_from', 'date_to'].includes(key))) throw new TypeError('invalid_artifact_snapshot');
+  const base = validateExportRequest({ destination: path.resolve('.'), connection_ids: value.connection_ids, kinds: ['xml'] });
+  if (!Array.isArray(value.directions) || value.directions.length < 1 || value.directions.length > 2 || new Set(value.directions).size !== value.directions.length || value.directions.some((direction) => !['purchase', 'sold'].includes(direction))) throw new TypeError('invalid_artifact_direction');
+  if (typeof value.date_from !== 'string' || !DATE_PATTERN.test(value.date_from) || typeof value.date_to !== 'string' || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new TypeError('invalid_artifact_range');
+  return { connection_ids: base.connection_ids, directions: [...value.directions], date_from: value.date_from, date_to: value.date_to };
+}
+
+function validateArtifactBatchRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_request');
+  if (Object.keys(value).some((key) => !['destination', 'connection_ids', 'directions', 'kinds', 'date_from', 'date_to', 'pdf_concurrency'].includes(key))) throw new TypeError('invalid_artifact_request');
+  const snapshot = validateArtifactSnapshotRequest({ connection_ids: value.connection_ids, directions: value.directions, date_from: value.date_from, date_to: value.date_to });
+  if (typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_artifact_directory');
+  if (!Array.isArray(value.kinds) || value.kinds.length < 1 || value.kinds.length > 3 || new Set(value.kinds).size !== value.kinds.length || value.kinds.some((kind) => !['xml', 'html', 'pdf'].includes(kind))) throw new TypeError('invalid_artifact_kind');
+  if (!Number.isInteger(value.pdf_concurrency) || value.pdf_concurrency < 1 || value.pdf_concurrency > 100) throw new TypeError('invalid_pdf_concurrency');
+  return { ...snapshot, destination: path.resolve(value.destination), kinds: [...value.kinds], pdf_concurrency: value.pdf_concurrency };
+}
+
 async function invokeArtifactExport(getRuntime, value) {
   const result = await getRuntime().invoke(
     'artifacts.export',
@@ -116,6 +135,24 @@ function waitForTaskPoll(delayMs = 100) {
 function createArtifactBroker(getRuntime) {
   let activeTaskId = null;
   return Object.freeze({
+    snapshot: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.snapshot', validateArtifactSnapshotRequest(value))),
+    startBatch: (value) => runBrokerCommand(async () => {
+      const started = await getRuntime().invoke('artifacts.batch.start', validateArtifactBatchRequest(value));
+      activeTaskId = started.task_id;
+      return started;
+    }),
+    batchStatus: (value) => runBrokerCommand(async () => {
+      if (!value || typeof value !== 'object' || typeof value.task_id !== 'string' || value.task_id !== activeTaskId) throw new TypeError('invalid_artifact_task');
+      const status = await getRuntime().invoke('artifacts.batch.status', { task_id: value.task_id });
+      if (['completed', 'failed', 'stopped'].includes(status?.status)) activeTaskId = null;
+      return status;
+    }),
+    cancelBatch: (value = {}) => runBrokerCommand(() => {
+      if (!activeTaskId) return { cancelled: false };
+      const kind = value?.kind ?? null;
+      if (kind !== null && !['xml', 'html', 'pdf'].includes(kind)) throw new TypeError('invalid_artifact_kind');
+      return getRuntime().invoke('artifacts.batch.cancel', { task_id: activeTaskId, kind });
+    }),
     export: (value) => runBrokerCommand(async () => {
       const request = validateExportRequest(value);
       const kinds = new Set(request.kinds);
@@ -151,4 +188,4 @@ function createArtifactBroker(getRuntime) {
   });
 }
 
-module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest };
+module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest };
