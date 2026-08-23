@@ -222,6 +222,7 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
   await expect(page.locator('.table-row').last()).toContainText('Tiến trình tổng');
   await expect(page.locator('.table-row').last()).toContainText('35%');
   await expect(page.locator('.table-row').last()).toContainText('35/100 hóa đơn');
@@ -229,7 +230,7 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await expect(page.locator('.table-row').last()).toContainText(/Đang dừng|Đã dừng/);
 });
 
-test('allows combined overview/detail and multi-select purchase/sold directions', async ({ page }) => {
+test('keeps one direction and restores the two legacy sync modes', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
       resume: async () => null,
@@ -250,35 +251,24 @@ test('allows combined overview/detail and multi-select purchase/sold directions'
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Mua vào' }).click();
-  await expect(page.getByLabel('Loại giao dịch').getByText('Mua vào')).toBeVisible();
-  await expect(page.getByLabel('Loại giao dịch').getByText('Bán ra')).toBeVisible();
-  await page.getByLabel('Loại giao dịch').getByText('Mua vào', { exact: true }).click();
-  await page.getByLabel('Loại giao dịch').getByText('Bán ra', { exact: true }).click();
-  await expect(page.getByLabel('Loại giao dịch').getByLabel('Mua vào')).not.toBeChecked();
+  await expect(page.getByLabel('Loại giao dịch').getByLabel('Mua vào')).toBeChecked();
   await expect(page.getByLabel('Loại giao dịch').getByLabel('Bán ra')).not.toBeChecked();
   await page.getByLabel('Loại giao dịch').getByText('Bán ra', { exact: true }).click();
-  await page.getByRole('button', { name: 'Mua vào' }).click();
+  await expect(page.getByRole('button', { name: 'Bán ra' })).toBeVisible();
   await page.getByRole('button', { name: 'Chi tiết' }).click();
-  await expect(page.locator('[data-node-id="4:654"] .option-box[data-checked="true"]')).toHaveCount(2);
   await page.locator('[data-node-id="4:654"]').getByText('Tổng quan', { exact: true }).click();
-  await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
-  await expect(page.locator('[data-node-id="4:654"]').getByLabel('Tổng quan')).not.toBeChecked();
-  await expect(page.locator('[data-node-id="4:654"]').getByLabel('Chi tiết')).not.toBeChecked();
-  await page.getByRole('button', { name: 'Chi tiết' }).click();
   await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
   await page.getByLabel('Từ ngày đồng bộ nhập tay').fill('01/01/2026');
   await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('31/01/2026');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Thông báo' })).toContainText('Vui lòng chọn ít nhất');
-  await expect(page.locator('.notice-icon[data-kind="notice"]')).toHaveText('!');
-  await page.getByRole('button', { name: 'Đóng' }).click();
-  await page.getByRole('button', { name: 'Chi tiết' }).click();
-  await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
-  await page.getByRole('button', { name: 'Chi tiết' }).click();
-  await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  const syncMenu = page.getByRole('menu', { name: 'Chọn cách đồng bộ' });
+  await expect(syncMenu).toBeVisible();
+  await expect(syncMenu.getByRole('menuitem', { name: /Đồng bộ mới/ })).toBeVisible();
+  await expect(syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ })).toBeVisible();
+  await syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ }).click();
   const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'] });
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
@@ -314,6 +304,7 @@ test('shows sanitized job errors in the affected account row', async ({ page }) 
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
   await expect(page.locator('.table-row').last()).toContainText('Không thể tạo tác vụ đồng bộ');
   await expect(page.locator('.table-row').last()).toContainText('Lỗi');
 });
@@ -349,6 +340,7 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
+  await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
   await page.getByRole('button', { name: 'Xem kết quả' }).click();
   await expect(page.getByText('overview-first')).toBeVisible();
   await page.getByRole('button', { name: 'Trang sau' }).click();

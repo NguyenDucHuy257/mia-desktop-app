@@ -244,6 +244,56 @@
   box-shadow: 0 4px 10px rgb(22 101 52 / 18%);
 }
 
+.invoice-page .sync-menu-wrap {
+  position: absolute;
+  left: 11px;
+  bottom: 8px;
+  width: 165px;
+  height: 36px;
+}
+
+.invoice-page .sync-menu-wrap .sync-button {
+  position: static;
+  width: 100%;
+  height: 100%;
+}
+
+.invoice-page .sync-mode-menu {
+  position: absolute;
+  z-index: 120;
+  left: 0;
+  top: calc(100% + 7px);
+  width: 360px;
+  padding: 6px;
+  border: 1px solid #d0d5dd;
+  border-radius: var(--mia-radius-ui);
+  background: #fff;
+  box-shadow: 0 14px 32px rgb(15 23 42 / 18%);
+  display: grid;
+}
+
+.invoice-page .sync-mode-menu > button {
+  width: 100%;
+  padding: 11px;
+  border: 0;
+  border-radius: var(--mia-radius-ui);
+  background: #fff;
+  color: #334155;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.invoice-page .sync-mode-menu > button + button { border-top: 1px solid #e5e7eb; }
+.invoice-page .sync-mode-menu > button:hover,
+.invoice-page .sync-mode-menu > button:focus-visible { background: #f0fdf4; outline: 0; }
+.invoice-page .sync-mode-menu svg { width: 24px; height: 24px; fill: none; stroke: #166534; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.invoice-page .sync-mode-menu span { display: grid; gap: 4px; }
+.invoice-page .sync-mode-menu strong { color: #14532d; font-size: 13px; }
+.invoice-page .sync-mode-menu small { color: #64748b; font-size: 11px; line-height: 15px; font-weight: 500; }
+
 .invoice-page .sync-button:not(:disabled):hover {
   background: #14532d;
   box-shadow: 0 7px 18px rgb(22 101 52 / 28%);
