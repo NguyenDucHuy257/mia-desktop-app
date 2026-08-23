@@ -240,7 +240,7 @@ for (const [channel, method] of [
     return jobs()[method](...args);
   });
 }
-for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:results:details', 'details']]) {
+for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:results:details', 'details'], ['mia:results:facets', 'facets']]) {
   ipcMain.handle(channel, (event, query) => {
     assertTrustedSender(event);
     return results()[method](query);

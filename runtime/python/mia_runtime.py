@@ -598,6 +598,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                         bool((result.get("pagination") or {}).get("has_more")),
                     )
                 return result, False
+            if method == "results.facets":
+                return _production_backend().result_facets(dict(params)), False
             if storage is None:
                 raise RpcError(-32011, "storage_not_initialized")
             if method == "results.import_overviews":

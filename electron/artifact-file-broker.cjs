@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { runBrokerCommand } = require('./account-connection-broker.cjs');
+const { validateColumnFilters, validateExclusion } = require('./result-broker.cjs');
 
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const EXTENSIONS = new Set(['.xml', '.html', '.pdf', '.xlsx']);
@@ -50,13 +51,14 @@ async function atomicWrite(directory, filename, content) {
 
 function validateExportRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_request');
-  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'query_type', 'search']);
+  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'query_type', 'search', 'result_filters', 'exclusion']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_artifact_request');
   if (typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_artifact_directory');
   if (!Array.isArray(value.connection_ids) || value.connection_ids.length < 1 || value.connection_ids.length > 50 || new Set(value.connection_ids).size !== value.connection_ids.length || value.connection_ids.some((id) => typeof id !== 'string' || !CONNECTION_ID.test(id))) throw new TypeError('invalid_artifact_accounts');
   if (!Array.isArray(value.kinds) || value.kinds.length < 1 || value.kinds.length > 4 || new Set(value.kinds).size !== value.kinds.length || value.kinds.some((kind) => !KINDS.has(kind))) throw new TypeError('invalid_artifact_kind');
   const base = { destination: path.resolve(value.destination), connection_ids: [...value.connection_ids], kinds: [...value.kinds] };
   if (value.result_scopes === undefined) {
+    if (value.result_filters !== undefined || value.exclusion !== undefined) throw new TypeError('invalid_artifact_request');
     if (value.date_from === undefined && value.date_to === undefined && value.direction === undefined && value.query_type === undefined && value.search === undefined) return base;
     const direction = value.direction ?? null;
     const queryType = value.query_type ?? null;
@@ -77,9 +79,18 @@ function validateExportRequest(value) {
   if (queryType !== null && !['query', 'sco-query'].includes(queryType)) throw new TypeError('invalid_result_export_query_type');
   const search = value.search ?? '';
   if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_export_search');
+  const resultFilters = value.result_filters ?? {};
+  if (!resultFilters || typeof resultFilters !== 'object' || Array.isArray(resultFilters) || Object.keys(resultFilters).some((scope) => !RESULT_SCOPES.has(scope))) throw new TypeError('invalid_result_export_filters');
+  const normalizedFilters = {};
+  for (const [scope, filter] of Object.entries(resultFilters)) {
+    if (!filter || typeof filter !== 'object' || Array.isArray(filter) || Object.keys(filter).some((key) => !['search', 'column_filters'].includes(key))) throw new TypeError('invalid_result_export_filters');
+    if (filter.search !== undefined && (typeof filter.search !== 'string' || filter.search.length > 200)) throw new TypeError('invalid_result_export_filters');
+    normalizedFilters[scope] = { search: String(filter.search ?? '').trim(), column_filters: validateColumnFilters(filter.column_filters) };
+  }
   return {
     ...base, result_scopes: [...value.result_scopes], date_from: value.date_from,
     date_to: value.date_to, direction, query_type: queryType, search: search.trim(),
+    result_filters: normalizedFilters, exclusion: validateExclusion(value.exclusion),
   };
 }
 
