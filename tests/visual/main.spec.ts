@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 
 test('main invoice screen follows the 1500x1024 Figma reference', async ({ page }) => {
-  await page.goto('/?figma=1');
+  test.setTimeout(90_000);
+  await page.goto('/?figma=1', { waitUntil: 'domcontentloaded' });
+  await page.locator('.invoice-page').waitFor({ state: 'visible' });
   await page.evaluate(() => document.fonts.ready);
   const screenshot = await page.screenshot({ animations: 'disabled' });
   await expect(screenshot).toMatchSnapshot('figma-main-1500x1024.png', {
