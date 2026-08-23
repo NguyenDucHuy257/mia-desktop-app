@@ -154,12 +154,12 @@ export function accountErrorMessage(error: unknown) {
 
   const messages: Record<string, string> = {
     runtime_unavailable: 'Bộ xử lý dữ liệu cục bộ chưa sẵn sàng. Vui lòng mở lại ứng dụng.',
-    invalid_credentials: 'Mã số thuế hoặc mật khẩu không hợp lệ.',
-    authentication_failed: 'Không thể đăng nhập Cổng HĐĐT. Vui lòng kiểm tra lại thông tin.',
-    invalid_source_credentials: 'Tên đăng nhập hoặc mật khẩu không đúng.',
-    source_account_locked: 'Tài khoản đã bị khóa vì nhập sai thông tin quá số lần quy định.',
-    source_login_rejected: 'Cổng hóa đơn từ chối đăng nhập.',
-    source_token_missing: 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.',
+    invalid_credentials: 'Tên đăng nhập hoặc mật khẩu không đúng',
+    authentication_failed: 'Tên đăng nhập hoặc mật khẩu không đúng',
+    invalid_source_credentials: 'Tên đăng nhập hoặc mật khẩu không đúng',
+    source_account_locked: 'Tên đăng nhập hoặc mật khẩu không đúng',
+    source_login_rejected: 'Tên đăng nhập hoặc mật khẩu không đúng',
+    source_token_missing: 'Tên đăng nhập hoặc mật khẩu không đúng',
     source_rate_limited: 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.',
     connection_not_found: 'Không tìm thấy kết nối tài khoản.',
     resource_not_found: 'Không tìm thấy kết nối tài khoản.',
@@ -168,5 +168,5 @@ export function accountErrorMessage(error: unknown) {
   if (code.startsWith('source_http_')) {
     return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
   }
-  return messages[code] ?? 'Không thể thêm tài khoản. Vui lòng thử lại.';
+  return messages[code] ?? 'Tên đăng nhập hoặc mật khẩu không đúng';
 }

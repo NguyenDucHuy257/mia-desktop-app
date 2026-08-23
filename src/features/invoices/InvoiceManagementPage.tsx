@@ -14,7 +14,7 @@ import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
 import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
-import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
+import type { AccountConnection, InvoiceDirection, InvoiceSyncState } from '../../lib/api/contracts';
 import '../../styles/invoice-refresh.css';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending' | 'stopped' | 'ready';
@@ -28,6 +28,7 @@ interface InvoiceRow {
   progressLabel: string;
   failureHint?: string;
   actionsReady?: boolean;
+  syncState?: InvoiceSyncState;
 }
 
 const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
@@ -96,6 +97,34 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
+function monthLabel(value: string | null | undefined, shortYear = false) {
+  const match = /^(\d{4})-(\d{2})/.exec(value ?? '');
+  return match ? `${match[2]}/${shortYear ? match[1]!.slice(-2) : match[1]}` : null;
+}
+
+function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
+  const label = !state || state.status === 'not_synced' ? 'Chưa đồng bộ'
+    : state.status === 'queued' ? 'Chờ đồng bộ'
+      : state.status === 'running' ? 'Đang đồng bộ'
+        : state.status === 'failed' ? 'Đồng bộ lỗi'
+          : state.status === 'cancelled' ? 'Đồng bộ bị hủy'
+            : 'Đã đồng bộ';
+  const detail = state?.status === 'running' && state.current_month
+    ? `Đang đồng bộ đến ${monthLabel(state.current_month)}`
+    : state?.status === 'completed' && state.sync_from && state.sync_until
+      ? `Từ ${monthLabel(state.sync_from)} tới ${monthLabel(state.sync_until, true)}`
+      : null;
+  return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
+}
+
+function InvoiceCountCell({ state }: { state?: InvoiceSyncState }) {
+  const format = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
+  if (state?.baseline_invoice_count !== null && state?.baseline_invoice_count !== undefined) {
+    return <div className="invoice-count-cell"><span>Đã có trong hệ thống: {format(state.baseline_invoice_count)} hóa đơn</span><strong>{format(state.added_invoice_count ?? 0)} hóa đơn bổ sung</strong></div>;
+  }
+  return <div className="invoice-count-cell"><strong>{format(state?.invoice_count ?? 0)} hóa đơn</strong></div>;
+}
+
 export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
   jobLifecycle: BatchJobLifecycle;
   resultExports: ResultExportLifecycle;
@@ -111,10 +140,11 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
   onViewResults(id: string, dateFrom: string, dateTo: string): void;
 }) {
   const initialRange = useRef(readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
-  const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
+  const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
-  const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
-  const [forceRefresh, setForceRefresh] = useState(false);
+  const [direction, setDirection] = useState<InvoiceDirection>('purchase');
+  const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
+  const [syncStates, setSyncStates] = useState<Record<string, InvoiceSyncState>>({});
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
@@ -148,6 +178,27 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     };
   }, [menu]);
 
+  useEffect(() => {
+    const ids = (accounts ?? []).map((account) => account.connection_id);
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      if (!window.miaRuntime?.jobs.syncStates || ids.length === 0) {
+        if (!disposed) setSyncStates({});
+        return;
+      }
+      try {
+        const values = await window.miaRuntime.jobs.syncStates(ids, direction);
+        if (!disposed) setSyncStates(Object.fromEntries(values.map((value) => [value.connection_id, value])));
+      } catch (error) {
+        diagnosticLog('sync_states_refresh_failed', { code: (error as { code?: string })?.code }, 'warn');
+      }
+      if (!disposed && batchActive) timer = setTimeout(refresh, 1000);
+    };
+    void refresh();
+    return () => { disposed = true; if (timer) clearTimeout(timer); };
+  }, [accounts, batchActive, direction]);
+
   async function chooseExportFolder() {
     const folder = await window.miaRuntime?.artifacts?.selectDirectory();
     if (folder) onExportFolder(folder);
@@ -164,7 +215,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     }
 
     const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
-    const resultDirection = directions.length === 1 ? directions[0] : null;
+    const resultDirection = direction;
     diagnosticLog('bulk_result_export_requested', {
       account_count: selectedAccountIds.length,
       date_from: dateFrom,
@@ -204,39 +255,36 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     }
   }
 
-  function startJob() {
+  function startJob(syncMode: 'new' | 'supplement') {
     if (batchActive) return;
     if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
-    if (directions.length === 0 || scopes.length === 0) {
-      setSelectionError('Vui lòng chọn ít nhất một hướng và phạm vi dữ liệu trước khi đồng bộ.');
+    if (scopes.length === 0) {
+      setSelectionError('Vui lòng chọn ít nhất một phạm vi dữ liệu trước khi đồng bộ.');
       return;
     }
     diagnosticLog('sync_clicked', {
       account_count: selectedAccountIds.length,
       date_from: dateFrom,
       date_to: dateTo,
-      directions,
+      directions: [direction],
       scopes,
-      force_refresh: forceRefresh,
+      sync_mode: syncMode,
     });
     setSelectionError(null);
+    setActiveBatchDirection(direction);
     startMany(selectedAccountIds.map((connection_id) => ({
       connection_id,
       date_from: dateFrom,
       date_to: dateTo,
-      directions,
+      directions: [direction],
       query_types: ['query', 'sco-query'],
       scopes,
       data_types: ['invoice'],
-      force_refresh: forceRefresh,
+      force_refresh: true,
       refresh_latest_month: true,
+      sync_mode: syncMode,
     })));
-  }
-
-  function toggleDirection(value: InvoiceDirection) {
-    setDirections((current) => current.includes(value)
-      ? current.filter((item) => item !== value)
-      : [...current, value]);
+    setMenu(null);
   }
 
   function toggleScope(value: 'overview' | 'detail') {
@@ -254,6 +302,22 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     const inlineError = item?.error;
     const phase = item?.phase;
     const accountNeedsAuth = ['auth_failed', 'suspended'].includes(account.status);
+    const persistedSyncState = syncStates[account.connection_id];
+    const transientSyncStatus = activeBatchDirection === direction
+      ? inlineError ? 'failed' as const
+        : phase === 'stopped' ? 'cancelled' as const
+          : batchActive && (phase === 'queued' || phase === 'starting') ? 'queued' as const
+            : null
+      : null;
+    const syncState: InvoiceSyncState | undefined = transientSyncStatus
+      ? {
+          connection_id: account.connection_id, direction, status: transientSyncStatus, current_month: null,
+          sync_from: persistedSyncState?.sync_from ?? null, sync_until: persistedSyncState?.sync_until ?? null,
+          invoice_count: persistedSyncState?.invoice_count ?? 0,
+          baseline_invoice_count: persistedSyncState?.invoice_count ?? 0, added_invoice_count: 0,
+          last_job_id: null, sync_mode: null,
+        }
+      : persistedSyncState;
     const status: RowStatus = phase === 'stopped'
       ? 'stopped'
       : inlineError || runtimeStatus === 'failed' || runtimeStatus === 'abandoned'
@@ -303,6 +367,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           : jobFailureHint(errorCode)
         : undefined,
       actionsReady: Boolean(job?.job_id),
+      syncState,
     };
   });
   const filteredRows = allRows.filter((row) => {
@@ -327,10 +392,10 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
         <div className="toolbar-card">
           <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày đồng bộ" toLabel="Đến ngày đồng bộ" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
           <div className="select-wrap">
-            <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
+            <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>{direction === 'purchase' ? 'Mua vào' : 'Bán ra'} <i className="chevron" /></button>
             {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">
-              <OptionCheck checked={directions.includes('purchase')} label="Mua vào" onChange={() => toggleDirection('purchase')} />
-              <OptionCheck checked={directions.includes('sold')} label="Bán ra" onChange={() => toggleDirection('sold')} />
+              <OptionCheck checked={direction === 'purchase'} label="Mua vào" onChange={() => setDirection('purchase')} />
+              <OptionCheck checked={direction === 'sold'} label="Bán ra" onChange={() => setDirection('sold')} />
             </div> : null}
           </div>
           <div className="select-wrap">
@@ -340,14 +405,15 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
               <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
             </div> : null}
           </div>
-          <label className="refresh-data-toggle" title="Tích để yêu cầu source API tải mới toàn bộ khoảng đã chọn. Nếu không tích, cache/freshness và tháng cần làm mới do CoveragePlanner của crawler gốc quyết định.">
-            <input type="checkbox" checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)} aria-label="Tải mới dữ liệu" />
-            <span className="refresh-data-box" data-checked={forceRefresh}>{forceRefresh ? <img src={checkIcon} alt="" /> : null}</span>
-            <span>Tải mới dữ liệu</span>
-          </label>
-          <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" disabled={batchActive} aria-busy={batchActive} onClick={startJob}>
-            <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
-          </button>
+          <div className="select-wrap sync-menu-wrap">
+            <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" aria-expanded={menu === 'sync'} disabled={batchActive} aria-busy={batchActive} onClick={() => setMenu(menu === 'sync' ? null : 'sync')}>
+              <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
+            </button>
+            {menu === 'sync' ? <div className="sync-mode-menu" role="menu" aria-label="Chọn cách đồng bộ">
+              <button type="button" role="menuitem" onClick={() => startJob('new')}><SyncNewIcon /><span><strong>Đồng bộ mới</strong><small>Lấy toàn bộ dữ liệu từ hệ thống hóa đơn điện tử của Thuế về MIA WT. Dùng cho khoảng thời gian chưa từng đồng bộ.</small></span></button>
+              <button type="button" role="menuitem" onClick={() => startJob('supplement')}><SyncSupplementIcon /><span><strong>Đồng bộ bổ sung</strong><small>Kiểm tra lại dữ liệu trên hệ thống Thuế, so sánh với dữ liệu đã có và chỉ bổ sung hóa đơn mới.</small></span></button>
+            </div> : null}
+          </div>
           <StorageFolderPicker
             className="invoice-export-folder"
             value={exportFolder}
@@ -399,7 +465,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
         <div className="data-card">
           <div className="table-header table-grid">
             <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFilteredCount === filteredAccountIds.length ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...filteredAccountIds])])}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
-            <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span>
+            <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Trạng thái đồng bộ</span><span>Số lượng hóa đơn</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
             {pageRows.map((row, index) => {
@@ -410,6 +476,8 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
                 <strong className="company-name" title={row.company}>{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
                 <ProgressCell row={row} />
+                <SyncStatusCell state={row.syncState} />
+                <InvoiceCountCell state={row.syncState} />
                 {account ? <span className="row-action-group">
                   {row.actionsReady ? <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
@@ -435,6 +503,10 @@ function DownloadIcon() {
 function StopIcon() {
   return <svg className="stop-button-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><rect x="4" y="4" width="10" height="10" rx="1.5" /></svg>;
 }
+
+function SyncNewIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.1 9.1 4.5 4.5 0 0 0 7 18Zm5-9v6m0 0 2.5-2.5M12 15l-2.5-2.5" /></svg>; }
+
+function SyncSupplementIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-4M4 5v5h5m-5 3a8 8 0 0 0 14.9 4M20 19v-5h-5" /></svg>; }
 
 function OptionCheck({ checked, label, disabled, title, onChange }: { checked: boolean; label: string; disabled?: boolean; title?: string; onChange?(): void }) {
   return <label title={title}><input className="option-input" type="checkbox" checked={checked} disabled={disabled} readOnly={!onChange} onChange={onChange} /><span className="option-box" data-checked={checked}>{checked ? <img src={checkIcon} alt="" /> : null}</span>{label}</label>;

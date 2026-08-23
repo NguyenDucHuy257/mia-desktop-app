@@ -62,8 +62,8 @@
   overflow: hidden;
   border: 1px solid #8caedb;
   border-radius: var(--mia-radius-ui);
-  background: #e8f0fc;
-  color: #315f9f;
+  background: #2563b8;
+  color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -76,8 +76,8 @@
 .invoice-export-all-button:hover:not(:disabled),
 .invoice-export-all-button:focus-visible:not(:disabled) {
   border-color: #6f9bd6;
-  background: #dce9fb;
-  color: #1d4f91;
+  background: #1e5aa8;
+  color: #fff;
   outline: none;
 }
 
@@ -91,15 +91,15 @@
 }
 
 .invoice-export-all-button[data-exporting='true'] {
-  color: #173f75;
-  background: #eef5ff;
+  color: #fff;
+  background: #2563b8;
 }
 
 .invoice-export-button-fill {
   position: absolute;
   z-index: -1;
   inset: 0 auto 0 0;
-  background: #bad2f1;
+  background: #194b8e;
   transition: width 180ms ease;
 }
 

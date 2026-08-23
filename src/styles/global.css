@@ -129,10 +129,9 @@ button { color: inherit; }
 .account-back img { width: 12px; height: 12px; margin-right: 6px; flex: 0 0 12px; }
 .account-card-header h1 { width: 100%; height: 29px; margin: 0; padding-top: 1px; color: var(--mia-text-strong); font-size: 22px; line-height: 27.5px; font-weight: 600; }
 .account-card-header p { width: 100%; height: 23px; margin: 0; color: var(--mia-text-muted); font-size: 16px; line-height: 22.4px; font-weight: 400; }
-.account-tabs { width: 100%; height: 25px; flex: 0 0 25px; border-bottom: 1px solid var(--mia-border-warm); display: flex; align-items: flex-start; }
-.account-tab { height: 24px; padding: 0 8px 10px; border: 0; background: transparent; color: #5d5f5d; font-size: 14px; line-height: 14px; font-weight: 700; white-space: nowrap; cursor: pointer; }
-.account-tab[data-active="false"] { margin-left: 16px; }
-.account-tab[data-active="true"] { padding-bottom: 8px; border-bottom: 2px solid var(--mia-green-700); color: var(--mia-green-700); }
+.account-tabs { width: 100%; height: 25px; flex: 0 0 25px; border-bottom: 1px solid var(--mia-border-warm); display: flex; align-items: flex-start; gap: 16px; }
+.account-tab { box-sizing: border-box; width: 122px; height: 24px; padding: 0 8px 8px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #5d5f5d; font-size: 14px; line-height: 14px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.account-tab[data-active="true"] { border-bottom-color: var(--mia-green-700); color: var(--mia-green-700); }
 .account-form { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 .account-form--single { min-height: 206px; }
 .account-form--bulk { min-height: 288px; }
