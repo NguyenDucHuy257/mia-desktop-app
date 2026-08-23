@@ -2,7 +2,6 @@ import type { PropsWithChildren } from 'react';
 import logo from '../assets/figma/logo.png';
 import invoicesIcon from '../assets/figma/nav-invoices.png';
 import xmlIcon from '../assets/figma/nav-xml.png';
-import pdfIcon from '../assets/figma/nav-pdf.png';
 import materialIcon from '../assets/figma/nav-material.png';
 import logsIcon from '../assets/figma/nav-logs.png';
 import settingsIcon from '../assets/figma/nav-settings.png';
@@ -11,7 +10,6 @@ import userIcon from '../assets/figma/user.png';
 export type NavigationKey =
   | 'invoices'
   | 'xml-html'
-  | 'pdf'
   | 'materials'
   | 'logs'
   | 'settings';
@@ -24,8 +22,7 @@ interface AppShellProps extends PropsWithChildren {
 
 const primary = [
   ['invoices', 'Quản lý HDDT', invoicesIcon],
-  ['xml-html', 'XML/HTML', xmlIcon],
-  ['pdf', 'PDF', pdfIcon],
+  ['xml-html', 'XML/HTML/PDF', xmlIcon],
 ] as const;
 
 const secondary = [

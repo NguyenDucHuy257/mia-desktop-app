@@ -7,9 +7,9 @@ import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
 import type { AccountConnection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
 import { useResultExportLifecycle } from './features/results/use-result-export-lifecycle';
-import { PdfDownloaderPage, UtilityPage } from './features/artifacts/ArtifactPages';
-import { XmlHtmlPage } from './features/artifacts/XmlHtmlPage';
-import { useXmlHtmlDownloadLifecycle } from './features/artifacts/use-xml-html-download-lifecycle';
+import { UtilityPage } from './features/artifacts/ArtifactPages';
+import { XmlHtmlPage, type ArtifactSelectionState } from './features/artifacts/XmlHtmlPage';
+import { useArtifactDownloadLifecycle } from './features/artifacts/use-artifact-download-lifecycle';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
@@ -18,7 +18,6 @@ const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   'xml-html': 'XML/HTML',
-  pdf: 'PDF Downloader',
   materials: 'Mã vật tư',
   logs: 'Nhật ký',
   settings: 'Cài đặt',
@@ -57,12 +56,14 @@ export default function App() {
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const [exportFolder, setExportFolder] = useState(DEFAULT_EXPORT_FOLDER);
+  const [pdfConcurrency, setPdfConcurrency] = useState(5);
+  const [artifactSelection, setArtifactSelection] = useState<ArtifactSelectionState>({ dateFrom: '2023-10-01', dateTo: '2023-10-31', directions: ['purchase', 'sold'] });
   const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
   const invoiceJobs = useBatchJobLifecycle();
   const resultExports = useResultExportLifecycle();
-  const xmlHtmlDownloads = useXmlHtmlDownloadLifecycle();
+  const artifactDownloads = useArtifactDownloadLifecycle();
   const deleteQueue = useRef<string[]>([]);
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
@@ -136,7 +137,7 @@ export default function App() {
   useEffect(() => {
     void refreshAccounts();
     void window.miaRuntime?.preferences?.get()
-      .then((preferences) => setExportFolder(preferences.exportFolder || DEFAULT_EXPORT_FOLDER))
+      .then((preferences) => { setExportFolder(preferences.exportFolder || DEFAULT_EXPORT_FOLDER); setPdfConcurrency(preferences.pdfConcurrency ?? 5); })
       .catch(() => undefined);
   }, []);
 
@@ -178,10 +179,12 @@ export default function App() {
             onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])}
             onSelectAccounts={setSelectedAccountIds}
             onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
+            initialDateFrom={artifactSelection.dateFrom}
+            initialDateTo={artifactSelection.dateTo}
+            onDateRangeChange={(dateFrom, dateTo) => setArtifactSelection((current) => ({ ...current, dateFrom, dateTo }))}
           />
-        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={xmlHtmlDownloads} />
-            : active === 'pdf' ? <PdfDownloaderPage folder={exportFolder} onFolder={updateExportFolder} connectionIds={selectedAccountIds} accounts={accounts ?? []} />
-              : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} />}
+        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} pdfConcurrency={pdfConcurrency} />
+          : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh mục mã vật tư.' : active === 'logs' ? 'Theo dõi lịch sử hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} onPdfConcurrencyChange={setPdfConcurrency} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />
     </>

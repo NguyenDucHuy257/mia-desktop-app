@@ -41,6 +41,10 @@ export interface MiaRuntimeBridge {
     cancel(): Promise<{ cancelled: boolean }>;
     targets(request: ArtifactExportRequest): Promise<{ keys: string[]; total: number }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
+    snapshot(request: ArtifactSnapshotRequest): Promise<ArtifactSnapshot>;
+    startBatch(request: ArtifactBatchRequest): Promise<{ task_id: string; status: string }>;
+    batchStatus(request: { task_id: string }): Promise<ArtifactBatchStatus>;
+    cancelBatch(request: { kind?: InvoiceArtifactKind | null }): Promise<{ cancelled: boolean }>;
     openDirectory(directory: string): Promise<boolean>;
     onExportProgress(listener: (progress: RuntimeExportProgress) => void): () => void;
     onInvoiceProgress(listener: (progress: RuntimeArtifactProgress) => void): () => void;
@@ -82,7 +86,15 @@ export interface RuntimeArtifactProgress {
 }
 
 export interface UpdateStatus { phase: 'disabled' | 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'ready' | 'error'; version: string | null; percent: number; error: string | null }
-export interface LocalPreferences { concurrency: number; retries: number; exportFolder: string }
+export interface LocalPreferences { concurrency: number; retries: number; exportFolder: string; pdfConcurrency: number }
+export type InvoiceArtifactKind = 'xml' | 'html' | 'pdf';
+export interface ArtifactSnapshotRequest { connection_ids: string[]; directions: InvoiceDirection[]; date_from: string; date_to: string }
+export interface ArtifactAccountSnapshot { connection_id: string; ready: boolean; missing_ranges: Array<{ date_from: string; date_to: string }>; total: number; cached: Record<InvoiceArtifactKind, number> }
+export interface ArtifactSnapshot extends ArtifactSnapshotRequest { accounts: ArtifactAccountSnapshot[] }
+export interface ArtifactFormatProgress { status: 'preparing' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'; processed: number; total: number; percent: number; current_invoice: string | null; failed: number }
+export interface ArtifactAccountProgress extends ArtifactAccountSnapshot { status: 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped'; error?: string }
+export interface ArtifactBatchStatus { task_id: string; status: 'running' | 'completed' | 'failed' | 'stopped'; current_account_id: string | null; accounts: Record<string, ArtifactAccountProgress>; formats: Partial<Record<InvoiceArtifactKind, ArtifactFormatProgress>>; warning_count: number; error?: string | null }
+export interface ArtifactBatchRequest extends ArtifactSnapshotRequest { destination: string; kinds: InvoiceArtifactKind[]; pdf_concurrency: number }
 export interface ArtifactExportRequest {
   destination: string;
   connection_ids: string[];

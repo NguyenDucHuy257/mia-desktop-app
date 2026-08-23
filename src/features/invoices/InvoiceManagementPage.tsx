@@ -103,7 +103,7 @@ function ProgressCell({ row }: { row: InvoiceRow }) {
   );
 }
 
-export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults }: {
+export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults, initialDateFrom, initialDateTo, onDateRangeChange }: {
   jobLifecycle: BatchJobLifecycle;
   resultExports: ResultExportLifecycle;
   onAddAccount(): void;
@@ -116,8 +116,11 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
   onSelectAccount(id: string): void;
   onSelectAccounts(ids: string[]): void;
   onViewResults(id: string, dateFrom: string, dateTo: string): void;
+  initialDateFrom?: string;
+  initialDateTo?: string;
+  onDateRangeChange?(dateFrom: string, dateTo: string): void;
 }) {
-  const initialRange = useRef(readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
+  const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | null>(null);
   const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview', 'detail']);
   const [directions, setDirections] = useState<InvoiceDirection[]>(['purchase', 'sold']);
@@ -337,7 +340,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     <div className="invoice-page">
       <section className="toolbar-canvas" aria-label="Thiết lập đồng bộ">
         <div className="toolbar-card">
-          <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày đồng bộ" toLabel="Đến ngày đồng bộ" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
+          <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày đồng bộ" toLabel="Đến ngày đồng bộ" onChange={(from, to) => { setDateFrom(from); setDateTo(to); onDateRangeChange?.(from, to); }} />
           <div className="select-wrap">
             <button className="compact-select compact-select--direction" type="button" aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>Mua vào <i className="chevron" /></button>
             {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại giao dịch">
