@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest } = require('../../electron/artifact-file-broker.cjs');
+const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest } = require('../../electron/artifact-file-broker.cjs');
 
 describe('artifact filesystem boundary', () => {
   it.each(['../escape.xml', 'C:\\escape.xml', 'CON.pdf', 'name.exe', 'a/b.html'])('rejects unsafe name %s', (name) => {
@@ -163,6 +163,63 @@ describe('artifact filesystem boundary', () => {
     expect(query).toMatchObject({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31' });
     expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', date_from: '2026-02-01', date_to: '2026-01-01' })).toThrow();
     expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'exe' })).toThrow();
+  });
+
+  it('validates unified coverage and batch DTOs including PDF concurrency', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified');
+    expect(validateArtifactSnapshotRequest({
+      connection_ids: ['conn_1'], directions: ['purchase', 'sold'],
+      date_from: '2026-01-01', date_to: '2026-08-31',
+    })).toMatchObject({ directions: ['purchase', 'sold'] });
+    expect(validateArtifactBatchRequest({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'],
+      kinds: ['pdf'], date_from: '2026-01-01', date_to: '2026-08-31',
+      pdf_concurrency: 100,
+    })).toMatchObject({ kinds: ['pdf'], pdf_concurrency: 100 });
+    for (const pdf_concurrency of [0, 101]) {
+      expect(() => validateArtifactBatchRequest({
+        destination, connection_ids: ['conn_1'], directions: ['purchase'],
+        kinds: ['pdf'], date_from: '2026-01-01', date_to: '2026-08-31',
+        pdf_concurrency,
+      })).toThrow('invalid_pdf_concurrency');
+    }
+  });
+
+  it('starts, polls and independently cancels one unified artifact format', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified-task');
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_1', status: 'running' };
+      if (method === 'artifacts.batch.status') return { task_id: 'artifact_1', status: 'running', accounts: {}, formats: {} };
+      if (method === 'artifacts.batch.cancel') return { task_id: 'artifact_1', cancelled: true, kind: 'pdf' };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await expect(broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'],
+      kinds: ['xml', 'pdf'], date_from: '2026-01-01', date_to: '2026-08-31',
+      pdf_concurrency: 5,
+    })).resolves.toMatchObject({ ok: true, data: { task_id: 'artifact_1' } });
+    await expect(broker.batchStatus({ task_id: 'artifact_1' })).resolves.toMatchObject({ ok: true });
+    await expect(broker.cancelBatch({ kind: 'pdf' })).resolves.toMatchObject({ ok: true, data: { kind: 'pdf' } });
+    expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
+      'artifacts.batch.start', 'artifacts.batch.status', 'artifacts.batch.cancel',
+    ]);
+  });
+
+  it('clears the active unified task after a terminal poll', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified-terminal');
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_done', status: 'running' };
+      if (method === 'artifacts.batch.status') return { task_id: 'artifact_done', status: 'completed', accounts: {}, formats: {} };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'], kinds: ['xml'],
+      date_from: '2026-01-01', date_to: '2026-01-31', pdf_concurrency: 5,
+    });
+    await expect(broker.batchStatus({ task_id: 'artifact_done' })).resolves.toMatchObject({ ok: true });
+    await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { cancelled: false } });
   });
 
   it('writes atomically and preserves duplicates with a suffix', async () => {

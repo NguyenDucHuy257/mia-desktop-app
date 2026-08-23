@@ -15,21 +15,19 @@ describe('MIA desktop shell', () => {
     expect(html.match(/class="table-row table-grid"/g)).toBeNull();
   });
 
-  it('uses one shared active navigation state and one XML/HTML item', () => {
+  it('uses one shared active navigation state and one XML/HTML/PDF item', () => {
     const html = renderToStaticMarkup(createElement(AppShell, {
       active: 'xml-html', onNavigate: () => undefined, children: createElement('main'),
     }));
-    expect(html).toContain('XML/HTML');
-    expect(html).not.toMatch(/>HTML<\/span>/);
+    expect(html).toContain('XML/HTML/PDF');
     expect(html.match(/data-active="true"/g)).toHaveLength(1);
-    expect(html).toMatch(/data-active="true"[^>]*>[\s\S]*?XML\/HTML/);
+    expect(html).toMatch(/data-active="true"[^>]*>[\s\S]*?XML\/HTML\/PDF/);
   });
 
-  it('moves the same active marker to PDF', () => {
+  it('does not expose a separate production PDF navigation item', () => {
     const html = renderToStaticMarkup(createElement(AppShell, {
-      active: 'pdf', onNavigate: () => undefined, children: createElement('main'),
+      active: 'xml-html', onNavigate: () => undefined, children: createElement('main'),
     }));
-    expect(html.match(/data-active="true"/g)).toHaveLength(1);
-    expect(html).toMatch(/data-active="true"[^>]*>[\s\S]*?PDF/);
+    expect(html).not.toMatch(/<span>PDF<\/span>/);
   });
 });

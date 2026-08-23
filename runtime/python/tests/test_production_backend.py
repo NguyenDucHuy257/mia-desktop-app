@@ -307,6 +307,7 @@ class ProductionBackendTests(unittest.TestCase):
 
     def test_invoice_package_batch_uses_overview_targets_without_creating_a_job(self):
         backend = object.__new__(ProductionBackend)
+        backend.data_root = Path(tempfile.gettempdir()) / "mia-artifact-package-test"
         target = {
             "artifact_key": "purchase|query|0101|AA|1|1",
             "direction": "purchase", "query_type": "query", "nbmst": "0101",
@@ -327,7 +328,7 @@ class ProductionBackendTests(unittest.TestCase):
             "direction": "purchase", "query_type": "query", "search": "",
         }
 
-        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={"session_hash": "session-hash"})):
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={"session_hash": "session-hash"}, company_tax_code="0101")):
             result = backend.ensure_invoice_packages(request, progress_callback=events.append)
 
         backend.handler.authenticate_job.assert_called_once()
