@@ -55,6 +55,23 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('results-row--total');
   });
 
+  it('nests SVG filter controls in each header and portals the rounded menus', async () => {
+    const [page, popover, styles] = await Promise.all([
+      source('src/features/results/ResultsPage.tsx'),
+      source('src/features/results/ColumnFilterPopover.tsx'),
+      source('src/styles/results-luxury.css'),
+    ]);
+    expect(page).toContain('className="result-header-cell"');
+    expect(page).toContain('className="result-header-title"');
+    expect(popover).toContain('<FilterIcon />');
+    expect(popover).toContain('createPortal(popover, document.body)');
+    expect(popover).toContain("event.key === 'Escape'");
+    expect(popover).not.toContain('â–¼');
+    expect(styles).toContain('.result-column-filter-menu');
+    expect(styles).toContain('border-radius: 10px');
+    expect(styles).toContain('.results-exclude-confirm');
+  });
+
   it('uses real account pages, a stable calendar control, and the HDDT back copy', async () => {
     const [invoicePage, datePicker, addAccount] = await Promise.all([
       source('src/features/invoices/InvoiceManagementPage.tsx'),

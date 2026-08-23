@@ -151,6 +151,28 @@ class ResultFilteringTests(unittest.TestCase):
         self.assertEqual(len(excluded_lines), 2)
         self.assertTrue(all(item["excluded"] for item in excluded_lines))
 
+    def test_decimal_aggregate_rounds_once_without_binary_float_tail(self):
+        FakeResultReader.rows[0]["tgtcthue"] = 1924545.7000000002
+        FakeResultReader.rows[1]["tgtcthue"] = 1870182.2999999998
+        result = self.backend.results("overview", self.query(
+            column_filters={"shdon": {"values": ["1", "2"]}}
+        ))
+        self.assertEqual(result["aggregate"]["totals"]["tgtcthue"], 3794728)
+        self.assertIsInstance(result["aggregate"]["totals"]["tgtcthue"], int)
+
+    def test_explicit_sort_uses_all_matching_rows_and_keeps_cursor_pages(self):
+        first = self.backend.results("overview", self.query(
+            limit=10, sort={"column": "shdon", "direction": "desc"}
+        ))
+        self.assertEqual(first["items"][0]["fields"]["shdon"], "9")
+        self.assertTrue(first["pagination"]["has_more"])
+        second = self.backend.results("overview", self.query(
+            limit=10, cursor=first["pagination"]["next_cursor"],
+            sort={"column": "shdon", "direction": "desc"},
+        ))
+        self.assertEqual(len(second["items"]), 10)
+        self.assertNotEqual(first["items"][0]["row_id"], second["items"][0]["row_id"])
+
 
 class CumulativeProgressTests(unittest.TestCase):
     def test_denominator_grows_and_numerator_does_not_reset_between_months(self):

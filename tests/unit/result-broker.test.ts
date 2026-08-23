@@ -9,7 +9,7 @@ describe('result IPC broker', () => {
     expect(validateQuery({ connection_id: 'account-1' })).toEqual({
       connection_id: 'account-1', cursor: null, limit: 50, search: '', direction: null,
       query_type: null, date_from: null, date_to: null,
-      column_filters: {}, exclusion: { keys: [], rules: [] },
+      column_filters: {}, exclusion: { keys: [], rules: [] }, sort: null,
     });
     expect(validateQuery({ connection_id: 'account-1', limit: 50 }).limit).toBe(50);
     expect(() => validateQuery({ connection_id: 'account-1', limit: 51 })).toThrow();
@@ -54,5 +54,12 @@ describe('result IPC broker', () => {
     })).resolves.toMatchObject({ ok: true });
     expect(invoke).toHaveBeenCalledWith('results.facets', expect.objectContaining({ kind: 'details', column: 'ten' }));
     expect(() => validateQuery({ connection_id: 'account-1', column_filters: { ten: { operator: 'drop table' } } })).toThrow();
+  });
+
+  it('validates result sort at the IPC trust boundary', () => {
+    expect(validateQuery({ connection_id: 'account-1', sort: { column: 'tgtthue', direction: 'desc' } }).sort)
+      .toEqual({ column: 'tgtthue', direction: 'desc' });
+    expect(() => validateQuery({ connection_id: 'account-1', sort: { column: '../bad', direction: 'asc' } })).toThrow('invalid_result_sort');
+    expect(() => validateQuery({ connection_id: 'account-1', sort: { column: 'tgtthue', direction: 'sideways' } })).toThrow('invalid_result_sort');
   });
 });
