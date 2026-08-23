@@ -32,6 +32,7 @@ export interface CreateJobRequest {
   data_types?: Array<'invoice' | 'xml' | 'html' | 'pdf'>;
   force_refresh?: boolean;
   refresh_latest_month?: boolean;
+  sync_mode?: 'new' | 'supplement';
   result_scope?: 'overview' | 'detail';
   include_xml?: boolean;
   include_mvt?: boolean;

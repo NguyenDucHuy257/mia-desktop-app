@@ -166,6 +166,45 @@ class ProductionBackendTests(unittest.TestCase):
             self.assertIn(cancelled["status"], {"cancelled", "cancelling"})
             backend.close()
 
+    def test_sync_mode_is_validated_and_mapped_to_source_refresh_options(self):
+        backend = object.__new__(ProductionBackend)
+        backend.service = Mock()
+        backend.service.create_job.return_value = object()
+        backend.public_job = Mock(return_value={"job_id": "job_sync_mode"})
+        base = {
+            "idempotency_key": "desktop-sync-mode",
+            "intent": {
+                "connection_id": "conn_account_1",
+                "date_from": "2026-01-01",
+                "date_to": "2026-02-28",
+                "directions": ["purchase"],
+                "query_types": ["query"],
+                "scopes": ["overview"],
+                "data_types": ["invoice"],
+            },
+        }
+
+        backend.start({**base, "intent": {**base["intent"], "sync_mode": "new"}})
+        new_body = backend.service.create_job.call_args.args[0]
+        self.assertTrue(new_body.force_refresh)
+        self.assertFalse(new_body.refresh_latest_month)
+
+        backend.start({**base, "intent": {**base["intent"], "sync_mode": "supplement"}})
+        supplement_body = backend.service.create_job.call_args.args[0]
+        self.assertFalse(supplement_body.force_refresh)
+        self.assertTrue(supplement_body.refresh_latest_month)
+
+        with self.assertRaisesRegex(ValueError, "invalid_sync_mode"):
+            backend.start({**base, "intent": {**base["intent"], "sync_mode": "replace"}})
+        with self.assertRaisesRegex(ValueError, "sync_mode_requires_one_direction"):
+            backend.start({
+                **base,
+                "intent": {
+                    **base["intent"], "sync_mode": "new",
+                    "directions": ["purchase", "sold"],
+                },
+            })
+
     def test_artifact_intent_uses_source_pipeline_prerequisites(self):
         with tempfile.TemporaryDirectory() as directory:
             backend, connection = self._create_backend_and_connection(directory)

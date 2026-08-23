@@ -268,7 +268,7 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   await expect(syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ })).toBeVisible();
   await syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ }).click();
   const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false });
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: true });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {

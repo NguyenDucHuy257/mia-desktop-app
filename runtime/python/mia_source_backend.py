@@ -274,6 +274,17 @@ class SourceBackend:
 
     def start(self, value: dict[str, Any]) -> dict[str, Any]:
         intent = dict(value["intent"])
+        sync_mode = intent.get("sync_mode")
+        if sync_mode not in {None, "new", "supplement"}:
+            raise ValueError("invalid_sync_mode")
+        if sync_mode is not None and len(list(intent.get("directions") or ())) != 1:
+            raise ValueError("sync_mode_requires_one_direction")
+        if sync_mode == "new":
+            intent["force_refresh"] = True
+            intent["refresh_latest_month"] = False
+        elif sync_mode == "supplement":
+            intent["force_refresh"] = False
+            intent["refresh_latest_month"] = True
         scopes = set(intent.get("scopes") or ())
         data_types = set(intent.get("data_types") or ("invoice",))
         include_xml = bool(data_types.intersection({"xml", "html", "pdf"}))

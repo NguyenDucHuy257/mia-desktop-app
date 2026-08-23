@@ -240,7 +240,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       scopes,
       data_types: ['invoice'],
       force_refresh: syncMode === 'new',
-      refresh_latest_month: false,
+      refresh_latest_month: syncMode === 'supplement',
       sync_mode: syncMode,
     })));
     setMenu(null);
