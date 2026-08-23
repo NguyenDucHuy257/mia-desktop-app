@@ -18,6 +18,7 @@ from mia_artifact_pipeline import (
     ArtifactBatchCoordinator,
     ArtifactInspector,
     _PdfWorkerPool,
+    _create_pdf_renderer,
     _missing_intervals,
     _pdf_cache_paths,
     html_dependency_files,
@@ -289,6 +290,105 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(pool.queue.maxsize, 6)
         finally:
             pool.finish()
+
+    def test_pdf_render_uses_real_package_assets_when_global_assets_are_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "package"
+            package.mkdir()
+            html = package / "invoice.html"
+            html.write_text("<html><body>invoice</body></html>", encoding="utf-8")
+            (package / "sign-check.jpg").write_bytes(b"real-sign")
+            (package / "viewinvoice-bg.jpg").write_bytes(b"real-background")
+            target = {"artifact_key": "purchase|query|0101|AA|1|1"}
+            coordinator = object.__new__(ArtifactBatchCoordinator)
+            coordinator.data_root = root
+            coordinator.global_cancel = threading.Event()
+            coordinator.format_cancel = {"pdf": threading.Event()}
+            coordinator.logger = None
+            coordinator._mark_cached = lambda *_args: None
+            coordinator._advance = lambda *_args, **_kwargs: None
+
+            class Renderer:
+                def render_pdf(self, html_path, pdf_path):
+                    self.html_path = html_path
+                    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+                    pdf_path.write_bytes(b"%PDF-1.4\npackage-assets\n%%EOF")
+
+            renderer = Renderer()
+            asset_roots = []
+            coordinator._render_pdf_item({
+                "display": "AA - 1", "target": target, "html_path": html,
+                "connection_id": "conn_1", "cache_keys": {"pdf": set()},
+            }, "0101234567", root / "output", lambda assets: asset_roots.append(assets) or renderer)
+            exported = next((root / "output").glob("*.pdf"))
+            self.assertEqual(asset_roots, [package])
+            self.assertTrue(exported.read_bytes().startswith(b"%PDF-"))
+            self.assertTrue(exported.read_bytes().rstrip().endswith(b"%%EOF"))
+
+            from app.exporters.invoice_pdf_renderer import InvoicePdfRenderer
+            pdf_renderer = InvoicePdfRenderer(assets_dir=package)
+            self.assertIn("cmVhbC1zaWdu", pdf_renderer.page_asset_css)
+            remote_url = "https" + "://example.invalid/remote.png"
+            self.assertFalse(pdf_renderer._resource_url_is_allowed(remote_url))
+
+            desktop_renderer = _create_pdf_renderer(package)
+            class Page:
+                @staticmethod
+                def pdf(*, path, **_options):
+                    Path(path).write_bytes(b"%PDF-1.4\nreal-render-output\n%%EOF")
+            desktop_renderer._page = Page()
+            atomic_pdf = root / "atomic.pdf"
+            desktop_renderer._render_pdf_atomically(atomic_pdf)
+            self.assertTrue(atomic_pdf.read_bytes().startswith(b"%PDF-"))
+            self.assertTrue(atomic_pdf.read_bytes().rstrip().endswith(b"%%EOF"))
+
+    def test_unavailable_package_completes_account_without_failed_format_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = {
+                "artifact_key": "purchase|query|0101|AA|1|1",
+                "direction": "purchase", "query_type": "query", "nbmst": "0101",
+                "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+            }
+            class Backend(FakeBackend):
+                def artifact_targets_for_export(self, request):
+                    return [target] if request["query_type"] == "query" else []
+                def ensure_invoice_packages(self, _request, **kwargs):
+                    kwargs["ready_callback"](target, "unavailable", "unavailable")
+            snapshot = {"accounts": [{"connection_id": "conn_1", "ready": True, "missing_ranges": [], "total": 1, "cached": {"xml": 0, "html": 0, "pdf": 0}}]}
+            with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
+                result = ArtifactBatchCoordinator(Backend(root), {
+                    "destination": str(root / "output"), "connection_ids": ["conn_1"],
+                    "directions": ["purchase"], "kinds": ["xml", "html"],
+                    "date_from": "2026-01-01", "date_to": "2026-01-31",
+                    "pdf_concurrency": 5,
+                }).run()
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["accounts"]["conn_1"]["status"], "completed")
+            self.assertEqual(result["formats"]["xml"]["failed"], 0)
+            self.assertEqual(result["formats"]["html"]["failed"], 0)
+            self.assertEqual(result["warning_count"], 1)
+
+    def test_user_cancellation_marks_account_stopped_not_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = {"artifact_key": "purchase|query|x", "direction": "purchase", "query_type": "query", "nbmst": "x", "khhdon": "A", "shdon": "1", "khmshdon": "1"}
+            class Backend(FakeBackend):
+                def artifact_targets_for_export(self, request):
+                    return [target] if request["query_type"] == "query" else []
+                def ensure_invoice_packages(self, _request, **_kwargs):
+                    raise ValueError("artifact_cancelled")
+            snapshot = {"accounts": [{"connection_id": "conn_1", "ready": True, "missing_ranges": [], "total": 1, "cached": {"xml": 0, "html": 0, "pdf": 0}}]}
+            with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
+                result = ArtifactBatchCoordinator(Backend(root), {
+                    "destination": str(root / "output"), "connection_ids": ["conn_1"],
+                    "directions": ["purchase"], "kinds": ["xml"],
+                    "date_from": "2026-01-01", "date_to": "2026-01-31", "pdf_concurrency": 1,
+                }).run()
+            self.assertEqual(result["status"], "stopped")
+            self.assertEqual(result["accounts"]["conn_1"]["status"], "stopped")
+            self.assertNotIn("error", result["accounts"]["conn_1"])
 
     def test_accounts_are_processed_sequentially_and_one_failure_does_not_stop_the_next(self):
         with tempfile.TemporaryDirectory() as directory:

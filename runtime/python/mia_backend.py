@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import requests
+
 
 VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
 if str(VENDOR_ROOT) not in sys.path:
@@ -25,6 +27,59 @@ if str(VENDOR_ROOT) not in sys.path:
 from mia_local_job_repository import create_local_job_repository
 from mia_local_source_models import install_source_model_shim
 from mia_local_worker import LocalWorkerLoop, SOURCE_EXECUTION_LOCK
+
+
+PACKAGE_RETRY_DELAYS = (1, 2, 4, 6, 8, 10)
+PACKAGE_MAX_ATTEMPTS = len(PACKAGE_RETRY_DELAYS) + 1
+
+
+def _exception_chain(error):
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__
+
+
+def _package_error_kind(error):
+    """Return transient/auth/permanent for a source package exception."""
+    chain = tuple(_exception_chain(error))
+    for item in chain:
+        if isinstance(item, requests.HTTPError):
+            status = getattr(getattr(item, "response", None), "status_code", None)
+            if status in {401, 403}:
+                return "auth"
+            if status in {500, 502, 503, 504}:
+                return "transient"
+            if status == 404:
+                return "permanent"
+        if isinstance(item, (requests.Timeout, requests.ConnectionError)):
+            return "transient"
+    text = " ".join(str(item).casefold() for item in chain)
+    if any(marker in text for marker in (
+        "http 500", "http 502", "http 503", "http 504", "timed out",
+        "timeout", "connection reset", "temporary failure", "temporarily unavailable",
+    )):
+        return "transient"
+    if "http 401" in text or "http 403" in text:
+        return "auth"
+    if "http 404" in text or "original package" in text:
+        return "permanent"
+    return "unexpected"
+
+
+def _wait_for_package_retry(delay, cancel_callback, wait_event=None):
+    """Cancellation-aware wait. The injectable event keeps unit tests instant."""
+    event = wait_event or threading.Event()
+    deadline = time.monotonic() + delay
+    while True:
+        if cancel_callback and cancel_callback():
+            raise ValueError("artifact_cancelled")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        event.wait(min(0.1, remaining))
 
 
 # The upstream service imports Pydantic DTOs because its normal transport is
@@ -410,7 +465,7 @@ class ProductionBackend(SourceBackend):
 
     def ensure_invoice_packages(
         self, value, *, progress_callback=None, cancel_callback=None,
-        ready_callback=None,
+        ready_callback=None, retry_wait=None,
     ):
         """Fetch source XML packages from persisted Overview identities only.
 
@@ -486,20 +541,63 @@ class ProductionBackend(SourceBackend):
                     "export_xml": "xml" in kinds,
                     "export_html": "html" in kinds,
                 }
-                try:
-                    outcome = self.handler.run_xml_unit(job, payload) or {}
-                    outcome_name = str(outcome.get("outcome") or "downloaded")
-                    state = "failed" if outcome_name == "unavailable" else "completed"
-                    outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
-                except Exception as error:
-                    state = "failed"
-                    outcome_name = "failed"
-                    outcomes["failed"] += 1
+                state = "failed"
+                outcome_name = "failed"
+                for attempt in range(1, PACKAGE_MAX_ATTEMPTS + 1):
+                    if cancel_callback and cancel_callback():
+                        raise ValueError("artifact_cancelled")
                     if self.logger is not None:
-                        self.logger.warning(
-                            "artifact_source_item_failed item=%s/%s error_type=%s",
-                            target_index, len(targets), type(error).__name__,
+                        self.logger.info(
+                            "package_request_started item=%s/%s attempt=%s/%s",
+                            target_index, len(targets), attempt, PACKAGE_MAX_ATTEMPTS,
                         )
+                    try:
+                        outcome = self.handler.run_xml_unit(job, payload) or {}
+                        outcome_name = str(outcome.get("outcome") or "downloaded")
+                        state = "unavailable" if outcome_name == "unavailable" else "completed"
+                        outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
+                        if self.logger is not None:
+                            self.logger.info(
+                                "package_request_completed item=%s/%s attempt=%s outcome=%s",
+                                target_index, len(targets), attempt, outcome_name,
+                            )
+                        break
+                    except Exception as error:
+                        error_kind = _package_error_kind(error)
+                        retryable = error_kind in {"transient", "auth"} and attempt < PACKAGE_MAX_ATTEMPTS
+                        if self.logger is not None:
+                            self.logger.warning(
+                                "package_request_failed item=%s/%s attempt=%s error_type=%s category=%s retryable=%s",
+                                target_index, len(targets), attempt, type(error).__name__,
+                                error_kind, str(retryable).lower(),
+                            )
+                        if not retryable:
+                            if error_kind in {"transient", "auth", "permanent"}:
+                                state = "unavailable"
+                                outcome_name = "unavailable"
+                                outcomes["unavailable"] += 1
+                                if self.logger is not None:
+                                    self.logger.warning(
+                                        "package_request_exhausted item=%s/%s attempts=%s category=%s",
+                                        target_index, len(targets), attempt, error_kind,
+                                    )
+                            else:
+                                outcomes["failed"] += 1
+                            break
+                        if error_kind == "auth":
+                            # Reuse the source authentication contract; credentials
+                            # and refreshed session material stay inside the source layer.
+                            self.handler.authenticate_job(job)
+                        delay = PACKAGE_RETRY_DELAYS[attempt - 1]
+                        if self.logger is not None:
+                            self.logger.info(
+                                "package_request_retry item=%s/%s attempt=%s delay_seconds=%s",
+                                target_index, len(targets), attempt + 1, delay,
+                            )
+                        if retry_wait is not None:
+                            retry_wait(delay, cancel_callback)
+                        else:
+                            _wait_for_package_retry(delay, cancel_callback)
                 for kind in kinds:
                     processed += 1
                     if state == "failed":
@@ -518,6 +616,7 @@ class ProductionBackend(SourceBackend):
         return {
             "processed": processed, "failed": failed, "targets": len(targets),
             "keys": {target["artifact_key"] for target in targets},
+            "outcomes": outcomes,
         }
 
     def export_results(self, value, *, progress_callback=None):
