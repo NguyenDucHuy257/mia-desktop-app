@@ -18,6 +18,15 @@ from mia_source_results import _available_path
 
 
 class SourceJobIntentTests(unittest.TestCase):
+    def test_desktop_sync_modes_require_exactly_one_direction(self):
+        backend = object.__new__(ProductionBackend)
+        with self.assertRaisesRegex(ValueError, "sync_mode_requires_one_direction"):
+            backend.start({
+                "intent": {
+                    "sync_mode": "new", "directions": ["purchase", "sold"],
+                }
+            })
+
     def test_supplement_snapshots_baseline_without_forcing_all_requested_months(self):
         backend = object.__new__(ProductionBackend)
         backend.repository = SimpleNamespace(desktop_job_metadata=None)

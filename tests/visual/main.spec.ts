@@ -339,8 +339,8 @@ test('active sync overrides coverage and refreshes committed invoice counts real
   await page.addInitScript(() => {
     const account = { connection_id: 'conn_realtime', username: '0100000000', company_name: 'Công ty Realtime', status: 'connected', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
     const record = { job_id: 'job_realtime', connection_id: account.connection_id, intent: {}, idempotency_key: 'desktop-realtime', created_at: 'now', updated_at: 'now', status: 'running' };
-    let invoiceCount = 456;
-    Object.defineProperty(window, 'advanceRealtimeInvoiceCount', { value: () => { invoiceCount = 460; } });
+    let invoiceCount = 606;
+    Object.defineProperty(window, 'advanceRealtimeInvoiceCount', { value: () => { invoiceCount = 676; } });
     Object.defineProperty(window, 'miaRuntime', { value: {
       accountConnections: { list: async () => [account], create: async () => account, get: async () => account, reconnect: async () => account, revoke: async () => undefined },
       jobs: {
@@ -348,7 +348,8 @@ test('active sync overrides coverage and refreshes committed invoice counts real
         syncStates: async () => [{
           connection_id: account.connection_id, direction: 'purchase', status: 'running', current_month: '2025-08', current_until: '2025-08-31',
           sync_from: '2025-05-01', sync_until: '2025-08-31', invoice_count: invoiceCount,
-          baseline_invoice_count: 450, added_invoice_count: invoiceCount - 450,
+          baseline_invoice_count: 826, added_invoice_count: 0,
+          replaced_old_count: 250, downloaded_new_count: invoiceCount - 576,
           last_job_id: record.job_id, sync_mode: 'new',
         }],
         status: async () => ({
@@ -366,14 +367,14 @@ test('active sync overrides coverage and refreshes committed invoice counts real
   await expect(page.locator('.progress-cell')).toContainText('61%');
   await expect(page.locator('.sync-state-cell')).toContainText('Đang đồng bộ');
   await expect(page.locator('.sync-state-cell')).toContainText('Đang xử lý đến 31/08/2025');
-  await expect(page.locator('.invoice-count-current')).toHaveText('456');
-  await expect(page.locator('.invoice-count-added')).toHaveText('(+6 mới)');
-  await expect(page.locator('.invoice-count-baseline')).toHaveText('450 cũ');
+  await expect(page.locator('.invoice-count-current')).toHaveText('606');
+  await expect(page.locator('.invoice-count-added')).toHaveText('(+30 mới)');
+  await expect(page.locator('.invoice-count-baseline')).toHaveText('250 cũ');
 
   await page.evaluate(() => (window as typeof window & { advanceRealtimeInvoiceCount(): void }).advanceRealtimeInvoiceCount());
-  await expect(page.locator('.invoice-count-current')).toHaveText('460', { timeout: 3_000 });
-  await expect(page.locator('.invoice-count-added')).toHaveText('(+10 mới)');
-  await expect(page.locator('.invoice-count-baseline')).toHaveText('450 cũ');
+  await expect(page.locator('.invoice-count-current')).toHaveText('676', { timeout: 3_000 });
+  await expect(page.locator('.invoice-count-added')).toHaveText('(+100 mới)');
+  await expect(page.locator('.invoice-count-baseline')).toHaveText('250 cũ');
   await expect(page.locator('.sync-state-cell')).not.toContainText('Đã đồng bộ');
 });
 

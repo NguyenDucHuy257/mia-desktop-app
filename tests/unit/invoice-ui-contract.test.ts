@@ -128,6 +128,8 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('className="invoice-count-current">{format(current)}');
     expect(page).toContain('className="invoice-count-added">(+{format(added)} mới)');
     expect(page).toContain('className="invoice-count-baseline">{format(baseline)} cũ');
+    expect(page).toContain("state?.sync_mode === 'new'");
+    expect(page).toContain('state?.downloaded_new_count ?? 0');
     expect(page).toContain('`Từ ${syncFromLabel} đến ${syncUntilLabel}`');
     expect(page).not.toContain('Đã có trong hệ thống:');
     expect(page).toContain("phase === 'queued' || phase === 'starting') ? 'running' as const");

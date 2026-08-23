@@ -190,6 +190,96 @@ class SyncStateTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual((completed["invoice_count"], completed["added_invoice_count"]), (460, 10))
 
+    def test_new_replacement_counts_persisted_range_rows_not_progress_items(self):
+        database = self.backend.data_root / "0100000000" / "db" / "invoices.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("ALTER TABLE invoice_overview_items ADD COLUMN nlap_date TEXT")
+            connection.execute("DELETE FROM invoice_overview_items")
+            connection.executemany(
+                """INSERT INTO invoice_overview_items
+                   (id, company_tax_code, direction, query_type, created_at, nlap_date)
+                   VALUES (?, '0100000000', 'purchase', 'query', ?, ?)""",
+                [
+                    (index, "outside", "2024-12-31")
+                    for index in range(1, 577)
+                ],
+            )
+            connection.execute(
+                """INSERT INTO invoice_overview_items
+                   (id, company_tax_code, direction, query_type, created_at, nlap_date)
+                   VALUES (1000, '0100000000', 'sold', 'query', 'untouched', '2025-02-01')"""
+            )
+            connection.commit()
+        job = SimpleNamespace(
+            job_id="job_replace", status="running", current_stage="overview",
+            parameters={
+                "directions": ["purchase"], "sync_mode": "new",
+                "baseline_invoice_count": 826, "replaced_old_count": 250,
+                "replacement_prepared": True, "date_from": "2025-01-01",
+                "date_to": "2025-03-31",
+            },
+            progress_state={
+                "current_stage": "overview", "current_month": {"key": "2025-01"},
+                "modules": {"overview": {"status": "running"}},
+            },
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = job
+
+        initial = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual(
+            (initial["invoice_count"], initial["downloaded_new_count"], initial["replaced_old_count"]),
+            (576, 0, 250),
+        )
+
+        def insert_downloaded(start, end):
+            with closing(sqlite3.connect(database)) as connection:
+                connection.executemany(
+                    """INSERT INTO invoice_overview_items
+                       (id, company_tax_code, direction, query_type, created_at, nlap_date)
+                       VALUES (?, '0100000000', 'purchase', 'query', 'downloaded', '2025-02-01')""",
+                    [(index,) for index in range(start, end)],
+                )
+                connection.commit()
+
+        insert_downloaded(2000, 2050)
+        after_fifty = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual((after_fifty["invoice_count"], after_fifty["downloaded_new_count"]), (626, 50))
+
+        insert_downloaded(2050, 2200)
+        after_two_hundred = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual(
+            (after_two_hundred["invoice_count"], after_two_hundred["downloaded_new_count"]),
+            (776, 200),
+        )
+
+        insert_downloaded(2200, 2265)
+        completed = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual((completed["invoice_count"], completed["downloaded_new_count"]), (841, 265))
+        sold = self.backend.sync_states(["conn_one"], "sold")[0]
+        self.assertEqual(sold["invoice_count"], 1)
+
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                "DELETE FROM invoice_overview_items WHERE direction='purchase' AND nlap_date BETWEEN '2025-01-01' AND '2025-03-31'"
+            )
+            connection.commit()
+        job.parameters["replaced_old_count"] = 100
+        insert_downloaded(3000, 3092)
+        fewer = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual((fewer["invoice_count"], fewer["downloaded_new_count"]), (668, 92))
+
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                "DELETE FROM invoice_overview_items WHERE direction='purchase' AND nlap_date BETWEEN '2025-01-01' AND '2025-03-31'"
+            )
+            connection.commit()
+        insert_downloaded(4000, 4100)
+        equal_replacement = self.backend.sync_states(["conn_one"], "purchase")[0]
+        self.assertEqual(
+            (equal_replacement["invoice_count"], equal_replacement["downloaded_new_count"]),
+            (676, 100),
+        )
+
     def test_source_business_key_upsert_adds_only_missing_supplement_invoices(self):
         database = Path(self.temporary.name) / "supplement.sqlite3"
         repository = InvoiceOverviewRepository(database)

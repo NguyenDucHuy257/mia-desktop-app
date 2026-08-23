@@ -1,13 +1,16 @@
 import unittest
+from contextlib import closing
 from datetime import date, datetime, timedelta, timezone
+import sqlite3
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+from app.repositories.invoice_package_repository import InvoicePackageRepository
 from app.worker_runtime.coverage_planner import CoveragePlanner
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
@@ -126,6 +129,106 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
             date_to="2025-05-31",
         )
         self.assertEqual(actions[("purchase", "2025-05")], "realtime_refresh")
+
+    def test_new_preflight_deletes_only_selected_company_direction_and_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_root = Path(directory)
+            tax_code = "0100000000"
+            database = data_root / tax_code / "db" / "invoices.sqlite3"
+            overview = InvoiceOverviewRepository(database)
+            detail = InvoiceDetailRepository(database)
+            package = InvoicePackageRepository(database)
+            timestamp = "2026-08-01T00:00:00+00:00"
+
+            def item(number, invoice_date):
+                return {
+                    "nbmst": f"buyer-{number}", "khhdon": "AA", "shdon": str(number),
+                    "khmshdon": "1", "nlap": invoice_date,
+                }
+
+            common = dict(
+                company_tax_code=tax_code, query_type="sco-query",
+                invoice_category="invoice", raw_json_path="", timestamp=timestamp,
+            )
+            overview.upsert_items(
+                direction="purchase",
+                items=[item(1, "2025-01-10"), item(2, "2025-03-20"), item(3, "2025-04-01")],
+                **common,
+            )
+            overview.upsert_items(
+                direction="sold", items=[item(4, "2025-02-10")], **common,
+            )
+            detail.upsert_detail_error(
+                tax_code, "purchase", "sco-query", "invoice", "buyer-1", "AA", "1", "1",
+                "2025-01-10", "2025-01-10", 500, "old", timestamp,
+            )
+            detail.upsert_detail_error(
+                tax_code, "sold", "sco-query", "invoice", "buyer-4", "AA", "4", "1",
+                "2025-02-10", "2025-02-10", 500, "old", timestamp,
+            )
+            package.upsert_package_error(
+                company_tax_code=tax_code, direction="purchase", query_type="sco-query",
+                invoice_category="invoice", nbmst="buyer-2", khhdon="AA", shdon="2",
+                khmshdon="1", nlap="2025-03-20", nlap_date="2025-03-20",
+                error_message="old", attempted_at=timestamp,
+            )
+
+            class MetadataRepository:
+                def merge_job_parameters(self, _job_id, values):
+                    job.parameters = {**job.parameters, **values}
+                    return job
+
+            pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+            pipeline.planner = SimpleNamespace(data_root=data_root)
+            pipeline.repository = MetadataRepository()
+            job = SimpleNamespace(
+                job_id="job-new", company_tax_code=tax_code,
+                parameters={
+                    "sync_mode": "new", "directions": ["purchase"],
+                    "date_from": "2025-01-01", "date_to": "2025-03-31",
+                },
+            )
+            prepared = pipeline._prepare_full_replacement(job)
+
+            self.assertTrue(prepared.parameters["replacement_prepared"])
+            self.assertEqual(prepared.parameters["replaced_old_count"], 2)
+            with closing(sqlite3.connect(database)) as connection:
+                remaining = connection.execute(
+                    "SELECT direction, shdon FROM invoice_overview_items ORDER BY direction, shdon"
+                ).fetchall()
+                detail_remaining = connection.execute(
+                    "SELECT direction, shdon FROM invoice_detail_items ORDER BY direction"
+                ).fetchall()
+                package_count = connection.execute(
+                    "SELECT COUNT(*) FROM invoice_package_items"
+                ).fetchone()[0]
+            self.assertEqual(remaining, [("purchase", "3"), ("sold", "4")])
+            self.assertEqual(detail_remaining, [("sold", "4")])
+            self.assertEqual(package_count, 0)
+
+    def test_new_page_is_published_only_after_the_staging_commit_succeeds(self):
+        repository = Mock()
+        original = Mock(return_value=7)
+        values = {
+            "company_tax_code": "0100000000", "direction": "purchase",
+            "query_type": "sco-query", "invoice_category": "invoice",
+            "raw_json_path": "", "items": [{"shdon": "1"}],
+            "timestamp": "2026-08-01T00:00:00+00:00",
+        }
+        result = OptimizedInvoiceCrawlPipeline._publish_replacement_page(
+            original, repository, **values,
+        )
+        self.assertEqual(result, 7)
+        original.assert_called_once_with(repository, **values)
+        repository.upsert_items.assert_called_once_with(**values)
+
+        repository.reset_mock()
+        failed = Mock(side_effect=RuntimeError("stage failed"))
+        with self.assertRaisesRegex(RuntimeError, "stage failed"):
+            OptimizedInvoiceCrawlPipeline._publish_replacement_page(
+                failed, repository, **values,
+            )
+        repository.upsert_items.assert_not_called()
 
     def test_supplement_skips_finalized_history_but_rechecks_previous_and_current_month(self):
         synced = {("purchase", f"2026-{month:02d}") for month in range(1, 9)}
