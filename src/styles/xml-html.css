@@ -70,8 +70,8 @@
 .artifact-account-row > strong { white-space: nowrap; }
 .artifact-account-row > .selection-button { justify-self: center; margin-left: 6px; }
 .artifact-account-row:not(.artifact-account-row--head):hover { background: #f8fafc; }
-.artifact-account-row--head { height: 58px; padding-top: 0; padding-bottom: 0; }
-.artifact-quantity-header { align-self: stretch; border-left: 1px solid #dfe6ee; border-right: 1px solid #dfe6ee; display: grid; grid-template-rows: 29px 29px; text-align: center; }
+.artifact-account-table .artifact-account-row--head { height: 58px; min-height: 58px; padding-top: 0; padding-bottom: 0; }
+.artifact-quantity-header { height: 100%; align-self: stretch; border-left: 1px solid #dfe6ee; border-right: 1px solid #dfe6ee; display: grid; grid-template-rows: repeat(2, minmax(0, 1fr)); text-align: center; }
 .artifact-quantity-header > strong { align-self: center; font-size: 12px; }
 .artifact-quantity-header > span, .artifact-quantity { width: 100%; min-width: 0; display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; justify-items: stretch; }
 .artifact-quantity-header > span { height: 100%; border-top: 1px solid #dfe6ee; }
