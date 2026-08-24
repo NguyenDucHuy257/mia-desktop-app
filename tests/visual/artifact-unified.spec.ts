@@ -75,6 +75,14 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.getByRole('checkbox', { name: 'PDF', exact: true })).not.toBeChecked();
   await expect(page.locator('.artifact-toolbar-field')).toHaveCount(3);
   await expect(page.locator('.artifact-quantity-header')).toContainText('Số lượng hóa đơnXMLHTMLPDF');
+  const quantityHeaderCenters = await page.locator('.artifact-quantity-header > span > b').evaluateAll((cells) => cells.map((cell) => {
+    const bounds = cell.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    const textBounds = range.getBoundingClientRect();
+    return Math.abs((bounds.left + bounds.width / 2) - (textBounds.left + textBounds.width / 2));
+  }));
+  expect(Math.max(...quantityHeaderCenters)).toBeLessThanOrEqual(1);
   await expect(page.locator('.artifact-coverage-badge')).toContainText('Đã đồng bộ');
   await page.evaluate(() => document.fonts.ready);
   await expect(page).toHaveScreenshot('unified-artifact-account-1500x1024.png', {
