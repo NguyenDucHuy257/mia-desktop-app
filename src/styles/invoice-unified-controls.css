@@ -1,0 +1,84 @@
+/* Shared control contract for Quản lý HĐĐT and XML/HTML/PDF. */
+.invoice-page {
+  --mia-radius-ui: 6px;
+}
+
+.invoice-page button,
+.invoice-page select,
+.invoice-page .compact-select,
+.invoice-page .date-range-trigger,
+.invoice-page .date-range-trigger *,
+.invoice-page .storage-folder-picker button {
+  white-space: nowrap;
+}
+
+.invoice-page .compact-select {
+  min-width: 112px;
+  flex-shrink: 0;
+  line-height: 20px;
+}
+
+.invoice-page .compact-select--detail {
+  width: 168px;
+  min-width: 168px;
+}
+
+.invoice-page .toolbar-card,
+.invoice-page .data-card,
+.invoice-page .compact-select,
+.invoice-page .sync-button,
+.invoice-page .add-account,
+.invoice-page .stop-button,
+.invoice-page .search-box input,
+.invoice-page .status-filter,
+.invoice-page .date-range-trigger,
+.invoice-page .date-range-popover,
+.invoice-page .date-range-popover input,
+.invoice-page .date-range-calendar-control,
+.invoice-page .date-range-popover button,
+.invoice-page .figma-option-menu,
+.invoice-page .figma-option-menu label,
+.invoice-page .sync-mode-menu,
+.invoice-page .sync-mode-menu > button,
+.invoice-page .selection-box,
+.invoice-page .status-badge,
+.invoice-page .pagination button,
+.invoice-page .artifact-progress-card,
+.invoice-page .artifact-format-icon,
+.invoice-page .artifact-progress-card footer button,
+.invoice-page .artifact-progress-track,
+.invoice-page .artifact-row-progress i,
+.invoice-page .progress-track {
+  border-radius: var(--mia-radius-ui);
+}
+
+.invoice-page .storage-folder-picker input,
+.invoice-page .invoice-export-folder input {
+  border-radius: var(--mia-radius-ui) 0 0 var(--mia-radius-ui);
+}
+
+.invoice-page .storage-folder-picker button,
+.invoice-page .invoice-export-folder button {
+  border-radius: 0 var(--mia-radius-ui) var(--mia-radius-ui) 0;
+}
+
+.invoice-page .artifact-account-filters {
+  min-height: 42px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.invoice-page .artifact-account-filters .filters-left {
+  min-width: 470px;
+  flex: 1 1 470px;
+}
+
+.invoice-page .artifact-account-filters .search-box {
+  width: 300px;
+  min-width: 300px;
+  flex: 0 0 300px;
+  visibility: visible;
+  opacity: 1;
+  overflow: visible;
+}

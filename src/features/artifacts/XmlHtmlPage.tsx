@@ -6,7 +6,7 @@ import { NoticeDialog } from '../../components/NoticeDialog';
 import searchIcon from '../../assets/figma/search.png';
 import { OptionCheck } from '../../components/OptionCheck';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
-import type { ArtifactAccountSnapshot, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
+import type { ArtifactAccountSnapshot, ArtifactCoverageAccount, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
 import type { ArtifactDownloadLifecycle } from './use-artifact-download-lifecycle';
 import '../../styles/xml-html.css';
 
@@ -24,6 +24,18 @@ export async function loadArtifactSnapshots(request: ArtifactSnapshotRequest) {
   for (let index = 0; index < request.connection_ids.length; index += 50) chunks.push(request.connection_ids.slice(index, index + 50));
   const results = await Promise.all(chunks.map((connection_ids) => window.miaRuntime!.artifacts.snapshot({ ...request, connection_ids })));
   return results.flatMap((result) => result.accounts);
+}
+
+export async function loadArtifactCoverage(request: ArtifactSnapshotRequest) {
+  const chunks: string[][] = [];
+  for (let index = 0; index < request.connection_ids.length; index += 50) chunks.push(request.connection_ids.slice(index, index + 50));
+  const coverage = window.miaRuntime!.artifacts.coverage;
+  const results = await Promise.all(chunks.map(async (connection_ids) => {
+    const value = { ...request, connection_ids };
+    if (typeof coverage === 'function') return (await coverage(value)).accounts;
+    return (await window.miaRuntime!.artifacts.snapshot(value)).accounts;
+  }));
+  return results.flatMap((items) => items) as ArtifactCoverageAccount[];
 }
 
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
@@ -83,11 +95,14 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   const [kinds, setKinds] = useState<InvoiceArtifactKind[]>(['xml', 'html']);
   const [snapshots, setSnapshots] = useState<Record<string, ArtifactAccountSnapshot>>({});
   const [snapshotState, setSnapshotState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [cacheRevision, setCacheRevision] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [page, setPage] = useState(1);
   const [feedback, setFeedback] = useState<string | null>(null);
   const generation = useRef(0);
+  const cacheGeneration = useRef(0);
+  const coverageFingerprint = useRef('');
   const snapshotSelectionKey = useRef('');
   const accountIds = useMemo(() => accounts.map((account) => account.connection_id), [accounts]);
 
@@ -108,18 +123,43 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
     // Never render a snapshot from the previous account/range/direction while
     // the authoritative persisted coverage for the new selection is loading.
     const selectionKey = JSON.stringify([accountIds, selection.dateFrom, selection.dateTo, selection.direction]);
-    if (snapshotSelectionKey.current !== selectionKey) {
+    const selectionChanged = snapshotSelectionKey.current !== selectionKey;
+    if (selectionChanged) {
       snapshotSelectionKey.current = selectionKey;
+      coverageFingerprint.current = '';
       setSnapshots({});
+      setSnapshotState('loading');
     }
-    setSnapshotState('loading');
-    void loadArtifactSnapshots({ connection_ids: accountIds, directions: [selection.direction], date_from: selection.dateFrom, date_to: selection.dateTo }).then((items) => {
+    void loadArtifactCoverage({ connection_ids: accountIds, directions: [selection.direction], date_from: selection.dateFrom, date_to: selection.dateTo }).then((items) => {
       if (token !== generation.current) return;
-      setSnapshots(Object.fromEntries(items.map((item) => [item.connection_id, item])));
+      const fingerprint = JSON.stringify(items.map((item) => [item.connection_id, item.ready, item.missing_ranges]));
+      setSnapshots((current) => Object.fromEntries(items.map((item) => [item.connection_id, {
+        ...item,
+        total: current[item.connection_id]?.total ?? 0,
+        cached: current[item.connection_id]?.cached ?? { xml: 0, html: 0, pdf: 0 },
+      }])));
       setSnapshotState('ready');
-    }).catch(() => { if (token === generation.current) setSnapshotState('error'); });
+      if (coverageFingerprint.current !== fingerprint) {
+        coverageFingerprint.current = fingerprint;
+        setCacheRevision((current) => current + 1);
+      }
+    }).catch(() => { if (token === generation.current && selectionChanged) setSnapshotState('error'); });
     return () => { if (token === generation.current) generation.current += 1; };
   }, [accountIds, coverageRevision, lifecycle.status?.status, selection.dateFrom, selection.dateTo, selection.direction]);
+
+  useEffect(() => {
+    if (!accountIds.length || cacheRevision < 1) return;
+    const token = ++cacheGeneration.current;
+    void loadArtifactSnapshots({ connection_ids: accountIds, directions: [selection.direction], date_from: selection.dateFrom, date_to: selection.dateTo }).then((items) => {
+      if (token !== cacheGeneration.current) return;
+      setSnapshots((current) => Object.fromEntries(items.map((item) => [item.connection_id, {
+        ...item,
+        ready: current[item.connection_id]?.ready ?? item.ready,
+        missing_ranges: current[item.connection_id]?.missing_ranges ?? item.missing_ranges,
+      }])));
+    }).catch(() => undefined);
+    return () => { if (token === cacheGeneration.current) cacheGeneration.current += 1; };
+  }, [accountIds, cacheRevision, selection.dateFrom, selection.dateTo, selection.direction]);
 
   const rows = accounts.map((account) => {
     // A terminal download snapshot belongs to the direction/range used by that

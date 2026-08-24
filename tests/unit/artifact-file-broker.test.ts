@@ -165,6 +165,14 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'exe' })).toThrow();
   });
 
+  it('uses the dedicated lightweight runtime method for coverage readiness', async () => {
+    const runtime = { invoke: vi.fn().mockResolvedValue({ accounts: [] }) };
+    const broker = createArtifactBroker(() => runtime);
+    const request = { connection_ids: ['conn_1'], directions: ['purchase'], date_from: '2026-02-01', date_to: '2026-05-31' };
+    await expect(broker.coverage(request)).resolves.toMatchObject({ ok: true, data: { accounts: [] } });
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.coverage', request);
+  });
+
   it('validates unified coverage and batch DTOs including PDF concurrency', () => {
     const destination = path.resolve(tmpdir(), 'MIA-unified');
     expect(validateArtifactSnapshotRequest({

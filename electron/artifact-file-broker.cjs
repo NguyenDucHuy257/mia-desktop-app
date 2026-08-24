@@ -135,6 +135,7 @@ function waitForTaskPoll(delayMs = 100) {
 function createArtifactBroker(getRuntime) {
   let activeTaskId = null;
   return Object.freeze({
+    coverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.coverage', validateArtifactSnapshotRequest(value))),
     snapshot: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.snapshot', validateArtifactSnapshotRequest(value))),
     startBatch: (value) => runBrokerCommand(async () => {
       const started = await getRuntime().invoke('artifacts.batch.start', validateArtifactBatchRequest(value));

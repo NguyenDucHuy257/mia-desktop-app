@@ -38,6 +38,15 @@ class FakeBackend:
         return self.tax_code
 
 
+class MappingBackend:
+    def __init__(self, root: Path, identities: dict[str, str]) -> None:
+        self.data_root = root
+        self.identities = identities
+
+    def connection_tax_code(self, connection_id: str) -> str:
+        return self.identities[connection_id]
+
+
 class ArtifactPipelineTests(unittest.TestCase):
     def _database(self, root: Path) -> Path:
         database = root / "0101234567" / "db" / "invoices.sqlite3"
@@ -136,13 +145,13 @@ class ArtifactPipelineTests(unittest.TestCase):
             )
             for month, missing_start in expected_missing_starts:
                 self._checkpoint_month(database, month)
-                snapshot = inspector.snapshot(request)["accounts"][0]
+                snapshot = inspector.coverage(request)["accounts"][0]
                 self.assertFalse(snapshot["ready"])
                 self.assertEqual(snapshot["missing_ranges"][0]["date_from"], missing_start)
                 self.assertEqual(snapshot["missing_ranges"][-1]["date_to"], "2026-05-31")
 
             self._checkpoint_month(database, 5)
-            snapshot = inspector.snapshot(request)["accounts"][0]
+            snapshot = inspector.coverage(request)["accounts"][0]
             self.assertTrue(snapshot["ready"])
             self.assertEqual(snapshot["missing_ranges"], [])
 
@@ -160,14 +169,54 @@ class ArtifactPipelineTests(unittest.TestCase):
                 "date_from": "2026-02-01", "date_to": "2026-05-31",
             }
 
-            purchase = inspector.snapshot({**common, "directions": ["purchase"]})["accounts"][0]
-            sold = inspector.snapshot({**common, "directions": ["sold"]})["accounts"][0]
+            purchase = inspector.coverage({**common, "directions": ["purchase"]})["accounts"][0]
+            sold = inspector.coverage({**common, "directions": ["sold"]})["accounts"][0]
             self.assertTrue(purchase["ready"])
             self.assertFalse(sold["ready"])
             self.assertEqual(
                 sold["missing_ranges"],
                 [{"date_from": "2026-04-01", "date_to": "2026-05-31"}],
             )
+
+    def test_lightweight_coverage_never_scans_package_or_pdf_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            self._checkpoint_month(database, 2)
+            inspector = ArtifactInspector(FakeBackend(root))
+            with patch.object(inspector, "_account_snapshot", side_effect=AssertionError("artifact scan invoked")):
+                account = inspector.coverage({
+                    "connection_ids": ["conn_1"], "directions": ["purchase"],
+                    "date_from": "2026-02-01", "date_to": "2026-02-28",
+                })["accounts"][0]
+            self.assertTrue(account["ready"])
+            self.assertEqual(account["missing_ranges"], [])
+
+    def test_coverage_maps_each_connection_to_its_own_tax_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ready_database = self._database(root)
+            self._checkpoint_month(ready_database, 2)
+            missing_database = root / "0201234567" / "db" / "invoices.sqlite3"
+            missing_database.parent.mkdir(parents=True)
+            with closing(sqlite3.connect(missing_database)) as connection:
+                connection.execute("""CREATE TABLE invoice_overview_checkpoints(
+                    id INTEGER PRIMARY KEY, company_tax_code TEXT, direction TEXT,
+                    query_type TEXT, from_date TEXT, to_date TEXT,
+                    status_filter TEXT, checkpoint_status TEXT,
+                    fetched_count INTEGER, expected_total INTEGER, page_number INTEGER
+                )""")
+            inspector = ArtifactInspector(MappingBackend(root, {
+                "conn_ready": "0101234567", "conn_missing": "0201234567",
+            }))
+            accounts = inspector.coverage({
+                "connection_ids": ["conn_ready", "conn_missing"],
+                "directions": ["purchase"], "date_from": "2026-02-01", "date_to": "2026-02-28",
+            })["accounts"]
+            self.assertEqual(accounts[0]["connection_id"], "conn_ready")
+            self.assertTrue(accounts[0]["ready"])
+            self.assertEqual(accounts[1]["connection_id"], "conn_missing")
+            self.assertFalse(accounts[1]["ready"])
 
     def test_missing_interval_helper_detects_internal_holes(self):
         self.assertEqual(
@@ -197,7 +246,7 @@ class ArtifactPipelineTests(unittest.TestCase):
                     ) VALUES (?,?,?,?,?,?,?,?,?,?)""", rows,
                 )
                 connection.commit()
-            snapshot = ArtifactInspector(FakeBackend(root)).snapshot({
+            snapshot = ArtifactInspector(FakeBackend(root)).coverage({
                 "connection_ids": ["conn_1"], "directions": ["purchase"],
                 "date_from": "2026-08-01", "date_to": "2026-08-31",
             })["accounts"][0]
