@@ -25,7 +25,7 @@ from mia_artifact_pipeline import (
     html_fingerprint,
     pdf_cache_valid,
 )
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from datetime import date
 
 
@@ -485,7 +485,7 @@ class ArtifactPipelineTests(unittest.TestCase):
                 def artifact_targets_for_export(self, request):
                     return [target] if request["query_type"] == "query" else []
                 def ensure_invoice_packages(self, _request, **kwargs):
-                    kwargs["ready_callback"](target, "unavailable", "unavailable")
+                    kwargs["ready_callback"](target, "unavailable", "source_confirmed_unavailable")
             snapshot = {"accounts": [{"connection_id": "conn_1", "ready": True, "missing_ranges": [], "total": 1, "cached": {"xml": 0, "html": 0, "pdf": 0}}]}
             with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
                 result = ArtifactBatchCoordinator(Backend(root), {
@@ -499,6 +499,35 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["formats"]["xml"]["failed"], 0)
             self.assertEqual(result["formats"]["html"]["failed"], 0)
             self.assertEqual(result["warning_count"], 1)
+
+    def test_retry_exhausted_package_is_a_warning_with_a_distinct_diagnostic(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = {
+                "artifact_key": "purchase|query|0101|AA|1|1",
+                "direction": "purchase", "query_type": "query", "nbmst": "0101",
+                "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+            }
+            class Backend(FakeBackend):
+                def artifact_targets_for_export(self, request):
+                    return [target] if request["query_type"] == "query" else []
+                def ensure_invoice_packages(self, _request, **kwargs):
+                    kwargs["ready_callback"](target, "unavailable", "source_retry_exhausted")
+            snapshot = {"accounts": [{"connection_id": "conn_1", "ready": True, "missing_ranges": [], "total": 1, "cached": {"xml": 0, "html": 0, "pdf": 0}}]}
+            logger = Mock()
+            with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
+                result = ArtifactBatchCoordinator(Backend(root), {
+                    "destination": str(root / "output"), "connection_ids": ["conn_1"],
+                    "directions": ["purchase"], "kinds": ["xml"],
+                    "date_from": "2026-01-01", "date_to": "2026-01-31",
+                    "pdf_concurrency": 1,
+                }, logger=logger).run()
+            self.assertEqual(result["formats"]["xml"]["failed"], 0)
+            self.assertEqual(result["warning_count"], 1)
+            self.assertTrue(any(
+                "source_retry_exhausted" in " ".join(str(value) for value in call.args)
+                for call in logger.warning.call_args_list
+            ))
 
     def test_user_cancellation_marks_account_stopped_not_error(self):
         with tempfile.TemporaryDirectory() as directory:

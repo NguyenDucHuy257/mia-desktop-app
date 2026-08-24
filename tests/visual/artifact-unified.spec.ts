@@ -46,6 +46,11 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('white-space', 'nowrap');
   await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('border-radius', '6px');
   await expect(page.locator('.artifact-account-table')).toHaveCSS('border-radius', '6px');
+  const dateBox = await page.locator('.artifact-toolbar-card .date-range-trigger').boundingBox();
+  const folderBox = await page.locator('.artifact-toolbar-card .invoice-export-folder').boundingBox();
+  expect(dateBox).not.toBeNull();
+  expect(folderBox).not.toBeNull();
+  expect(Math.abs((dateBox?.x ?? 0) - (folderBox?.x ?? 0))).toBeLessThanOrEqual(1);
   await expect(page.getByRole('heading', { name: 'XML/HTML/PDF' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Thêm tài khoản' })).toHaveCount(0);
@@ -54,6 +59,14 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.getByText('Công ty Mẫu')).toBeVisible();
   await expect(page.locator('body')).not.toContainText(/artifact/i);
   await expect(page.getByRole('button', { name: 'Mở thư mục' })).toHaveCount(0);
+  const downloadButton = page.getByRole('button', { name: 'Tải xuống', exact: true });
+  const stopButton = page.getByRole('button', { name: 'Dừng tải', exact: true });
+  await expect(downloadButton).toHaveClass(/sync-button/);
+  await expect(stopButton).toHaveClass(/stop-button/);
+  await expect(downloadButton.locator('.invoice-action-icon')).toHaveCount(1);
+  await expect(stopButton.locator('.stop-button-icon')).toHaveCount(1);
+  await expect(downloadButton).toHaveCSS('border-radius', '6px');
+  await expect(stopButton).toHaveCSS('border-radius', '6px');
   await expect(page.locator('.artifact-quantity')).toContainText('XML 4/12');
   await expect(page.locator('.artifact-quantity')).toContainText('HTML 3/12');
   await expect(page.locator('.artifact-quantity')).toContainText('PDF 2/12');
@@ -66,7 +79,7 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page).toHaveScreenshot('unified-artifact-account-1500x1024.png', {
     animations: 'disabled', maxDiffPixelRatio: 0.02, threshold: 0.25,
   });
-  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  await downloadButton.click();
   await expect(page.locator('.artifact-progress-card')).toHaveCount(2);
   await expect(page.getByText('Đã hoàn thành tải XML/HTML/PDF.')).toBeVisible({ timeout: 4_000 });
 

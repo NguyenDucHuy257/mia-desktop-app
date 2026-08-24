@@ -56,15 +56,23 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
     if (isLogs) void refreshLogs();
   }, [isLogs, isSettings]);
 
-  const visibleLogs = logs.filter((entry) => `${logTitle(entry)} ${entry.event} ${entry.source} ${entry.details}`.toLocaleLowerCase('vi').includes(query.toLocaleLowerCase('vi')));
+  const diagnosticLogs = logs.filter((entry) => entry.level === 'error' || entry.level === 'warn');
+  const visibleLogs = diagnosticLogs.filter((entry) => `${logTitle(entry)} ${entry.event} ${entry.source} ${entry.details}`.toLocaleLowerCase('vi').includes(query.toLocaleLowerCase('vi')));
 
   async function refreshLogs() {
     try {
       const bridge = window.miaRuntime?.logs;
       if (!bridge) { setLogs([]); return; }
-      if (typeof bridge.entries === 'function') { setLogs(await bridge.entries()); return; }
+      if (typeof bridge.entries === 'function') {
+        setLogs((await bridge.entries()).filter((entry) => entry.level === 'error' || entry.level === 'warn'));
+        return;
+      }
       const legacy = await bridge.list();
-      setLogs(legacy.map((details, index) => ({ id: `legacy-${index}`, timestamp: '', level: 'info', source: 'system', event: 'legacy_log', details })));
+      setLogs(legacy.flatMap((details, index) => {
+        const match = details.match(/\b(WARN(?:ING)?|ERROR)\b/i);
+        if (!match) return [];
+        return [{ id: `legacy-${index}`, timestamp: '', level: match[1].toUpperCase() === 'ERROR' ? 'error' as const : 'warn' as const, source: 'system', event: 'diagnostic_log', details }];
+      }));
     }
     catch { setMessage('Không thể đọc nhật ký cục bộ.'); }
   }

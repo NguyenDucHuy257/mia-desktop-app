@@ -20,12 +20,13 @@ describe('invoice result control presentation', () => {
   });
 
   it('uses a vector stop icon and reserves a wider company column', async () => {
-    const [component, styles] = await Promise.all([
+    const [component, icons, styles] = await Promise.all([
       source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/components/InvoiceActionIcons.tsx'),
       source('src/styles/invoice-refresh.css'),
     ]);
     expect(component).toContain('<StopIcon />');
-    expect(component).toContain('className="stop-button-icon"');
+    expect(icons).toContain('className="stop-button-icon"');
     expect(component).not.toContain("assets/figma/stop.png");
     expect(component).toContain('title={row.company}');
     expect(styles).toContain('minmax(240px, 340px)');

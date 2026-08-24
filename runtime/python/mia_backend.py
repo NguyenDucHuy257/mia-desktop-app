@@ -33,6 +33,12 @@ PACKAGE_RETRY_DELAYS = (1, 2, 4, 6, 8, 10)
 PACKAGE_MAX_ATTEMPTS = len(PACKAGE_RETRY_DELAYS) + 1
 
 
+def package_retry_delay(retry_number):
+    """Return the bounded source-package backoff for a one-based retry."""
+    index = max(0, int(retry_number) - 1)
+    return PACKAGE_RETRY_DELAYS[min(index, len(PACKAGE_RETRY_DELAYS) - 1)]
+
+
 def _exception_chain(error):
     seen = set()
     current = error
@@ -504,7 +510,13 @@ class ProductionBackend(SourceBackend):
         })
         total = len(targets) * len(kinds)
         processed = failed = 0
-        outcomes = {"downloaded": 0, "reused_verified": 0, "unavailable": 0, "failed": 0}
+        outcomes = {
+            "downloaded": 0,
+            "reused_verified": 0,
+            "source_confirmed_unavailable": 0,
+            "source_retry_exhausted": 0,
+            "failed": 0,
+        }
         batch_started = time.perf_counter()
 
         def emit(target, kind, state):
@@ -554,7 +566,11 @@ class ProductionBackend(SourceBackend):
                     try:
                         outcome = self.handler.run_xml_unit(job, payload) or {}
                         outcome_name = str(outcome.get("outcome") or "downloaded")
-                        state = "unavailable" if outcome_name == "unavailable" else "completed"
+                        if outcome_name == "unavailable":
+                            state = "unavailable"
+                            outcome_name = "source_confirmed_unavailable"
+                        else:
+                            state = "completed"
                         outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
                         if self.logger is not None:
                             self.logger.info(
@@ -572,14 +588,29 @@ class ProductionBackend(SourceBackend):
                                 error_kind, str(retryable).lower(),
                             )
                         if not retryable:
-                            if error_kind in {"transient", "auth", "permanent"}:
+                            if error_kind == "permanent":
                                 state = "unavailable"
-                                outcome_name = "unavailable"
-                                outcomes["unavailable"] += 1
+                                outcome_name = "source_confirmed_unavailable"
+                                outcomes[outcome_name] += 1
                                 if self.logger is not None:
                                     self.logger.warning(
-                                        "package_request_exhausted item=%s/%s attempts=%s category=%s",
-                                        target_index, len(targets), attempt, error_kind,
+                                        "source_confirmed_unavailable format=XML/HTML item=%s/%s "
+                                        "invoice_ref=%s status=unavailable error_type=%s",
+                                        target_index, len(targets),
+                                        str(target.get("shdon") or "-")[:80], type(error).__name__,
+                                    )
+                            elif error_kind in {"transient", "auth"}:
+                                state = "unavailable"
+                                outcome_name = "source_retry_exhausted"
+                                outcomes[outcome_name] += 1
+                                status = getattr(getattr(error, "response", None), "status_code", None)
+                                if self.logger is not None:
+                                    self.logger.warning(
+                                        "source_retry_exhausted format=XML/HTML item=%s/%s "
+                                        "invoice_ref=%s status=%s error_type=%s attempts=%s",
+                                        target_index, len(targets),
+                                        str(target.get("shdon") or "-")[:80], status or error_kind,
+                                        type(error).__name__, attempt,
                                     )
                             else:
                                 outcomes["failed"] += 1
@@ -588,7 +619,7 @@ class ProductionBackend(SourceBackend):
                             # Reuse the source authentication contract; credentials
                             # and refreshed session material stay inside the source layer.
                             self.handler.authenticate_job(job)
-                        delay = PACKAGE_RETRY_DELAYS[attempt - 1]
+                        delay = package_retry_delay(attempt)
                         if self.logger is not None:
                             self.logger.info(
                                 "package_request_retry item=%s/%s attempt=%s delay_seconds=%s",
@@ -608,9 +639,10 @@ class ProductionBackend(SourceBackend):
         if self.logger is not None:
             self.logger.info(
                 "artifact_source_batch_complete targets=%s kinds=%s downloaded=%s "
-                "reused=%s unavailable=%s failed=%s duration_ms=%.1f",
+                "reused=%s confirmed_unavailable=%s retry_exhausted=%s failed=%s duration_ms=%.1f",
                 len(targets), len(kinds), outcomes["downloaded"],
-                outcomes["reused_verified"], outcomes["unavailable"],
+                outcomes["reused_verified"], outcomes["source_confirmed_unavailable"],
+                outcomes["source_retry_exhausted"],
                 outcomes["failed"], (time.perf_counter() - batch_started) * 1000,
             )
         return {

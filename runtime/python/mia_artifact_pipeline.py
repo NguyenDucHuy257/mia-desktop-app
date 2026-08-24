@@ -758,15 +758,28 @@ class ArtifactBatchCoordinator:
         def ready(target: dict[str, Any], state: str, outcome: str) -> None:
             key = target["artifact_key"]
             display = " - ".join(str(target.get(name) or "") for name in ("khhdon", "shdon", "nbmst"))
-            if state == "unavailable" or outcome == "unavailable":
+            if state == "unavailable" or outcome in {
+                "unavailable", "source_confirmed_unavailable", "source_retry_exhausted",
+            }:
                 with self.lock:
                     self.state["warning_count"] += 1
+                if self.logger is not None:
+                    self.logger.warning(
+                        "%s format=XML/HTML account_ref=%s invoice_ref=%s",
+                        outcome if outcome != "unavailable" else "source_confirmed_unavailable",
+                        connection_id[-8:], _safe_filename(display)[:80],
+                    )
                 for kind in self.value["kinds"]:
                     self._advance(kind, display)
                 return
             if state != "completed":
                 with self.lock:
                     self.state["warning_count"] += 1
+                if self.logger is not None:
+                    self.logger.error(
+                        "artifact_package_failed format=XML/HTML account_ref=%s invoice_ref=%s outcome=%s",
+                        connection_id[-8:], _safe_filename(display)[:80], outcome,
+                    )
                 for kind in self.value["kinds"]:
                     self._advance(kind, display, failed=True)
                 return
@@ -786,7 +799,13 @@ class ArtifactBatchCoordinator:
                         raise FileNotFoundError("xml_cache_missing")
                     _copy_atomically(xml_path, output_roots["xml"])
                     self._advance("xml", display)
-                except OSError:
+                except OSError as error:
+                    if self.logger is not None:
+                        self.logger.warning(
+                            "artifact_copy_failed format=XML account_ref=%s invoice_ref=%s error_type=%s message=%s",
+                            connection_id[-8:], _safe_filename(display)[:80],
+                            type(error).__name__, str(error)[:200],
+                        )
                     self._advance("xml", display, failed=True)
             if "html" in self.value["kinds"] and not self.format_cancel["html"].is_set():
                 try:
@@ -798,7 +817,13 @@ class ArtifactBatchCoordinator:
                         self._copy_html_assets(source_root, output_roots["html"])
                         exported_asset_roots.add(source_root)
                     self._advance("html", display)
-                except OSError:
+                except OSError as error:
+                    if self.logger is not None:
+                        self.logger.warning(
+                            "artifact_copy_failed format=HTML account_ref=%s invoice_ref=%s error_type=%s message=%s",
+                            connection_id[-8:], _safe_filename(display)[:80],
+                            type(error).__name__, str(error)[:200],
+                        )
                     self._advance("html", display, failed=True)
             if "pdf" in self.value["kinds"] and not self.format_cancel["pdf"].is_set():
                 if html_ready and pdf_pool is not None:
@@ -807,6 +832,11 @@ class ArtifactBatchCoordinator:
                     pdf_pool.submit({"target": target, "html_path": html_path, "display": display, "connection_id": connection_id, "cache_keys": cache_keys})
                     self._emit()
                 else:
+                    if self.logger is not None:
+                        self.logger.warning(
+                            "artifact_dependency_missing format=PDF account_ref=%s invoice_ref=%s error_type=FileNotFoundError message=html_bundle_incomplete",
+                            connection_id[-8:], _safe_filename(display)[:80],
+                        )
                     self._advance("pdf", display, failed=True)
 
         target_keys = set(target_map)
@@ -907,7 +937,11 @@ class ArtifactBatchCoordinator:
                 self.logger.info("pdf_completed invoice_ref=%s", _safe_filename(display)[:80])
         except Exception as error:
             if self.logger is not None:
-                self.logger.warning("pdf_failed error_type=%s", type(error).__name__)
+                self.logger.warning(
+                    "pdf_failed format=PDF account_ref=%s invoice_ref=%s error_type=%s message=%s",
+                    str(item.get("connection_id") or "")[-8:], _safe_filename(display)[:80],
+                    type(error).__name__, str(error)[:200],
+                )
             self._advance("pdf", display, failed=True)
 
     @staticmethod

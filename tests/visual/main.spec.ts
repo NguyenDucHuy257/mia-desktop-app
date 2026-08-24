@@ -428,7 +428,10 @@ test('settings persist scheduler limits and logs are filtered after main-process
   await expect(page.getByRole('alertdialog')).toContainText('Tác vụ mới sẽ áp dụng');
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: 'Nhật ký' }).click();
-  await expect(page.locator('.utility-log-list')).toContainText('storage_initialized');
+  await expect(page.locator('.utility-log-list')).not.toContainText('storage_initialized');
+  await expect(page.locator('.utility-log-row')).toHaveCount(1);
+  await expect(page.locator('.utility-log-row')).toHaveCSS('min-height', '46px');
+  await expect(page.locator('.utility-log-row strong')).toHaveCSS('font-size', '11px');
   await page.getByLabel('Tìm kiếm Nhật ký').fill('retry');
   await expect(page.locator('.utility-log-row')).toHaveCount(1);
   await expect(page.locator('.utility-log-list')).toContainText('retry_scheduled');

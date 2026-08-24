@@ -8,6 +8,7 @@ import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
 import syncIcon from '../../assets/figma/sync.png';
 import { OptionCheck } from '../../components/OptionCheck';
+import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
@@ -439,14 +440,6 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}
     </div>
   );
-}
-
-function DownloadIcon() {
-  return <svg className="invoice-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" /></svg>;
-}
-
-function StopIcon() {
-  return <svg className="stop-button-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><rect x="4" y="4" width="10" height="10" rx="1.5" /></svg>;
 }
 
 function SyncNewIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18h10a4 4 0 0 0 .7-7.94A6 6 0 0 0 6.1 9.1 4.5 4.5 0 0 0 7 18Zm5-9v6m0 0 2.5-2.5M12 15l-2.5-2.5" /></svg>; }
