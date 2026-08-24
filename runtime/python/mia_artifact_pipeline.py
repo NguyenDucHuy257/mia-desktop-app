@@ -31,6 +31,40 @@ def _safe_filename(value: str) -> str:
     return (cleaned or "artifact")[:120]
 
 
+def _filename_segment(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text or text.casefold() in {"none", "null", "undefined"}:
+        return ""
+    text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", text)
+    text = re.sub(r"\s+", "_", text).strip(" ._")
+    return text[:80]
+
+
+def _invoice_date_filename_token(target: dict[str, Any]) -> str:
+    raw = str(target.get("nlap_date") or target.get("nlap") or "").strip()
+    iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})", raw)
+    if iso:
+        return "".join(iso.groups())
+    vietnamese = re.match(r"^(\d{2})/(\d{2})/(\d{4})", raw)
+    if vietnamese:
+        day, month, year = vietnamese.groups()
+        return f"{year}{month}{day}"
+    return ""
+
+
+def build_invoice_export_basename(target: dict[str, Any]) -> str:
+    """Build the one canonical XML/HTML/PDF basename for an invoice."""
+    values = (
+        _invoice_date_filename_token(target),
+        target.get("khmshdon"), target.get("khhdon"),
+        target.get("shdon"), target.get("nbmst"),
+    )
+    segments = [segment for value in values if (segment := _filename_segment(value))]
+    return "_".join(segments)[:240] or "invoice"
+
+
 def _validate_request(value: dict[str, Any], *, destination: bool) -> dict[str, Any]:
     connection_ids = value.get("connection_ids")
     directions = value.get("directions")
@@ -224,9 +258,12 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _copy_atomically(source: Path, destination: Path) -> Path:
+def _copy_atomically(
+    source: Path, destination: Path, export_basename: str | None = None,
+) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
-    target = destination / (_safe_filename(source.stem) + source.suffix.casefold())
+    basename = _safe_filename(export_basename) if export_basename else _safe_filename(source.stem)
+    target = destination / (basename + source.suffix.casefold())
     stem, suffix = target.stem, target.suffix
     copy_index = 1
     while target.exists() and copy_index < 1000:
@@ -757,7 +794,12 @@ class ArtifactBatchCoordinator:
 
         def ready(target: dict[str, Any], state: str, outcome: str) -> None:
             key = target["artifact_key"]
+            export_basename = build_invoice_export_basename(target)
             display = " - ".join(str(target.get(name) or "") for name in ("khhdon", "shdon", "nbmst"))
+            if state == "missing_original" or outcome == "missing_original":
+                for kind in self.value["kinds"]:
+                    self._advance(kind, display)
+                return
             if state == "unavailable" or outcome in {
                 "unavailable", "source_confirmed_unavailable", "source_retry_exhausted",
             }:
@@ -791,7 +833,7 @@ class ArtifactBatchCoordinator:
                 try:
                     if not xml_path.is_file():
                         raise FileNotFoundError("xml_cache_missing")
-                    _copy_atomically(xml_path, output_roots["xml"])
+                    _copy_atomically(xml_path, output_roots["xml"], export_basename)
                     self._advance("xml", display)
                 except OSError as error:
                     if self.logger is not None:
@@ -805,7 +847,7 @@ class ArtifactBatchCoordinator:
                 try:
                     if not html_ready:
                         raise FileNotFoundError("html_bundle_incomplete")
-                    _copy_atomically(html_path, output_roots["html"])
+                    _copy_atomically(html_path, output_roots["html"], export_basename)
                     source_root = html_path.parent.resolve()
                     if source_root not in exported_asset_roots:
                         self._copy_html_assets(source_root, output_roots["html"])
@@ -921,7 +963,9 @@ class ArtifactBatchCoordinator:
                 })
             if self.global_cancel.is_set() or self.format_cancel["pdf"].is_set():
                 return
-            _copy_atomically(pdf_path, output_root)
+            _copy_atomically(
+                pdf_path, output_root, build_invoice_export_basename(target)
+            )
             self._mark_cached(
                 item["connection_id"], "pdf", target["artifact_key"], True,
                 item["cache_keys"],

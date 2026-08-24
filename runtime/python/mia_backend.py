@@ -54,7 +54,7 @@ def _package_error_kind(error):
     """Return transient/auth/permanent for a source package exception."""
     chain = tuple(_exception_chain(error))
     if any(type(item).__name__ == "InvoicePackageUnavailableError" for item in chain):
-        return "unavailable"
+        return "missing_original"
     for item in chain:
         if isinstance(item, requests.HTTPError):
             status = getattr(getattr(item, "response", None), "status_code", None)
@@ -156,51 +156,6 @@ sys.modules["app.job_engine.worker"] = worker_shim
 
 from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
 import mia_source_backend as source_backend_module
-import app.worker_runtime.handler as source_handler_module
-from app.repositories.invoice_package_repository import (
-    InvoicePackageRepository as SourceInvoicePackageRepository,
-)
-
-
-_DESKTOP_PACKAGE_POLICY = threading.local()
-
-
-class DesktopInvoicePackageRepository(SourceInvoicePackageRepository):
-    """Source repository with an opt-in, user-batch negative-cache policy.
-
-    With no thread-local policy this class is byte-for-byte behavioral parity
-    with the source repository. Artifact downloads opt in while holding the
-    source execution lock: prior unavailable rows are ignored for lookup and an
-    unavailable attempt is not durably recorded until the last attempt.
-    """
-
-    def get_package_by_invoice_key(self, *args, **kwargs):
-        row = super().get_package_by_invoice_key(*args, **kwargs)
-        if (
-            row
-            and row.get("unavailable")
-            and getattr(_DESKTOP_PACKAGE_POLICY, "retry_unavailable", False)
-        ):
-            row = dict(row)
-            row["unavailable"] = 0
-            row["unavailable_reason"] = None
-        return row
-
-    def upsert_package_error(self, *args, **kwargs):
-        if (
-            kwargs.get("unavailable")
-            and getattr(_DESKTOP_PACKAGE_POLICY, "retry_unavailable", False)
-            and not getattr(
-                _DESKTOP_PACKAGE_POLICY, "persist_terminal_unavailable", False
-            )
-        ):
-            return None
-        return super().upsert_package_error(*args, **kwargs)
-
-
-# This is a desktop host policy, not a source/vendor modification. Overview and
-# Detail calls have no policy set and therefore retain exact source behavior.
-source_handler_module.InvoicePackageRepository = DesktopInvoicePackageRepository
 
 source_backend_module.WORKER_ID = "desktop-local-worker"
 # Keep the vendored source pipeline authoritative while replacing only its
@@ -594,6 +549,7 @@ class ProductionBackend(SourceBackend):
         outcomes = {
             "downloaded": 0,
             "reused_verified": 0,
+            "missing_original": 0,
             "source_confirmed_unavailable": 0,
             "source_retry_exhausted": 0,
             "failed": 0,
@@ -651,49 +607,17 @@ class ProductionBackend(SourceBackend):
                             target_index, len(targets), attempt, PACKAGE_MAX_ATTEMPTS,
                         )
                     try:
-                        _DESKTOP_PACKAGE_POLICY.retry_unavailable = True
-                        _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = (
-                            attempt == PACKAGE_MAX_ATTEMPTS
-                        )
-                        try:
-                            outcome = self.handler.run_xml_unit(job, payload) or {}
-                        finally:
-                            _DESKTOP_PACKAGE_POLICY.retry_unavailable = False
-                            _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = False
+                        outcome = self.handler.run_xml_unit(job, payload) or {}
                         outcome_name = str(outcome.get("outcome") or "downloaded")
                         if outcome_name == "unavailable":
-                            if self.logger is not None:
-                                self.logger.info(
-                                    "package_response_unavailable item=%s/%s attempt=%s/%s",
-                                    target_index, len(targets), attempt, PACKAGE_MAX_ATTEMPTS,
-                                )
-                            if attempt < PACKAGE_MAX_ATTEMPTS:
-                                # Defensive cleanup also supports older/custom
-                                # handlers that may persist an attempt outcome
-                                # without using the desktop repository adapter.
-                                _reset_desktop_package_unavailable(
-                                    self.data_root, job.company_tax_code, target
-                                )
-                                delay = package_retry_delay(attempt)
-                                if self.logger is not None:
-                                    self.logger.info(
-                                        "package_request_retry item=%s/%s attempt=%s retry_in=%s reason=unavailable",
-                                        target_index, len(targets), attempt + 1, delay,
-                                    )
-                                if retry_wait is not None:
-                                    retry_wait(delay, cancel_callback)
-                                else:
-                                    _wait_for_package_retry(delay, cancel_callback)
-                                continue
-                            state = "unavailable"
-                            outcome_name = "source_confirmed_unavailable"
+                            state = "missing_original"
+                            outcome_name = "missing_original"
                             outcomes[outcome_name] += 1
                             if self.logger is not None:
-                                self.logger.warning(
-                                    "source_confirmed_unavailable format=XML/HTML account_ref=%s item=%s/%s "
-                                    "invoice_ref=%s attempts=%s",
-                                    connection_id[-8:], target_index, len(targets),
-                                    str(target.get("shdon") or "-")[:80], attempt,
+                                self.logger.info(
+                                    "package_missing_original item=%s/%s invoice_ref=%s",
+                                    target_index, len(targets),
+                                    str(target.get("shdon") or "-")[:80],
                                 )
                         else:
                             state = "completed"
@@ -708,7 +632,7 @@ class ProductionBackend(SourceBackend):
                         if isinstance(error, ValueError) and str(error) == "artifact_cancelled":
                             raise
                         error_kind = _package_error_kind(error)
-                        retryable = error_kind in {"transient", "auth", "unavailable"} and attempt < PACKAGE_MAX_ATTEMPTS
+                        retryable = error_kind in {"transient", "auth"} and attempt < PACKAGE_MAX_ATTEMPTS
                         if self.logger is not None:
                             log_method = self.logger.info if retryable else self.logger.warning
                             log_method(
@@ -717,7 +641,11 @@ class ProductionBackend(SourceBackend):
                                 error_kind, str(retryable).lower(),
                             )
                         if not retryable:
-                            if error_kind in {"permanent", "unavailable"}:
+                            if error_kind == "missing_original":
+                                state = "missing_original"
+                                outcome_name = "missing_original"
+                                outcomes[outcome_name] += 1
+                            elif error_kind == "permanent":
                                 state = "unavailable"
                                 outcome_name = "source_confirmed_unavailable"
                                 outcomes[outcome_name] += 1
@@ -748,10 +676,6 @@ class ProductionBackend(SourceBackend):
                             # Reuse the source authentication contract; credentials
                             # and refreshed session material stay inside the source layer.
                             self.handler.authenticate_job(job)
-                        if error_kind == "unavailable":
-                            _reset_desktop_package_unavailable(
-                                self.data_root, job.company_tax_code, target
-                            )
                         delay = package_retry_delay(attempt)
                         if self.logger is not None:
                             self.logger.info(
@@ -772,9 +696,10 @@ class ProductionBackend(SourceBackend):
         if self.logger is not None:
             self.logger.info(
                 "artifact_source_batch_complete targets=%s kinds=%s downloaded=%s "
-                "reused=%s confirmed_unavailable=%s retry_exhausted=%s failed=%s duration_ms=%.1f",
+                "reused=%s missing_original=%s confirmed_unavailable=%s retry_exhausted=%s failed=%s duration_ms=%.1f",
                 len(targets), len(kinds), outcomes["downloaded"],
-                outcomes["reused_verified"], outcomes["source_confirmed_unavailable"],
+                outcomes["reused_verified"], outcomes["missing_original"],
+                outcomes["source_confirmed_unavailable"],
                 outcomes["source_retry_exhausted"],
                 outcomes["failed"], (time.perf_counter() - batch_started) * 1000,
             )
