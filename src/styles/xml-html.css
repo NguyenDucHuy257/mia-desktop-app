@@ -1,58 +1,119 @@
 .artifact-account-page { height: 100%; min-height: 720px; padding: 28px 28px 24px; background: #fff; color: var(--mia-text-strong); display: flex; flex-direction: column; gap: 16px; }
 .artifact-account-header h1 { margin: 0; font-size: 26px; line-height: 34px; }
 .artifact-account-header p { margin: 4px 0 0; color: var(--mia-text-muted); font-size: 13px; }
-.artifact-toolbar-card { min-height: 110px; flex: 0 0 110px; padding-bottom: 50px; }
-.artifact-toolbar-card .invoice-export-folder { left: 12px; width: min(640px, calc(100% - 24px)); }
-.artifact-format-select > .compact-select { width: 180px; }
-.artifact-format-menu { width: 204px; height: 126px; }
+
+/* Numbered two-row desktop form from the approved reference. This only
+ * overrides the legacy absolute toolbar layout inside the artifact page. */
+.artifact-account-page.invoice-page .artifact-toolbar-card { height: auto; min-height: 146px; flex: 0 0 auto; padding: 14px 18px; border-color: #e2e8f0; background: #fff; display: grid; grid-template-columns: minmax(220px, .9fr) minmax(270px, 1fr) minmax(390px, 1.35fr); grid-template-rows: auto 42px; align-items: end; gap: 16px 20px; box-shadow: 0 5px 18px rgb(15 23 42 / 7%); }
+.artifact-toolbar-field { min-width: 0; display: grid; gap: 8px; }
+.artifact-toolbar-field > label { color: #273142; font-size: 12px; line-height: 16px; font-weight: 750; white-space: nowrap; }
+.artifact-toolbar-field .select-wrap, .artifact-toolbar-field .date-range-control, .artifact-toolbar-field .date-range-trigger { width: 100%; min-width: 0; }
+.artifact-toolbar-field .compact-select, .artifact-toolbar-field .date-range-trigger { width: 100%; height: 46px; border-color: #dbe2ea; box-shadow: 0 2px 7px rgb(15 23 42 / 5%); }
+.artifact-toolbar-field .compact-select { padding: 0 14px; gap: 10px; text-align: left; }
+.artifact-toolbar-field .compact-select .chevron { margin-left: auto; }
+.artifact-control-icon { width: 22px; color: #16a34a; font-size: 20px; line-height: 1; }
+.artifact-date-field .date-range-trigger > span small { display: none; }
+.artifact-date-field .date-range-trigger > span strong { font-size: 13px; }
+.artifact-direction-field .figma-direction-menu { top: calc(100% + 6px); width: 100%; }
+.artifact-format-group { min-width: 0; height: 46px; border: 1px solid #dbe2ea; border-radius: var(--mia-radius-ui); background: #fff; display: grid; grid-template-columns: repeat(3, minmax(110px, 1fr)); overflow: hidden; box-shadow: 0 2px 7px rgb(15 23 42 / 5%); }
+.artifact-format-toggle { min-width: 0; padding: 0 12px; border: 0; border-right: 1px solid #e5e7eb; background: #fff; color: #334155; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+.artifact-format-toggle:last-child { border-right: 0; }
+.artifact-format-toggle:hover:not(:disabled), .artifact-format-toggle:focus-visible { background: #f8fafc; outline: 0; }
+.artifact-format-toggle:active:not(:disabled) { background: #f1f5f9; }
+.artifact-format-toggle:disabled { cursor: not-allowed; opacity: .58; }
+.artifact-format-toggle[data-selected='true'][data-kind='xml'] { background: #f0fdf4; color: #166534; }
+.artifact-format-toggle[data-selected='true'][data-kind='html'] { background: #eff6ff; color: #1d4ed8; }
+.artifact-format-toggle[data-selected='true'][data-kind='pdf'] { background: #fff1f2; color: #b91c1c; }
+.artifact-format-check { width: 16px; height: 16px; flex: 0 0 16px; border: 1px solid #b8c1cc; border-radius: 3px; color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1; }
+.artifact-format-toggle[data-selected='true'][data-kind='xml'] .artifact-format-check { border-color: #16a34a; background: #16a34a; }
+.artifact-format-toggle[data-selected='true'][data-kind='html'] .artifact-format-check { border-color: #2563eb; background: #2563eb; }
+.artifact-format-toggle[data-selected='true'][data-kind='pdf'] .artifact-format-check { border-color: #dc2626; background: #dc2626; }
+.artifact-format-toggle .artifact-format-icon { width: 25px; height: 25px; }
+.artifact-format-toggle strong { font-size: 12px; }
+.artifact-storage-field { min-width: 0; grid-column: 1 / 3; }
+.artifact-account-page.invoice-page .artifact-toolbar-card .invoice-export-folder { position: static; inset: auto; width: 100%; height: 42px; }
+.artifact-account-page.invoice-page .artifact-toolbar-card .invoice-export-folder input, .artifact-account-page.invoice-page .artifact-toolbar-card .invoice-export-folder button { height: 42px; }
+.artifact-account-page.invoice-page .artifact-toolbar-card .invoice-export-folder input { font-size: 12px; }
+.artifact-toolbar-actions { align-self: stretch; display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.artifact-account-page.invoice-page .artifact-toolbar-actions .add-account, .artifact-account-page.invoice-page .artifact-toolbar-actions .sync-button, .artifact-account-page.invoice-page .artifact-toolbar-actions .stop-button { position: static; height: 38px; margin: 0; padding: 0 16px; }
+.artifact-account-page.invoice-page .artifact-toolbar-actions .add-account { width: 96px; justify-content: center; gap: 7px; }
+.artifact-account-page.invoice-page .artifact-toolbar-actions .sync-button { width: 118px; }
+.artifact-account-page.invoice-page .artifact-toolbar-actions .stop-button { width: 113px; }
+
 .artifact-account-content { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 12px; }
 .artifact-account-filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .artifact-account-filters > div { display: flex; align-items: center; gap: 10px; }
 .artifact-account-filters .search-box { display: block; flex: 0 0 300px; background: #fff; }
-.artifact-account-page.invoice-page .artifact-account-content .artifact-download-button { position: static; width: 118px; }
-.artifact-account-page.invoice-page .artifact-account-content .artifact-global-stop { position: static; width: 113px; }
 .artifact-progress-cards { width: 100%; display: grid; grid-template-columns: repeat(var(--artifact-card-count, 3), minmax(0, 1fr)); gap: 10px; }
 .artifact-progress-cards[data-count='1'] { --artifact-card-count: 1; }
 .artifact-progress-cards[data-count='2'] { --artifact-card-count: 2; }
 .artifact-progress-cards[data-count='3'] { --artifact-card-count: 3; }
 .artifact-progress-card { min-width: 0; height: 68px; min-height: 0; padding: 4px 7px; border-left: 4px solid #15803d; display: grid; grid-template-rows: 26px 16px 4px; align-items: center; gap: 3px; }
 .artifact-progress-card[data-kind='html'] { border-left-color: #2563eb; }
-.artifact-progress-card[data-kind='pdf'] { border-left-color: #a33b55; }
+.artifact-progress-card[data-kind='pdf'] { border-left-color: #dc2626; }
 .artifact-progress-card > header { grid-column: 1 / -1; display: grid; grid-template-columns: 24px auto 1fr auto; align-items: center; gap: 6px; }
 .artifact-progress-card h2 { margin: 0; font-size: 13px; }
 .artifact-progress-card header span { justify-self: end; color: #475569; font-size: 11px; font-weight: 700; white-space: nowrap; }
 .artifact-progress-card header strong { min-width: 34px; color: #334155; font-size: 11px; text-align: right; }
 .artifact-format-icon { width: 24px; height: 24px; border-radius: var(--mia-radius-ui, 6px); background: #dcfce7; color: #166534 !important; display: grid; place-items: center; font-size: 8px !important; font-weight: 900; }
 .artifact-format-icon[data-kind='html'] { color: #1d4ed8 !important; background: #dbeafe; }
-.artifact-format-icon[data-kind='pdf'] { color: #9f1239 !important; background: #ffe4e6; }
+.artifact-format-icon[data-kind='pdf'] { color: #b91c1c !important; background: #ffe4e6; }
 .artifact-progress-status { min-width: 0; overflow: hidden; color: #64748b; font-size: 10px; line-height: 14px; white-space: nowrap; text-overflow: ellipsis; }
 .artifact-progress-track { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: var(--mia-radius-ui); background: #e8eef4; }
 .artifact-progress-track > span { display: block; height: 100%; border-radius: inherit; background: #15803d; transition: width 180ms ease; }
 .artifact-progress-card[data-kind='html'] .artifact-progress-track > span { background: #2563eb; }
-.artifact-progress-card[data-kind='pdf'] .artifact-progress-track > span { background: #a33b55; }
+.artifact-progress-card[data-kind='pdf'] .artifact-progress-track > span { background: #dc2626; }
+
 .artifact-account-table { min-height: 360px; flex: 1; overflow: auto; }
-.artifact-account-table .table-grid { min-width: 1190px; grid-template-columns: 52px 120px minmax(220px, 1fr) 150px minmax(190px, 1fr) 150px 180px; }
+.artifact-account-table .table-grid { min-width: 1260px; grid-template-columns: 52px 115px minmax(210px, 1fr) 330px 230px 145px 130px; }
 .artifact-account-row > span, .artifact-account-row > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
 .artifact-account-row > strong { white-space: nowrap; }
 .artifact-account-row > .selection-button { justify-self: center; margin-left: 6px; }
 .artifact-account-row:not(.artifact-account-row--head):hover { background: #f8fafc; }
-.artifact-quantity { display: flex !important; flex-direction: column; gap: 1px; color: #475569; font-variant-numeric: tabular-nums; }
-.artifact-quantity strong { display: inline-block; width: 35px; color: #1f2937; }
-.artifact-account-status { line-height: 15px; white-space: normal; }
-.artifact-account-status[data-status='ready'], .artifact-account-status[data-status='completed'] { color: #166534; font-weight: 700; }
-.artifact-account-status[data-status='checking'] { color: #475569; font-weight: 600; }
-.artifact-account-status[data-status='not_ready'] { color: #b45309; }
-.artifact-account-status[data-status='error'] { color: #b91c1c; }
+.artifact-account-row--head { height: 58px; padding-top: 0; padding-bottom: 0; }
+.artifact-quantity-header { align-self: stretch; border-left: 1px solid #dfe6ee; border-right: 1px solid #dfe6ee; display: grid; grid-template-rows: 29px 29px; text-align: center; }
+.artifact-quantity-header > strong { align-self: center; font-size: 12px; }
+.artifact-quantity-header > span, .artifact-quantity { min-width: 0; display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; }
+.artifact-quantity-header > span { border-top: 1px solid #dfe6ee; }
+.artifact-quantity-header b { align-self: stretch; border-right: 1px solid #dfe6ee; display: grid; place-items: center; font-size: 11px; }
+.artifact-quantity-header b:last-child { border-right: 0; }
+.artifact-quantity-header [data-kind='xml'], .artifact-quantity-value[data-kind='xml'] { color: #15803d; }
+.artifact-quantity-header [data-kind='html'], .artifact-quantity-value[data-kind='html'] { color: #2563eb; }
+.artifact-quantity-header [data-kind='pdf'], .artifact-quantity-value[data-kind='pdf'] { color: #dc2626; }
+.artifact-quantity-value { min-width: 0; padding: 0 7px; font-size: 12px; font-weight: 750; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
+.artifact-quantity-value + .artifact-quantity-value { border-left: 1px solid #eef2f6; }
+.artifact-coverage-badge { width: min(210px, calc(100% - 12px)); min-width: 0; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--mia-radius-ui); display: grid !important; gap: 3px; overflow: hidden; }
+.artifact-coverage-heading { display: flex !important; align-items: center; gap: 7px; overflow: visible !important; }
+.artifact-coverage-heading i { width: 17px; height: 17px; flex: 0 0 17px; border: 2px solid currentColor; border-radius: 50%; display: grid; place-items: center; font-size: 10px; font-style: normal; font-weight: 900; line-height: 1; }
+.artifact-coverage-heading strong { font-size: 12px; }
+.artifact-coverage-badge small { overflow: hidden; font-size: 10px; font-weight: 600; line-height: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-coverage-badge[data-status='ready'] { border-color: #dcfce7; background: #f0fdf4; color: #15803d; }
+.artifact-coverage-badge[data-status='not_ready'] { border-color: #ffedd5; background: #fff7ed; color: #ea580c; }
+.artifact-coverage-badge[data-status='checking'] { border-color: #e2e8f0; background: #f8fafc; color: #64748b; }
+.artifact-coverage-badge[data-status='error'] { border-color: #fecaca; background: #fff1f2; color: #b91c1c; }
 .artifact-row-progress { display: flex; align-items: center; gap: 7px; }
 .artifact-row-progress i { min-width: 0; height: 6px; flex: 1; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
 .artifact-row-progress b { display: block; height: 100%; background: #16a34a; }
 .artifact-row-progress em { width: 30px; font-style: normal; font-size: 10px; }
 .artifact-row-action { text-align: center; color: #94a3b8; }
-.artifact-row-action .row-result-button { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.artifact-row-action .row-result-button { max-width: 116px; overflow: hidden; text-overflow: ellipsis; }
 .artifact-failure-page { display: flex; flex-direction: column; }
 .artifact-failure-page .results-header--figma { flex: 0 0 auto; }
 .artifact-failure-page .results-table--excel-schema { min-height: 300px; }
 .artifact-failure-page .results-state { width: 100%; min-height: 120px; display: grid; place-items: center; color: #64748b; }
 .artifact-table-state { min-height: 120px; display: grid; place-items: center; color: #64748b; font-size: 12px; }
-@media (max-width: 1180px) { .artifact-toolbar-card { flex-wrap: wrap; padding-bottom: 54px; } }
-@media (max-width: 760px) { .artifact-progress-cards { grid-template-columns: 1fr; } .artifact-account-filters { align-items: stretch; flex-direction: column; } }
+
+@media (max-width: 1180px) {
+  .artifact-account-page.invoice-page .artifact-toolbar-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .artifact-formats-field { grid-column: 1 / -1; }
+  .artifact-storage-field { grid-column: 1; }
+  .artifact-toolbar-actions { grid-column: 2; }
+}
+@media (max-width: 760px) {
+  .artifact-account-page.invoice-page .artifact-toolbar-card { grid-template-columns: 1fr; }
+  .artifact-formats-field, .artifact-storage-field, .artifact-toolbar-actions { grid-column: 1; }
+  .artifact-toolbar-actions { justify-content: flex-start; }
+  .artifact-format-group { grid-template-columns: repeat(3, 1fr); }
+  .artifact-progress-cards { grid-template-columns: 1fr; }
+  .artifact-account-filters { align-items: stretch; flex-direction: column; }
+}

@@ -53,18 +53,54 @@ function formatDate(value: string) {
 
 function Quantity({ snapshot }: { snapshot?: ArtifactAccountSnapshot }) {
   const total = snapshot?.total ?? 0;
-  return <span className="artifact-quantity">{(['xml', 'html', 'pdf'] as const).map((kind) => <span key={kind}><strong>{kind.toUpperCase()}</strong> {(snapshot?.cached[kind] ?? 0).toLocaleString('vi-VN')}/{total.toLocaleString('vi-VN')}</span>)}</span>;
+  return <span className="artifact-quantity" aria-label="Số lượng hóa đơn theo định dạng">{(['xml', 'html', 'pdf'] as const).map((kind) => <span className="artifact-quantity-value" data-kind={kind} key={kind}>{(snapshot?.cached[kind] ?? 0).toLocaleString('vi-VN')}/{total.toLocaleString('vi-VN')}</span>)}</span>;
 }
 
 function missingCoverageText(snapshot: ArtifactAccountSnapshot | undefined, dateFrom: string, dateTo: string) {
   const ranges = snapshot?.missing_ranges ?? [];
-  if (!ranges.length) return `Chưa đồng bộ từ ${formatDate(dateFrom)} - ${formatDate(dateTo)}`;
-  if (ranges.length === 1) return `Chưa đồng bộ từ ${formatDate(ranges[0].date_from)} - ${formatDate(ranges[0].date_to)}`;
-  return `Chưa đồng bộ: ${ranges.map((range) => `${formatDate(range.date_from)} - ${formatDate(range.date_to)}`).join(', ')}`;
+  if (!ranges.length) return `${formatDate(dateFrom)} - ${formatDate(dateTo)}`;
+  const first = `${formatDate(ranges[0].date_from)} - ${formatDate(ranges[0].date_to)}`;
+  return ranges.length === 1 ? first : `${first} (+${ranges.length - 1} khoảng)`;
+}
+
+function coverageTitle(snapshot: ArtifactAccountSnapshot | undefined, dateFrom: string, dateTo: string) {
+  const ranges = snapshot?.missing_ranges ?? [];
+  if (!ranges.length) return `${formatDate(dateFrom)} - ${formatDate(dateTo)}`;
+  return ranges.map((range) => `${formatDate(range.date_from)} - ${formatDate(range.date_to)}`).join(', ');
+}
+
+function CoverageBadge({ snapshot, state, dateFrom, dateTo }: {
+  snapshot?: ArtifactAccountSnapshot;
+  state: 'loading' | 'ready' | 'error';
+  dateFrom: string;
+  dateTo: string;
+}) {
+  const status = state === 'loading' ? 'checking' : state === 'error' ? 'error' : snapshot?.ready ? 'ready' : 'not_ready';
+  const label = status === 'checking' ? 'Đang kiểm tra' : status === 'error' ? 'Không thể kiểm tra' : status === 'ready' ? 'Đã đồng bộ' : 'Chưa đồng bộ';
+  const detail = status === 'ready'
+    ? `${formatDate(dateFrom)} - ${formatDate(dateTo)}`
+    : status === 'not_ready' ? missingCoverageText(snapshot, dateFrom, dateTo) : '';
+  return <span className="artifact-coverage-badge" data-status={status} title={coverageTitle(snapshot, dateFrom, dateTo)}>
+    <span className="artifact-coverage-heading"><i aria-hidden="true">{status === 'ready' ? '✓' : status === 'not_ready' ? '!' : '…'}</i><strong>{label}</strong></span>
+    {detail ? <small>{detail}</small> : null}
+  </span>;
 }
 
 function FormatIcon({ kind }: { kind: InvoiceArtifactKind }) {
   return <span className="artifact-format-icon" data-kind={kind} aria-hidden="true">{kind === 'xml' ? '</>' : kind === 'html' ? '<H>' : 'PDF'}</span>;
+}
+
+function FormatToggle({ kind, checked, disabled, onChange }: {
+  kind: InvoiceArtifactKind;
+  checked: boolean;
+  disabled: boolean;
+  onChange(): void;
+}) {
+  return <button className="artifact-format-toggle" data-kind={kind} data-selected={checked} type="button" role="checkbox" aria-label={kind.toUpperCase()} aria-checked={checked} disabled={disabled} onClick={onChange}>
+    <span className="artifact-format-check" aria-hidden="true">{checked ? '✓' : ''}</span>
+    <FormatIcon kind={kind} />
+    <strong>{kind.toUpperCase()}</strong>
+  </button>;
 }
 
 function ProgressCard({ kind, lifecycle }: { kind: InvoiceArtifactKind; lifecycle: ArtifactDownloadLifecycle }) {
@@ -121,13 +157,13 @@ function ArtifactFailureView({ account, lifecycle, onBack }: {
   const gridTemplateColumns = '140px 150px 150px 150px 180px 220px 150px minmax(300px, 1fr)';
   const first = total ? (currentPage - 1) * FAILURE_PAGE_SIZE + 1 : 0;
   const last = Math.min(total, currentPage * FAILURE_PAGE_SIZE);
-  return <section className="results-page results-page--figma artifact-failure-page" aria-label="Danh sách hóa đơn lỗi">
+  return <section className="results-page results-page--figma artifact-failure-page" aria-label="Xem kết quả tải hóa đơn">
     <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại XML/HTML/PDF</button>
-    <header className="results-header results-header--figma"><div><h1>Danh sách hóa đơn lỗi</h1><p>{account.username} · {account.company_name || 'Chưa có tên công ty'}</p></div></header>
+    <header className="results-header results-header--figma"><div><h1>Xem kết quả</h1><p>{account.username} · {account.company_name || 'Chưa có tên công ty'}</p></div></header>
     <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng hóa đơn không tạo được file">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}><span>Ngày lập</span><span>Ký hiệu mẫu số</span><span>Ký hiệu hóa đơn</span><span>Số hóa đơn</span><span>MST đối tác</span><span>Tên đối tác</span><span>Định dạng</span><span>Lỗi</span></div>
       {items.map((item) => <div className="results-row" style={{ gridTemplateColumns }} key={item.invoice_key}><span>{failureDate(item.date)}</span><span>{item.khmshdon || '—'}</span><span>{item.khhdon || '—'}</span><span>{item.shdon || '—'}</span><span>{item.nbmst || '—'}</span><span title={item.partner_name}>{item.partner_name || '—'}</span><span>{item.affected_formats.map((kind) => kind.toUpperCase()).join(', ')}</span><span title={item.message}>{item.message || 'Không thể tạo file'}</span></div>)}
-      {loading ? <div className="results-state" role="status">Đang tải danh sách...</div> : !items.length ? <div className="results-state results-empty">Không có hóa đơn lỗi.</div> : null}
+      {loading ? <div className="results-state" role="status">Đang tải danh sách...</div> : !items.length ? <div className="results-state results-empty">Không có hóa đơn không tạo được file.</div> : null}
     </div>
     <footer className="results-pager artifact-pager"><span>Hiển thị {first}–{last} trên tổng {total} hóa đơn</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
   </section>;
@@ -146,7 +182,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   coverageRevision: number;
   pdfConcurrency: number;
 }) {
-  const [menu, setMenu] = useState<'direction' | 'formats' | null>(null);
+  const [menu, setMenu] = useState<'direction' | null>(null);
   const [kinds, setKinds] = useState<InvoiceArtifactKind[]>(['xml', 'html']);
   const [snapshots, setSnapshots] = useState<Record<string, ArtifactAccountSnapshot>>({});
   const [snapshotState, setSnapshotState] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -160,6 +196,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   const cacheGeneration = useRef(0);
   const coverageFingerprint = useRef('');
   const snapshotSelectionKey = useRef('');
+  const initialForm = useRef({ selection, folder, kinds: ['xml', 'html'] as InvoiceArtifactKind[] });
   const accountIds = useMemo(() => accounts.map((account) => account.connection_id), [accounts]);
 
   useEffect(() => {
@@ -253,6 +290,13 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [currentPage, page]);
 
   function toggleKind(kind: InvoiceArtifactKind) { setKinds((current) => current.includes(kind) ? current.filter((item) => item !== kind) : [...current, kind]); }
+  function resetForm() {
+    const initial = initialForm.current;
+    onSelectionChange({ ...initial.selection });
+    onFolder(initial.folder);
+    setKinds([...initial.kinds]);
+    setFeedback(null);
+  }
   async function chooseFolder() { const selected = await window.miaRuntime?.artifacts.selectDirectory(); if (selected) onFolder(selected); }
   async function startDownload() {
     if (!selectedConnectionIds.length) { setFeedback('Vui lòng chọn ít nhất một tài khoản.'); return; }
@@ -272,35 +316,29 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   return <section className="artifact-account-page invoice-page" aria-labelledby="artifact-title">
     <header className="artifact-account-header"><h1 id="artifact-title">XML/HTML/PDF</h1><p>Tải XML, HTML và PDF từ dữ liệu hóa đơn đã đồng bộ.</p></header>
     <section className="artifact-toolbar-card toolbar-card" aria-label="Thiết lập tải XML HTML PDF">
-      <DateRangePicker disabled={lifecycle.active} dateFrom={selection.dateFrom} dateTo={selection.dateTo} onChange={(dateFrom, dateTo) => onSelectionChange({ ...selection, dateFrom, dateTo })} />
-      <div className="select-wrap artifact-direction-select">
-        <button className="compact-select compact-select--direction" type="button" disabled={lifecycle.active} aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}>{selection.direction === 'purchase' ? 'Mua vào' : 'Bán ra'} <i className="chevron" /></button>
-        {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại hóa đơn">
-          <OptionCheck checked={selection.direction === 'purchase'} label="Mua vào" onChange={() => { onSelectionChange({ ...selection, direction: 'purchase' }); setMenu(null); }} />
-          <OptionCheck checked={selection.direction === 'sold'} label="Bán ra" onChange={() => { onSelectionChange({ ...selection, direction: 'sold' }); setMenu(null); }} />
-        </div> : null}
-      </div>
-      <div className="select-wrap artifact-format-select">
-        <button className="compact-select" type="button" disabled={lifecycle.active} aria-expanded={menu === 'formats'} onClick={() => setMenu(menu === 'formats' ? null : 'formats')}>{kinds.length ? kinds.map((kind) => kind.toUpperCase()).join(' + ') : 'Chọn định dạng'} <i className="chevron" /></button>
-        {menu === 'formats' ? <div className="figma-option-menu artifact-format-menu" aria-label="Định dạng tải xuống">{(['xml', 'html', 'pdf'] as const).map((kind) => <OptionCheck key={kind} checked={kinds.includes(kind)} label={kind.toUpperCase()} onChange={() => toggleKind(kind)} />)}</div> : null}
-      </div>
-      <StorageFolderPicker className="invoice-export-folder" value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Thư mục lưu trữ XML HTML PDF" />
+      <div className="artifact-toolbar-field artifact-direction-field"><label>1. Loại hóa đơn</label><div className="select-wrap artifact-direction-select">
+          <button className="compact-select compact-select--direction" type="button" disabled={lifecycle.active} aria-expanded={menu === 'direction'} onClick={() => setMenu(menu === 'direction' ? null : 'direction')}><span className="artifact-control-icon" aria-hidden="true">▤</span>{selection.direction === 'purchase' ? 'Mua vào' : 'Bán ra'} <i className="chevron" /></button>
+          {menu === 'direction' ? <div className="figma-option-menu figma-direction-menu" aria-label="Loại hóa đơn">
+            <OptionCheck checked={selection.direction === 'purchase'} label="Mua vào" onChange={() => { onSelectionChange({ ...selection, direction: 'purchase' }); setMenu(null); }} />
+            <OptionCheck checked={selection.direction === 'sold'} label="Bán ra" onChange={() => { onSelectionChange({ ...selection, direction: 'sold' }); setMenu(null); }} />
+          </div> : null}
+        </div></div>
+      <div className="artifact-toolbar-field artifact-date-field"><label>2. Khoảng thời gian</label><DateRangePicker disabled={lifecycle.active} dateFrom={selection.dateFrom} dateTo={selection.dateTo} onChange={(dateFrom, dateTo) => onSelectionChange({ ...selection, dateFrom, dateTo })} /></div>
+      <div className="artifact-toolbar-field artifact-formats-field"><label>3. Chọn định dạng cần tải</label><div className="artifact-format-group" aria-label="Định dạng tải xuống">{(['xml', 'html', 'pdf'] as const).map((kind) => <FormatToggle key={kind} kind={kind} checked={kinds.includes(kind)} disabled={lifecycle.active} onChange={() => toggleKind(kind)} />)}</div></div>
+      <div className="artifact-storage-field"><StorageFolderPicker className="invoice-export-folder" value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Đường dẫn lưu trữ" /></div>
+      <div className="artifact-toolbar-actions"><button className="add-account artifact-reset-button" type="button" disabled={lifecycle.active} onClick={resetForm}><span aria-hidden="true">↻</span>Đặt lại</button>{lifecycle.active
+        ? <button className="stop-button artifact-global-stop" type="button" onClick={() => void lifecycle.stop()}><StopIcon />Dừng tải</button>
+        : <button className="sync-button artifact-download-button" type="button" disabled={!selectedConnectionIds.length || !kinds.length || snapshotState !== 'ready'} onClick={() => void startDownload()}><DownloadIcon />Tải xuống</button>}</div>
     </section>
     <section className="artifact-account-content">
-      <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tải xuống" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tải xuống" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="checking">Đang kiểm tra</option><option value="ready">Sẵn sàng tải</option><option value="not_ready">Chưa đồng bộ</option><option value="downloading">Đang tải</option><option value="completed">Hoàn thành</option><option value="error">Lỗi tài khoản</option><option value="stopped">Đã dừng</option></select></div><div className="invoice-filter-actions"><button className="sync-button artifact-download-button" type="button" disabled={lifecycle.active || !selectedConnectionIds.length || !kinds.length || snapshotState !== 'ready'} onClick={() => void startDownload()}><DownloadIcon />Tải xuống</button><button className="stop-button artifact-global-stop" type="button" disabled={!lifecycle.active} onClick={() => void lifecycle.stop()}><StopIcon />Dừng tải</button></div></div>
+      <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tải xuống" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tải xuống" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="checking">Đang kiểm tra</option><option value="ready">Đã đồng bộ</option><option value="not_ready">Chưa đồng bộ</option><option value="downloading">Đang tải</option><option value="completed">Hoàn thành</option><option value="error">Lỗi tài khoản</option><option value="stopped">Đã dừng</option></select></div></div>
       {lifecycle.status?.current_account_id ? <div className="artifact-progress-cards" data-count={Object.keys(lifecycle.status.formats).length}>{kinds.map((kind) => <ProgressCard key={kind} kind={kind} lifecycle={lifecycle} />)}</div> : null}
       <div className="artifact-account-table data-card">
-        <div className="artifact-account-row artifact-account-row--head table-header table-grid"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span>Số lượng</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span></div>
+        <div className="artifact-account-row artifact-account-row--head table-header table-grid"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span className="artifact-quantity-header"><strong>Số lượng hóa đơn</strong><span><b data-kind="xml">XML</b><b data-kind="html">HTML</b><b data-kind="pdf">PDF</b></span></span><span>Trạng thái đồng bộ</span><span>Tiến trình</span><span>Xem kết quả</span></div>
         <div className="artifact-account-body table-body">{pageRows.map(({ account, snapshot, status, failureCount }) => {
           const formats = lifecycle.status?.current_account_id === account.connection_id ? lifecycle.status.formats : null;
           const progress = formats ? Math.round(Object.values(formats).reduce((sum, item) => sum + (item?.percent ?? 0), 0) / Math.max(1, Object.keys(formats).length)) : status === 'completed' ? 100 : 0;
-          const statusText = status === 'checking' ? 'Đang kiểm tra'
-            : status === 'ready' ? 'Sẵn sàng tải'
-              : status === 'not_ready' ? missingCoverageText(snapshot, selection.dateFrom, selection.dateTo)
-                : status === 'downloading' ? 'Đang tải'
-                  : status === 'completed' ? 'Hoàn thành'
-                    : status === 'error' ? 'Lỗi tài khoản' : 'Đã dừng';
-          return <div className="artifact-account-row table-row table-grid" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><span className="artifact-account-status" data-status={status}>{statusText}</span><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action row-action-group">{failureCount > 0 ? <button className="row-result-button" type="button" onClick={() => setFailureAccountId(account.connection_id)}>Danh sách hóa đơn lỗi</button> : <span className="row-action-placeholder">—</span>}</span></div>;
+          return <div className="artifact-account-row table-row table-grid" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><CoverageBadge snapshot={snapshots[account.connection_id]} state={snapshotState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action row-action-group">{failureCount > 0 ? <button className="row-result-button" type="button" onClick={() => setFailureAccountId(account.connection_id)}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}</span></div>;
         })}</div>
         {snapshotState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{snapshotState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra trạng thái tải xuống.</div> : null}{snapshotState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
       </div>

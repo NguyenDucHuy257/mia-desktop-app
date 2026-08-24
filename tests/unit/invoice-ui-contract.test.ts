@@ -97,7 +97,14 @@ describe('invoice result control presentation', () => {
     expect(page).not.toContain('Mở thư mục');
     expect(styles).toContain('.artifact-progress-cards[data-count=');
     expect(styles).toContain("[data-kind='pdf']");
-    expect(styles).toContain('grid-template-columns: 52px 120px');
+    expect(styles).toContain('grid-template-columns: 52px 115px');
+    expect(page).toContain('1. Loại hóa đơn');
+    expect(page).toContain('2. Khoảng thời gian');
+    expect(page).toContain('3. Chọn định dạng cần tải');
+    expect(page).toContain('artifact-format-group');
+    expect(page).toContain('artifact-quantity-header');
+    expect(page).toContain('Trạng thái đồng bộ');
+    expect(page).toContain('Xem kết quả');
     expect(styles).not.toContain('translateY');
     expect(styles).not.toContain('scale(');
   });
@@ -131,6 +138,7 @@ describe('invoice result control presentation', () => {
     expect(lifecycle).toContain('transient monitoring failure');
     expect(page).toContain('className="row-result-button"');
     expect(page).toContain('results-table--excel-schema');
-    expect(page).toContain('Danh sách hóa đơn lỗi');
+    expect(page).toContain('<h1>Xem kết quả</h1>');
+    expect(page).toContain('Bảng hóa đơn không tạo được file');
   });
 });
