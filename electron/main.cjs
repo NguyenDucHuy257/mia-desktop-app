@@ -200,6 +200,11 @@ ipcMain.handle('mia:artifacts:batch-status', (event, request) => {
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
   return artifactBroker.batchStatus(request);
 });
+ipcMain.handle('mia:artifacts:batch-failures', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.batchFailures(request);
+});
 ipcMain.handle('mia:artifacts:batch-cancel', (event, request) => {
   assertTrustedSender(event);
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);

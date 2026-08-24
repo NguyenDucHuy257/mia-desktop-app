@@ -30,19 +30,19 @@ function resolveInside(directory, filename) {
 async function atomicWrite(directory, filename, content) {
   if (!Buffer.isBuffer(content)) throw new TypeError('invalid_artifact_content');
   await fs.mkdir(directory, { recursive: true });
-  const requested = resolveInside(directory, filename);
-  const extension = path.extname(requested);
-  const stem = requested.slice(0, -extension.length);
-  let target = requested;
-  for (let copy = 1; copy <= 999; copy += 1) {
-    try { await fs.access(target); target = `${stem} (${copy})${extension}`; } catch { break; }
-  }
+  const target = resolveInside(directory, filename);
   const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${crypto.randomUUID()}.tmp`);
+  let handle;
   try {
-    await fs.writeFile(temporary, content, { flag: 'wx' });
+    handle = await fs.open(temporary, 'wx');
+    await handle.writeFile(content);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
     await fs.rename(temporary, target);
     return target;
   } catch (error) {
+    await handle?.close().catch(() => undefined);
     await fs.rm(temporary, { force: true }).catch(() => undefined);
     throw error;
   }
@@ -134,12 +134,14 @@ function waitForTaskPoll(delayMs = 100) {
 
 function createArtifactBroker(getRuntime) {
   let activeTaskId = null;
+  let latestTaskId = null;
   return Object.freeze({
     coverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.coverage', validateArtifactSnapshotRequest(value))),
     snapshot: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.snapshot', validateArtifactSnapshotRequest(value))),
     startBatch: (value) => runBrokerCommand(async () => {
       const started = await getRuntime().invoke('artifacts.batch.start', validateArtifactBatchRequest(value));
       activeTaskId = started.task_id;
+      latestTaskId = started.task_id;
       return started;
     }),
     batchStatus: (value) => runBrokerCommand(async () => {
@@ -148,11 +150,21 @@ function createArtifactBroker(getRuntime) {
       if (['completed', 'failed', 'stopped'].includes(status?.status)) activeTaskId = null;
       return status;
     }),
+    batchFailures: (value) => runBrokerCommand(async () => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_failure_request');
+      if (typeof value.task_id !== 'string' || value.task_id !== latestTaskId) throw new TypeError('invalid_artifact_task');
+      if (typeof value.connection_id !== 'string' || !CONNECTION_ID.test(value.connection_id)) throw new TypeError('invalid_artifact_account');
+      const offset = value.offset ?? 0;
+      const limit = value.limit ?? 50;
+      if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new TypeError('invalid_artifact_failure_page');
+      return getRuntime().invoke('artifacts.batch.failures', {
+        task_id: value.task_id, connection_id: value.connection_id, offset, limit,
+      });
+    }),
     cancelBatch: (value = {}) => runBrokerCommand(() => {
       if (!activeTaskId) return { cancelled: false };
-      const kind = value?.kind ?? null;
-      if (kind !== null && !['xml', 'html', 'pdf'].includes(kind)) throw new TypeError('invalid_artifact_kind');
-      return getRuntime().invoke('artifacts.batch.cancel', { task_id: activeTaskId, kind });
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length) throw new TypeError('invalid_artifact_cancel_request');
+      return getRuntime().invoke('artifacts.batch.cancel', { task_id: activeTaskId, kind: null });
     }),
     export: (value) => runBrokerCommand(async () => {
       const request = validateExportRequest(value);

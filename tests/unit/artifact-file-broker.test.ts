@@ -193,12 +193,12 @@ describe('artifact filesystem boundary', () => {
     }
   });
 
-  it('starts, polls and independently cancels one unified artifact format', async () => {
+  it('starts, polls and globally cancels one unified artifact batch', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-unified-task');
     const runtime = { invoke: vi.fn(async (method) => {
       if (method === 'artifacts.batch.start') return { task_id: 'artifact_1', status: 'running' };
       if (method === 'artifacts.batch.status') return { task_id: 'artifact_1', status: 'running', accounts: {}, formats: {} };
-      if (method === 'artifacts.batch.cancel') return { task_id: 'artifact_1', cancelled: true, kind: 'pdf' };
+      if (method === 'artifacts.batch.cancel') return { task_id: 'artifact_1', cancelled: true, kind: null };
       throw new Error('unexpected method');
     }) };
     const broker = createArtifactBroker(() => runtime);
@@ -208,7 +208,8 @@ describe('artifact filesystem boundary', () => {
       pdf_concurrency: 5,
     })).resolves.toMatchObject({ ok: true, data: { task_id: 'artifact_1' } });
     await expect(broker.batchStatus({ task_id: 'artifact_1' })).resolves.toMatchObject({ ok: true });
-    await expect(broker.cancelBatch({ kind: 'pdf' })).resolves.toMatchObject({ ok: true, data: { kind: 'pdf' } });
+    await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { kind: null } });
+    await expect(broker.cancelBatch({ kind: 'pdf' })).resolves.toMatchObject({ ok: false });
     expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
       'artifacts.batch.start', 'artifacts.batch.status', 'artifacts.batch.cancel',
     ]);
@@ -230,13 +231,33 @@ describe('artifact filesystem boundary', () => {
     await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { cancelled: false } });
   });
 
-  it('writes atomically and preserves duplicates with a suffix', async () => {
+  it('returns a validated paged structured failure list for the latest batch', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified-failures');
+    const runtime = { invoke: vi.fn(async (method, value) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_failures', status: 'running' };
+      if (method === 'artifacts.batch.failures') return { task_id: 'artifact_failures', connection_id: 'conn_1', items: [], total: 0, offset: 0, limit: 50, request: value };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'], kinds: ['xml'],
+      date_from: '2026-01-01', date_to: '2026-01-31', pdf_concurrency: 5,
+    });
+    await expect(broker.batchFailures({ task_id: 'artifact_failures', connection_id: 'conn_1', offset: 0, limit: 50 })).resolves.toMatchObject({ ok: true, data: { total: 0 } });
+    await expect(broker.batchFailures({ task_id: 'wrong', connection_id: 'conn_1' })).resolves.toMatchObject({ ok: false, error: { code: 'internal_error' } });
+    expect(runtime.invoke).toHaveBeenLastCalledWith('artifacts.batch.failures', {
+      task_id: 'artifact_failures', connection_id: 'conn_1', offset: 0, limit: 50,
+    });
+  });
+
+  it('atomically overwrites the canonical artifact filename', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'mia-artifact-'));
     const first = await atomicWrite(directory, 'hóa-đơn.xml', Buffer.from('<xml/>'));
     const second = await atomicWrite(directory, 'hóa-đơn.xml', Buffer.from('<xml>2</xml>'));
     expect(path.basename(first)).toBe('hóa-đơn.xml');
-    expect(path.basename(second)).toBe('hóa-đơn (1).xml');
+    expect(path.basename(second)).toBe('hóa-đơn.xml');
     expect(await readFile(second, 'utf8')).toBe('<xml>2</xml>');
+    expect((await readdir(directory)).filter((name) => name.endsWith('.xml'))).toEqual(['hóa-đơn.xml']);
     expect((await readdir(directory)).some((name) => name.endsWith('.tmp'))).toBe(false);
   });
 });

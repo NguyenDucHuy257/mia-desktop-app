@@ -41,6 +41,7 @@ production_backend: Any | None = None
 # Kept patchable for unit tests while avoiding an eager import of mia_backend.
 ProductionBackend = None
 _write_lock = threading.Lock()
+_production_backend_lock = threading.Lock()
 _artifact_task_lock = threading.Lock()
 _artifact_task: dict[str, Any] | None = None
 
@@ -100,9 +101,11 @@ def _production_backend():
     if data_directory is None:
         raise RpcError(-32011, "storage_not_initialized")
     if production_backend is None:
-        backend_class = _production_backend_class()
-        production_backend = backend_class(data_directory, logger)
-        _crawler_logger().info("source_backend_ready runtime_version=%s", RUNTIME_VERSION)
+        with _production_backend_lock:
+            if production_backend is None:
+                backend_class = _production_backend_class()
+                production_backend = backend_class(data_directory, logger)
+                _crawler_logger().info("source_backend_ready runtime_version=%s", RUNTIME_VERSION)
     return production_backend
 
 
@@ -565,6 +568,32 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         view = coordinator.view() if coordinator is not None else (result or {})
         return {"task_id": task_id, **view, "status": status, "error": error}, False
 
+    if method == "artifacts.batch.failures":
+        task_id = str(params.get("task_id") or "")
+        connection_id = str(params.get("connection_id") or "")
+        offset = params.get("offset", 0)
+        limit = params.get("limit", 50)
+        if (
+            isinstance(offset, bool) or not isinstance(offset, int) or offset < 0
+            or isinstance(limit, bool) or not isinstance(limit, int)
+            or limit < 1 or limit > 100
+        ):
+            raise RpcError(-32602, "invalid_params")
+        with _artifact_task_lock:
+            if not _artifact_task or _artifact_task.get("task_id") != task_id:
+                raise RpcError(-32063, "artifact_task_not_found")
+            coordinator = _artifact_task.get("coordinator")
+        if coordinator is None:
+            raise RpcError(-32063, "artifact_task_not_found")
+        try:
+            failures, total = coordinator.failure_view(connection_id, offset, limit)
+        except ValueError:
+            raise RpcError(-32602, "invalid_params") from None
+        return {
+            "task_id": task_id, "connection_id": connection_id,
+            "items": failures, "total": total, "offset": offset, "limit": limit,
+        }, False
+
     if method == "artifacts.batch.cancel":
         task_id = str(params.get("task_id") or "")
         kind = params.get("kind")
@@ -700,6 +729,42 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     raise RpcError(-32601, "method_not_found")
 
 
+def _serve_parallel_read(request_id: str | int, method: str, params: Any) -> None:
+    """Serve read-only artifact RPCs without starving the RAM status lane."""
+    started = time.perf_counter()
+    try:
+        if logger is not None:
+            logger.info("rpc_start request_id=%s method=%s", request_id, method)
+        result, _should_stop = dispatch(method, params)
+        write_message({"jsonrpc": "2.0", "id": request_id, "result": result})
+        if logger is not None:
+            logger.info(
+                "rpc_end request_id=%s method=%s outcome=ok duration_ms=%.1f",
+                request_id, method, (time.perf_counter() - started) * 1000,
+            )
+    except RpcError as error:
+        if logger is not None:
+            logger.warning(
+                "rpc_end request_id=%s method=%s outcome=rpc_error code=%s duration_ms=%.1f",
+                request_id, method, error.code,
+                (time.perf_counter() - started) * 1000,
+            )
+        write_message({
+            "jsonrpc": "2.0", "id": request_id,
+            "error": {"code": error.code, "message": error.message},
+        })
+    except Exception:
+        if logger is not None:
+            logger.exception(
+                "rpc_end request_id=%s method=%s outcome=internal_error duration_ms=%.1f",
+                request_id, method, (time.perf_counter() - started) * 1000,
+            )
+        write_message({
+            "jsonrpc": "2.0", "id": request_id,
+            "error": {"code": -32603, "message": "internal_error"},
+        })
+
+
 def serve() -> int:
     should_stop = False
     while not should_stop:
@@ -722,6 +787,16 @@ def serve() -> int:
         try:
             decoded = json.loads(raw.decode("utf-8"))
             request_id, method, params = validate_request(decoded)
+            if method in {
+                "artifacts.coverage", "artifacts.snapshot",
+                "artifacts.batch.status", "artifacts.batch.failures",
+            }:
+                threading.Thread(
+                    target=_serve_parallel_read,
+                    args=(request_id, method, params),
+                    name="mia-artifact-read-rpc", daemon=True,
+                ).start()
+                continue
             if logger is not None:
                 logger.info("rpc_start request_id=%s method=%s", request_id, method)
             result, should_stop = dispatch(method, params)

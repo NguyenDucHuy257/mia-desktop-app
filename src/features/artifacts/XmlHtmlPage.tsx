@@ -4,15 +4,18 @@ import { pageBounds, paginationTokens } from '../../components/pagination-utils'
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import searchIcon from '../../assets/figma/search.png';
+import backIcon from '../../assets/figma/back.png';
 import { OptionCheck } from '../../components/OptionCheck';
 import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
-import type { ArtifactAccountSnapshot, ArtifactCoverageAccount, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
+import type { ArtifactAccountSnapshot, ArtifactCoverageAccount, ArtifactFailureRecord, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
 import type { ArtifactDownloadLifecycle } from './use-artifact-download-lifecycle';
 import '../../styles/xml-html.css';
+import '../../styles/results-enhancements.css';
+import '../../styles/results-luxury.css';
 
 const ACCOUNT_PAGE_SIZE = 20;
-type RowStatus = 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped';
+type RowStatus = 'checking' | 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped';
 
 export interface ArtifactSelectionState {
   dateFrom: string;
@@ -74,8 +77,60 @@ function ProgressCard({ kind, lifecycle }: { kind: InvoiceArtifactKind; lifecycl
     <header><FormatIcon kind={kind} /><h2>{kind.toUpperCase()}</h2><span>{progress.processed.toLocaleString('vi-VN')} / {progress.total.toLocaleString('vi-VN')}</span><strong>{Math.round(progress.percent)}%</strong></header>
     <div className="artifact-progress-status">{label}</div>
     <div className="artifact-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }} /></div>
-    <button className="artifact-format-stop" type="button" disabled={['completed', 'stopped', 'failed', 'stopping'].includes(progress.status)} onClick={() => void lifecycle.stop(kind)}>Dừng {kind.toUpperCase()}</button>
   </article>;
+}
+
+const FAILURE_PAGE_SIZE = 50;
+
+function failureDate(value: string) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : value || '—';
+}
+
+function ArtifactFailureView({ account, lifecycle, onBack }: {
+  account: AccountConnection;
+  lifecycle: ArtifactDownloadLifecycle;
+  onBack(): void;
+}) {
+  const [items, setItems] = useState<ArtifactFailureRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const taskId = lifecycle.status?.task_id;
+  const failureCount = lifecycle.status?.accounts[account.connection_id]?.failure_count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / FAILURE_PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const tokens = paginationTokens(totalPages, currentPage);
+
+  useEffect(() => {
+    let current = true;
+    if (!taskId) { setItems([]); setTotal(0); setLoading(false); return; }
+    setLoading(true);
+    void window.miaRuntime!.artifacts.batchFailures({
+      task_id: taskId, connection_id: account.connection_id,
+      offset: (currentPage - 1) * FAILURE_PAGE_SIZE, limit: FAILURE_PAGE_SIZE,
+    }).then((result) => {
+      if (!current) return;
+      setItems(result.items);
+      setTotal(result.total);
+      setLoading(false);
+    }).catch(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [account.connection_id, currentPage, failureCount, taskId]);
+
+  const gridTemplateColumns = '140px 150px 150px 150px 180px 220px 150px minmax(300px, 1fr)';
+  const first = total ? (currentPage - 1) * FAILURE_PAGE_SIZE + 1 : 0;
+  const last = Math.min(total, currentPage * FAILURE_PAGE_SIZE);
+  return <section className="results-page results-page--figma artifact-failure-page" aria-label="Danh sách hóa đơn lỗi">
+    <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại XML/HTML/PDF</button>
+    <header className="results-header results-header--figma"><div><h1>Danh sách hóa đơn lỗi</h1><p>{account.username} · {account.company_name || 'Chưa có tên công ty'}</p></div></header>
+    <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng hóa đơn không tạo được file">
+      <div className="results-row results-row--header" style={{ gridTemplateColumns }}><span>Ngày lập</span><span>Ký hiệu mẫu số</span><span>Ký hiệu hóa đơn</span><span>Số hóa đơn</span><span>MST đối tác</span><span>Tên đối tác</span><span>Định dạng</span><span>Lỗi</span></div>
+      {items.map((item) => <div className="results-row" style={{ gridTemplateColumns }} key={item.invoice_key}><span>{failureDate(item.date)}</span><span>{item.khmshdon || '—'}</span><span>{item.khhdon || '—'}</span><span>{item.shdon || '—'}</span><span>{item.nbmst || '—'}</span><span title={item.partner_name}>{item.partner_name || '—'}</span><span>{item.affected_formats.map((kind) => kind.toUpperCase()).join(', ')}</span><span title={item.message}>{item.message || 'Không thể tạo file'}</span></div>)}
+      {loading ? <div className="results-state" role="status">Đang tải danh sách...</div> : !items.length ? <div className="results-state results-empty">Không có hóa đơn lỗi.</div> : null}
+    </div>
+    <footer className="results-pager artifact-pager"><span>Hiển thị {first}–{last} trên tổng {total} hóa đơn</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
+  </section>;
 }
 
 export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, lifecycle, selection, onSelectionChange, coverageRevision, pdfConcurrency }: {
@@ -100,6 +155,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [page, setPage] = useState(1);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [failureAccountId, setFailureAccountId] = useState<string | null>(null);
   const generation = useRef(0);
   const cacheGeneration = useRef(0);
   const coverageFingerprint = useRef('');
@@ -128,8 +184,8 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
       snapshotSelectionKey.current = selectionKey;
       coverageFingerprint.current = '';
       setSnapshots({});
-      setSnapshotState('loading');
     }
+    setSnapshotState('loading');
     void loadArtifactCoverage({ connection_ids: accountIds, directions: [selection.direction], date_from: selection.dateFrom, date_to: selection.dateTo }).then((items) => {
       if (token !== generation.current) return;
       const fingerprint = JSON.stringify(items.map((item) => [item.connection_id, item.ready, item.missing_ranges]));
@@ -143,7 +199,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
         coverageFingerprint.current = fingerprint;
         setCacheRevision((current) => current + 1);
       }
-    }).catch(() => { if (token === generation.current && selectionChanged) setSnapshotState('error'); });
+    }).catch(() => { if (token === generation.current) setSnapshotState('error'); });
     return () => { if (token === generation.current) generation.current += 1; };
   }, [accountIds, coverageRevision, lifecycle.status?.status, selection.dateFrom, selection.dateTo, selection.direction]);
 
@@ -152,11 +208,17 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
     const token = ++cacheGeneration.current;
     void loadArtifactSnapshots({ connection_ids: accountIds, directions: [selection.direction], date_from: selection.dateFrom, date_to: selection.dateTo }).then((items) => {
       if (token !== cacheGeneration.current) return;
-      setSnapshots((current) => Object.fromEntries(items.map((item) => [item.connection_id, {
-        ...item,
-        ready: current[item.connection_id]?.ready ?? item.ready,
-        missing_ranges: current[item.connection_id]?.missing_ranges ?? item.missing_ranges,
-      }])));
+      setSnapshots((current) => {
+        const merged = { ...current };
+        for (const item of items) {
+          merged[item.connection_id] = {
+            ...item,
+            ready: current[item.connection_id]?.ready ?? item.ready,
+            missing_ranges: current[item.connection_id]?.missing_ranges ?? item.missing_ranges,
+          };
+        }
+        return merged;
+      });
     }).catch(() => undefined);
     return () => { if (token === cacheGeneration.current) cacheGeneration.current += 1; };
   }, [accountIds, cacheRevision, selection.dateFrom, selection.dateTo, selection.direction]);
@@ -166,9 +228,16 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
     // completed task. Once it is no longer active, persisted coverage is again
     // authoritative so changing direction cannot reuse stale task totals.
     const task = lifecycle.active ? lifecycle.status?.accounts[account.connection_id] : undefined;
+    const failureCount = lifecycle.status?.accounts[account.connection_id]?.failure_count ?? 0;
     const snapshot = task ?? snapshots[account.connection_id];
-    const status: RowStatus = task?.status === 'downloading' ? 'downloading' : task?.status === 'completed' ? 'completed' : task?.status === 'error' ? 'error' : task?.status === 'stopped' ? 'stopped' : snapshot?.ready ? 'ready' : 'not_ready';
-    return { account, snapshot, status };
+    const status: RowStatus = task?.status === 'downloading' ? 'downloading'
+      : task?.status === 'completed' ? 'completed'
+        : task?.status === 'error' ? 'error'
+          : task?.status === 'stopped' ? 'stopped'
+            : snapshotState === 'loading' ? 'checking'
+              : snapshotState === 'error' ? 'error'
+                : snapshot?.ready ? 'ready' : 'not_ready';
+    return { account, snapshot, status, failureCount };
   });
   const filteredRows = rows.filter(({ account, status }) => {
     const term = search.trim().toLocaleLowerCase('vi');
@@ -180,7 +249,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   const filteredIds = filteredRows.map((row) => row.account.connection_id);
   const selectedFiltered = filteredIds.filter((id) => selectedConnectionIds.includes(id));
   const selectedSnapshots = selectedConnectionIds.map((id) => snapshots[id]).filter(Boolean);
-  const coverageReady = selectedSnapshots.length === selectedConnectionIds.length && selectedSnapshots.every((item) => item.ready);
+  const coverageReady = snapshotState === 'ready' && selectedSnapshots.length === selectedConnectionIds.length && selectedSnapshots.every((item) => item.ready);
   useEffect(() => { if (page !== currentPage) setPage(currentPage); }, [currentPage, page]);
 
   function toggleKind(kind: InvoiceArtifactKind) { setKinds((current) => current.includes(kind) ? current.filter((item) => item !== kind) : [...current, kind]); }
@@ -191,6 +260,13 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
     if (!folder.trim()) { setFeedback('Vui lòng chọn thư mục lưu trữ.'); return; }
     if (!coverageReady) { setFeedback(`Khoảng thời gian ${formatDate(selection.dateFrom)} - ${formatDate(selection.dateTo)} chưa được đồng bộ đầy đủ. Vui lòng sang Quản lý HĐĐT để đồng bộ trước.`); return; }
     await lifecycle.start({ destination: folder, connection_ids: selectedConnectionIds, directions: [selection.direction], kinds, date_from: selection.dateFrom, date_to: selection.dateTo, pdf_concurrency: pdfConcurrency });
+  }
+
+  const failureAccount = failureAccountId
+    ? accounts.find((account) => account.connection_id === failureAccountId)
+    : undefined;
+  if (failureAccount) {
+    return <ArtifactFailureView account={failureAccount} lifecycle={lifecycle} onBack={() => setFailureAccountId(null)} />;
   }
 
   return <section className="artifact-account-page invoice-page" aria-labelledby="artifact-title">
@@ -211,15 +287,20 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
       <StorageFolderPicker className="invoice-export-folder" value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Thư mục lưu trữ XML HTML PDF" />
     </section>
     <section className="artifact-account-content">
-      <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tải xuống" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tải xuống" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="ready">Sẵn sàng tải</option><option value="not_ready">Chưa đồng bộ</option><option value="downloading">Đang tải</option><option value="completed">Hoàn thành</option><option value="error">Lỗi tài khoản</option><option value="stopped">Đã dừng</option></select></div><div className="invoice-filter-actions"><button className="sync-button artifact-download-button" type="button" disabled={lifecycle.active || !selectedConnectionIds.length || !kinds.length || snapshotState !== 'ready'} onClick={() => void startDownload()}><DownloadIcon />Tải xuống</button><button className="stop-button artifact-global-stop" type="button" disabled={!lifecycle.active} onClick={() => void lifecycle.stop()}><StopIcon />Dừng tải</button></div></div>
+      <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tải xuống" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tải xuống" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="checking">Đang kiểm tra</option><option value="ready">Sẵn sàng tải</option><option value="not_ready">Chưa đồng bộ</option><option value="downloading">Đang tải</option><option value="completed">Hoàn thành</option><option value="error">Lỗi tài khoản</option><option value="stopped">Đã dừng</option></select></div><div className="invoice-filter-actions"><button className="sync-button artifact-download-button" type="button" disabled={lifecycle.active || !selectedConnectionIds.length || !kinds.length || snapshotState !== 'ready'} onClick={() => void startDownload()}><DownloadIcon />Tải xuống</button><button className="stop-button artifact-global-stop" type="button" disabled={!lifecycle.active} onClick={() => void lifecycle.stop()}><StopIcon />Dừng tải</button></div></div>
       {lifecycle.status?.current_account_id ? <div className="artifact-progress-cards" data-count={Object.keys(lifecycle.status.formats).length}>{kinds.map((kind) => <ProgressCard key={kind} kind={kind} lifecycle={lifecycle} />)}</div> : null}
       <div className="artifact-account-table data-card">
         <div className="artifact-account-row artifact-account-row--head table-header table-grid"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span>Số lượng</span><span>Trạng thái</span><span>Tiến trình</span><span>Tác vụ</span></div>
-        <div className="artifact-account-body table-body">{pageRows.map(({ account, snapshot, status }) => {
+        <div className="artifact-account-body table-body">{pageRows.map(({ account, snapshot, status, failureCount }) => {
           const formats = lifecycle.status?.current_account_id === account.connection_id ? lifecycle.status.formats : null;
           const progress = formats ? Math.round(Object.values(formats).reduce((sum, item) => sum + (item?.percent ?? 0), 0) / Math.max(1, Object.keys(formats).length)) : status === 'completed' ? 100 : 0;
-          const statusText = status === 'ready' ? 'Sẵn sàng tải' : status === 'not_ready' ? missingCoverageText(snapshot, selection.dateFrom, selection.dateTo) : status === 'downloading' ? 'Đang tải' : status === 'completed' ? 'Hoàn thành' : status === 'error' ? 'Lỗi tài khoản' : 'Đã dừng';
-          return <div className="artifact-account-row table-row table-grid" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><span className="artifact-account-status" data-status={status}>{statusText}</span><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action">—</span></div>;
+          const statusText = status === 'checking' ? 'Đang kiểm tra'
+            : status === 'ready' ? 'Sẵn sàng tải'
+              : status === 'not_ready' ? missingCoverageText(snapshot, selection.dateFrom, selection.dateTo)
+                : status === 'downloading' ? 'Đang tải'
+                  : status === 'completed' ? 'Hoàn thành'
+                    : status === 'error' ? 'Lỗi tài khoản' : 'Đã dừng';
+          return <div className="artifact-account-row table-row table-grid" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><span className="artifact-account-status" data-status={status}>{statusText}</span><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action row-action-group">{failureCount > 0 ? <button className="row-result-button" type="button" onClick={() => setFailureAccountId(account.connection_id)}>Danh sách hóa đơn lỗi</button> : <span className="row-action-placeholder">—</span>}</span></div>;
         })}</div>
         {snapshotState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{snapshotState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra trạng thái tải xuống.</div> : null}{snapshotState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
       </div>

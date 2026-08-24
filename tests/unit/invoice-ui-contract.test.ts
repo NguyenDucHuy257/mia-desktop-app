@@ -112,9 +112,25 @@ describe('invoice result control presentation', () => {
     expect(styles).toContain("[data-count='1']");
     expect(styles).toContain("[data-count='2']");
     expect(styles).toContain("[data-count='3']");
-    expect(styles).toContain('height: 76px');
+    expect(styles).toContain('height: 68px');
     expect(styles).toContain('min-height: 0');
     expect(page).not.toContain('Đang xử lý:');
     expect(page).not.toContain('hóa đơn</small>');
+    expect(page).not.toContain('Dừng XML');
+    expect(page).not.toContain('Dừng HTML');
+    expect(page).not.toContain('Dừng PDF');
+  });
+
+  it('uses serial recoverable artifact polling and the existing Results/action styles for failures', async () => {
+    const [page, lifecycle] = await Promise.all([
+      source('src/features/artifacts/XmlHtmlPage.tsx'),
+      source('src/features/artifacts/use-artifact-download-lifecycle.ts'),
+    ]);
+    expect(lifecycle).not.toContain('setInterval');
+    expect(lifecycle).toContain('window.setTimeout');
+    expect(lifecycle).toContain('transient monitoring failure');
+    expect(page).toContain('className="row-result-button"');
+    expect(page).toContain('results-table--excel-schema');
+    expect(page).toContain('Danh sách hóa đơn lỗi');
   });
 });
