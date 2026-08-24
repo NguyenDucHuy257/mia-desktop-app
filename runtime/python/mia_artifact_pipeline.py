@@ -340,6 +340,34 @@ class ArtifactInspector:
             "directions": value["directions"],
         }
 
+    def coverage(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Return only persisted Overview readiness without scanning artifact files.
+
+        Coverage is latency-sensitive UI state. XML/HTML/PDF cache validation can
+        require filesystem and PDF fingerprint checks for every invoice, so it
+        intentionally stays in ``snapshot`` and cannot delay this response.
+        """
+        value = _validate_request(dict(raw), destination=False)
+        accounts = []
+        for connection_id in value["connection_ids"]:
+            tax_code = self.backend.connection_tax_code(connection_id)
+            database = self.data_root / tax_code / "db" / "invoices.sqlite3"
+            missing = self._coverage_missing(database, tax_code, value)
+            accounts.append({
+                "connection_id": connection_id,
+                "ready": not missing,
+                "missing_ranges": [
+                    {"date_from": begin.isoformat(), "date_to": end.isoformat()}
+                    for begin, end in missing
+                ],
+            })
+        return {
+            "accounts": accounts,
+            "date_from": value["date_from"],
+            "date_to": value["date_to"],
+            "directions": value["directions"],
+        }
+
     def _account_snapshot(self, connection_id: str, value: dict[str, Any]) -> dict[str, Any]:
         tax_code = self.backend.connection_tax_code(connection_id)
         database = self.data_root / tax_code / "db" / "invoices.sqlite3"

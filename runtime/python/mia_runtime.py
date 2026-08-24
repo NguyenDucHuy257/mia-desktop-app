@@ -516,6 +516,15 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
 
+    if method == "artifacts.coverage":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_artifact_pipeline import ArtifactInspector
+            return ArtifactInspector(_production_backend()).coverage(dict(params)), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+
     if method == "artifacts.batch.start":
         global _artifact_task
         if data_directory is None:

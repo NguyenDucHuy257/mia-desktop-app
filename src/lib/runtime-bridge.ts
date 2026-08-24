@@ -41,6 +41,7 @@ export interface MiaRuntimeBridge {
     cancel(): Promise<{ cancelled: boolean }>;
     targets(request: ArtifactExportRequest): Promise<{ keys: string[]; total: number }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
+    coverage(request: ArtifactSnapshotRequest): Promise<ArtifactCoverage>;
     snapshot(request: ArtifactSnapshotRequest): Promise<ArtifactSnapshot>;
     startBatch(request: ArtifactBatchRequest): Promise<{ task_id: string; status: string }>;
     batchStatus(request: { task_id: string }): Promise<ArtifactBatchStatus>;
@@ -101,6 +102,8 @@ export interface LocalPreferences { concurrency: number; retries: number; export
 export type InvoiceArtifactKind = 'xml' | 'html' | 'pdf';
 export interface ArtifactSnapshotRequest { connection_ids: string[]; directions: InvoiceDirection[]; date_from: string; date_to: string }
 export interface ArtifactAccountSnapshot { connection_id: string; ready: boolean; missing_ranges: Array<{ date_from: string; date_to: string }>; total: number; cached: Record<InvoiceArtifactKind, number> }
+export interface ArtifactCoverageAccount { connection_id: string; ready: boolean; missing_ranges: Array<{ date_from: string; date_to: string }> }
+export interface ArtifactCoverage extends ArtifactSnapshotRequest { accounts: ArtifactCoverageAccount[] }
 export interface ArtifactSnapshot extends ArtifactSnapshotRequest { accounts: ArtifactAccountSnapshot[] }
 export interface ArtifactFormatProgress { status: 'preparing' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'; processed: number; total: number; percent: number; current_invoice: string | null; failed: number }
 export interface ArtifactAccountProgress extends ArtifactAccountSnapshot { status: 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped'; error?: string }

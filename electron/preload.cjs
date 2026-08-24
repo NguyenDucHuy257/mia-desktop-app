@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     cancel: () => invokeResult('mia:artifacts:cancel'),
     targets: (request) => invokeResult('mia:artifacts:targets', request),
     list: (request) => invokeResult('mia:artifacts:list', request),
+    coverage: (request) => invokeResult('mia:artifacts:coverage', request),
     snapshot: (request) => invokeResult('mia:artifacts:snapshot', request),
     startBatch: (request) => invokeResult('mia:artifacts:batch-start', request),
     batchStatus: (request) => invokeResult('mia:artifacts:batch-status', request),

@@ -41,6 +41,11 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(nav).toHaveAttribute('data-active', 'true');
   await expect(page.getByLabel('Tìm kiếm tài khoản tải xuống')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).locator('img')).toHaveCSS('filter', 'grayscale(1) saturate(0) opacity(0.72)');
+  await expect(page.locator('.artifact-toolbar-card')).toHaveCSS('border-radius', '6px');
+  await expect(page.getByLabel('Tìm kiếm tài khoản tải xuống')).toHaveCSS('border-radius', '6px');
+  await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('white-space', 'nowrap');
+  await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('border-radius', '6px');
+  await expect(page.locator('.artifact-account-table')).toHaveCSS('border-radius', '6px');
   await expect(page.getByRole('heading', { name: 'XML/HTML/PDF' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Thêm tài khoản' })).toHaveCount(0);
@@ -191,10 +196,18 @@ test('latest direction coverage wins and remains deterministic across tab remoun
       jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       artifacts: {
-        snapshot: async (request: { directions: string[] }) => {
+        coverage: async (request: { directions: string[] }) => {
           const direction = request.directions[0];
           requests.push(direction);
           await new Promise((resolve) => window.setTimeout(resolve, direction === 'purchase' ? 120 : 5));
+          return { ...request, accounts: [{
+            connection_id: accountValue.connection_id,
+            ready: direction === 'purchase',
+            missing_ranges: direction === 'purchase' ? [] : [{ date_from: '2026-04-01', date_to: '2026-05-31' }],
+          }] };
+        },
+        snapshot: async (request: { directions: string[] }) => {
+          const direction = request.directions[0];
           return { ...request, accounts: [{
             connection_id: accountValue.connection_id,
             ready: direction === 'purchase',
@@ -254,12 +267,18 @@ test('active source polling refreshes persisted coverage after every finalized m
       },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       artifacts: {
-        snapshot: async (request: unknown) => {
+        coverage: async (request: unknown) => {
           const nextMonth = finalizedThrough + 1;
           return { ...(request as object), accounts: [{
             connection_id: accountValue.connection_id,
             ready: finalizedThrough >= 5,
             missing_ranges: finalizedThrough >= 5 ? [] : [{ date_from: `2026-${String(nextMonth).padStart(2, '0')}-01`, date_to: '2026-05-31' }],
+          }] };
+        },
+        snapshot: async (request: unknown) => {
+          return { ...(request as object), accounts: [{
+            connection_id: accountValue.connection_id,
+            ready: false, missing_ranges: [],
             total: 10, cached: { xml: 0, html: 0, pdf: 0 },
           }] };
         },

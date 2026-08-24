@@ -13,6 +13,7 @@ import { useArtifactDownloadLifecycle } from './features/artifacts/use-artifact-
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
+import './styles/invoice-unified-controls.css';
 
 const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 

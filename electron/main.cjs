@@ -185,6 +185,11 @@ ipcMain.handle('mia:artifacts:snapshot', (event, request) => {
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
   return artifactBroker.snapshot(request);
 });
+ipcMain.handle('mia:artifacts:coverage', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.coverage(request);
+});
 ipcMain.handle('mia:artifacts:batch-start', (event, request) => {
   assertTrustedSender(event);
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);

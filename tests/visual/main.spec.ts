@@ -193,7 +193,11 @@ test('verified runtime account immediately shows portal company information', as
 test('invoice scope menu follows Figma node 4:654 and closes outside', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => document.fonts.ready);
-  await page.getByRole('button', { name: 'Tổng quan' }).click();
+  const scope = page.getByRole('button', { name: 'Tổng quan' });
+  await expect(scope).toHaveCSS('white-space', 'nowrap');
+  await expect(scope).toHaveCSS('border-radius', '6px');
+  await expect(scope).toHaveJSProperty('scrollHeight', await scope.evaluate((node) => node.clientHeight));
+  await scope.click();
   await expect(page.locator('[data-node-id="4:654"]')).toHaveScreenshot('figma-declaration-type-4-654.png', {
     maxDiffPixelRatio: 0.12, threshold: 0.25,
   });
