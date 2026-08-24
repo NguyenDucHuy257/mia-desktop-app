@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import requests
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -428,6 +429,166 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(backend.handler.run_xml_unit.call_count, 3)
         self.assertEqual(result["failed"], 0)
 
+    def test_unavailable_outcome_retries_then_succeeds(self):
+        backend, request = self._package_backend([
+            {"outcome": "unavailable"}, {"outcome": "downloaded"},
+        ])
+        waits = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, retry_wait=lambda delay, _cancel: waits.append(delay),
+            )
+        self.assertEqual(waits, [1])
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 2)
+        self.assertEqual(result["outcomes"]["downloaded"], 1)
+        self.assertEqual(result["outcomes"]["source_confirmed_unavailable"], 0)
+        self.assertFalse(any(
+            "source_confirmed_unavailable" in " ".join(map(str, call.args))
+            for call in backend.logger.warning.call_args_list
+        ))
+
+    def test_three_unavailable_outcomes_use_backoff_then_succeed(self):
+        backend, request = self._package_backend([
+            {"outcome": "unavailable"}, {"outcome": "unavailable"},
+            {"outcome": "unavailable"}, {"outcome": "downloaded"},
+        ])
+        waits = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, retry_wait=lambda delay, _cancel: waits.append(delay),
+            )
+        self.assertEqual(waits, [1, 2, 4])
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 4)
+        self.assertEqual(result["outcomes"]["downloaded"], 1)
+
+    def test_unavailable_exception_uses_the_same_retry_policy(self):
+        class InvoicePackageUnavailableError(RuntimeError):
+            pass
+        backend, request = self._package_backend([
+            InvoicePackageUnavailableError("Không tồn tại hồ sơ gốc của hóa đơn."),
+            {"outcome": "downloaded"},
+        ])
+        waits = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, retry_wait=lambda delay, _cancel: waits.append(delay),
+            )
+        self.assertEqual(waits, [1])
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 2)
+        self.assertEqual(result["outcomes"]["downloaded"], 1)
+
+    def test_unavailable_outcome_is_terminal_only_after_all_attempts(self):
+        backend, request = self._package_backend([{"outcome": "unavailable"}] * 7)
+        waits = []
+        ready = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, retry_wait=lambda delay, _cancel: waits.append(delay),
+                ready_callback=lambda *_args: ready.append(_args),
+            )
+        self.assertEqual(waits, [1, 2, 4, 6, 8, 10])
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 7)
+        self.assertEqual(result["outcomes"]["source_confirmed_unavailable"], 1)
+        self.assertEqual(ready[0][1:], ("unavailable", "source_confirmed_unavailable"))
+        terminal = [call for call in backend.logger.warning.call_args_list if "source_confirmed_unavailable" in " ".join(map(str, call.args))]
+        self.assertEqual(len(terminal), 1)
+
+    def test_unavailable_marker_is_cleared_between_attempts_and_kept_at_exhaustion(self):
+        backend, request = self._package_backend(None)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        backend.data_root = Path(temporary.name)
+        target = backend.artifact_targets_for_export.return_value[0]
+        database = backend.data_root / "0101" / "db" / "invoices.sqlite3"
+        database.parent.mkdir(parents=True)
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("""CREATE TABLE invoice_package_items (
+                company_tax_code TEXT, direction TEXT, query_type TEXT, nbmst TEXT,
+                khhdon TEXT, shdon TEXT, khmshdon TEXT, unavailable INTEGER,
+                unavailable_reason TEXT, error_message TEXT, updated_at TEXT
+            )""")
+            connection.execute(
+                "INSERT INTO invoice_package_items VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                ("0101", target["direction"], target["query_type"], target["nbmst"],
+                 target["khhdon"], target["shdon"], target["khmshdon"], 1,
+                 "old miss", "old miss", "now"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        def unavailable_attempt(*_args):
+            current = sqlite3.connect(database)
+            try:
+                current.execute(
+                    "UPDATE invoice_package_items SET unavailable=1, unavailable_reason='attempt miss', error_message='attempt miss'"
+                )
+                current.commit()
+            finally:
+                current.close()
+            return {"outcome": "unavailable"}
+
+        backend.handler.run_xml_unit.side_effect = unavailable_attempt
+        markers_during_wait = []
+        def observe_wait(_delay, _cancel):
+            current = sqlite3.connect(database)
+            try:
+                markers_during_wait.append(current.execute(
+                    "SELECT unavailable FROM invoice_package_items"
+                ).fetchone()[0])
+            finally:
+                current.close()
+
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            backend.ensure_invoice_packages(request, retry_wait=observe_wait)
+        self.assertEqual(markers_during_wait, [0, 0, 0, 0, 0, 0])
+        current = sqlite3.connect(database)
+        try:
+            terminal_marker = current.execute(
+                "SELECT unavailable FROM invoice_package_items"
+            ).fetchone()[0]
+        finally:
+            current.close()
+        self.assertEqual(terminal_marker, 1)
+
+    def test_existing_unavailable_row_is_retried_without_deleting_cache_fields(self):
+        backend, request = self._package_backend([{"outcome": "downloaded"}])
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        backend.data_root = Path(temporary.name)
+        target = backend.artifact_targets_for_export.return_value[0]
+        database = backend.data_root / "0101" / "db" / "invoices.sqlite3"
+        database.parent.mkdir(parents=True)
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("""CREATE TABLE invoice_package_items (
+                company_tax_code TEXT, direction TEXT, query_type TEXT, nbmst TEXT,
+                khhdon TEXT, shdon TEXT, khmshdon TEXT, unavailable INTEGER,
+                unavailable_reason TEXT, error_message TEXT, updated_at TEXT,
+                xml_path TEXT, html_path TEXT, xml_fetched INTEGER, html_fetched INTEGER
+            )""")
+            connection.execute(
+                "INSERT INTO invoice_package_items VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("0101", target["direction"], target["query_type"], target["nbmst"],
+                 target["khhdon"], target["shdon"], target["khmshdon"], 1,
+                 "old miss", "old miss", "now", "keep.xml", "keep.html", 0, 0),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            backend.ensure_invoice_packages(request, retry_wait=lambda *_args: None)
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 1)
+        connection = sqlite3.connect(database)
+        try:
+            row = connection.execute(
+                "SELECT unavailable,error_message,xml_path,html_path FROM invoice_package_items"
+            ).fetchone()
+        finally:
+            connection.close()
+        self.assertEqual(row, (0, None, "keep.xml", "keep.html"))
+
     def test_exhausted_transient_package_is_warning_not_failure(self):
         backend, request = self._package_backend([self._transient_500()] * 7)
         waits = []
@@ -464,6 +625,19 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(result["outcomes"]["source_confirmed_unavailable"], 1)
         self.assertEqual(result["outcomes"]["source_retry_exhausted"], 0)
         self.assertEqual(ready[0][1:], ("unavailable", "source_confirmed_unavailable"))
+
+    def test_cancel_during_unavailable_backoff_does_not_start_another_attempt(self):
+        backend, request = self._package_backend([{"outcome": "unavailable"}])
+        def cancel_wait(_delay, _cancel):
+            raise ValueError("artifact_cancelled")
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            with self.assertRaisesRegex(ValueError, "artifact_cancelled"):
+                backend.ensure_invoice_packages(request, retry_wait=cancel_wait)
+        self.assertEqual(backend.handler.run_xml_unit.call_count, 1)
+        self.assertFalse(any(
+            "source_confirmed_unavailable" in " ".join(map(str, call.args))
+            for call in backend.logger.warning.call_args_list
+        ))
 
     def test_package_retry_wait_can_cancel_without_another_attempt(self):
         backend, request = self._package_backend([self._transient_500()])

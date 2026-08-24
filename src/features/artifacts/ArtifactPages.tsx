@@ -21,6 +21,11 @@ const EVENT_LABELS: Record<string, string> = {
   artifact_download_requested: 'Bắt đầu tải XML/HTML/PDF',
   artifact_download_completed: 'Tải XML/HTML/PDF hoàn tất',
   artifact_download_failed: 'Tải XML/HTML/PDF thất bại',
+  source_confirmed_unavailable: 'Không lấy được gói dữ liệu sau 7 lần thử',
+  source_retry_exhausted: 'Máy chủ không phản hồi sau các lần thử',
+  artifact_copy_failed: 'Không thể sao chép tệp dữ liệu',
+  artifact_dependency_missing: 'Thiếu dữ liệu cần thiết để tạo tệp',
+  pdf_failed: 'Không thể tạo tệp PDF',
   renderer_uncaught_error: 'Lỗi giao diện chưa được xử lý',
   renderer_unhandled_rejection: 'Lỗi tác vụ giao diện chưa được xử lý',
 };

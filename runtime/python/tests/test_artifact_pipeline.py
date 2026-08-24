@@ -500,7 +500,7 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["formats"]["html"]["failed"], 0)
             self.assertEqual(result["warning_count"], 1)
 
-    def test_retry_exhausted_package_is_a_warning_with_a_distinct_diagnostic(self):
+    def test_retry_exhausted_package_is_a_distinct_nonfailed_warning_outcome(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = {
@@ -524,10 +524,7 @@ class ArtifactPipelineTests(unittest.TestCase):
                 }, logger=logger).run()
             self.assertEqual(result["formats"]["xml"]["failed"], 0)
             self.assertEqual(result["warning_count"], 1)
-            self.assertTrue(any(
-                "source_retry_exhausted" in " ".join(str(value) for value in call.args)
-                for call in logger.warning.call_args_list
-            ))
+            logger.warning.assert_not_called()
 
     def test_user_cancellation_marks_account_stopped_not_error(self):
         with tempfile.TemporaryDirectory() as directory:
