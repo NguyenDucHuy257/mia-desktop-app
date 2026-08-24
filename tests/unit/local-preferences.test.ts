@@ -50,17 +50,19 @@ describe('local preferences and logs', () => {
     await expect(readPreferences(directory)).resolves.toMatchObject({ exportFolder });
   });
 
-  it('redacts identifiers and credential-like values and preserves the log source', async () => {
+  it('keeps only warnings and errors while redacting identifiers and credentials', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'mia-logs-'));
     directories.push(directory);
     const logDirectory = path.join(directory, 'offline-runtime', 'logs');
     await mkdir(logDirectory, { recursive: true });
-    await writeFile(path.join(logDirectory, 'runtime.log'), 'account 0101234567 token=secret-value\nnormal event\n');
+    await writeFile(path.join(logDirectory, 'runtime.log'), [
+      '2026-08-24 22:15:48,000 INFO runtime package_cache_hit',
+      '2026-08-24 22:15:49,000 WARNING runtime source_retry_exhausted format=XML mst=0101234567 token=secret-value status=500',
+    ].join('\n'));
     const lines = await readSanitizedLogs(directory);
-    expect(lines).toEqual([
-      '[runtime] account [redacted-id] token=[redacted]',
-      '[runtime] normal event',
-    ]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('source_retry_exhausted');
+    expect(lines[0]).toContain('status=500');
     expect(lines.every((line: string) => line.startsWith('[runtime] '))).toBe(true);
     expect(lines.join(' ')).not.toContain('0101234567');
     expect(lines.join(' ')).not.toContain('secret-value');
@@ -77,10 +79,25 @@ describe('local preferences and logs', () => {
       '2026-08-24T01:01:00.000Z ERROR job_start_failed {"code":"invalid_params"}',
     ].join('\n'));
     const entries = await readSanitizedLogEntries(directory);
-    expect(entries).toHaveLength(2);
+    expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ level: 'error', source: 'renderer', event: 'job_start_failed' });
     expect(entries[0].details).toContain('invalid_params');
     await expect(clearDiagnosticLogs(directory)).resolves.toBe(true);
     await expect(readSanitizedLogs(directory)).resolves.toEqual([]);
+  });
+
+  it('preserves compact diagnostic categories for unavailable and PDF failures', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'mia-logs-'));
+    directories.push(directory);
+    const logDirectory = path.join(directory, 'offline-runtime', 'logs');
+    await mkdir(logDirectory, { recursive: true });
+    await writeFile(path.join(logDirectory, 'runtime.log'), [
+      '2026-08-24 22:16:00,000 WARNING runtime source_confirmed_unavailable format=HTML invoice_ref=42 status=404',
+      '2026-08-24 22:16:03,000 ERROR runtime pdf_failed format=PDF invoice_ref=42 error_type=FileNotFoundError message=sign-check.jpg_missing',
+    ].join('\n'));
+    const entries = await readSanitizedLogEntries(directory);
+    expect(entries).toHaveLength(2);
+    expect(entries.some((entry: { event: string }) => entry.event === 'source_confirmed_unavailable')).toBe(true);
+    expect(entries.some((entry: { event: string; details: string }) => entry.event === 'pdf_failed' && entry.details.includes('FileNotFoundError'))).toBe(true);
   });
 });

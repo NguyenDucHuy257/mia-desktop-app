@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from mia_backend import ProductionBackend
+from mia_backend import ProductionBackend, package_retry_delay
 
 
 class ProductionBackendTests(unittest.TestCase):
@@ -440,8 +440,30 @@ class ProductionBackendTests(unittest.TestCase):
         self.assertEqual(waits, [1, 2, 4, 6, 8, 10])
         self.assertEqual(backend.handler.run_xml_unit.call_count, 7)
         self.assertEqual(result["failed"], 0)
-        self.assertEqual(result["outcomes"]["unavailable"], 1)
-        self.assertEqual(ready[0][1:], ("unavailable", "unavailable"))
+        self.assertEqual(result["outcomes"]["source_retry_exhausted"], 1)
+        self.assertEqual(result["outcomes"]["source_confirmed_unavailable"], 0)
+        self.assertEqual(ready[0][1:], ("unavailable", "source_retry_exhausted"))
+
+    def test_package_retry_delay_caps_at_ten_seconds(self):
+        self.assertEqual(
+            [package_retry_delay(attempt) for attempt in range(1, 10)],
+            [1, 2, 4, 6, 8, 10, 10, 10, 10],
+        )
+
+    def test_confirmed_missing_package_is_not_retry_exhausted(self):
+        response = requests.Response()
+        response.status_code = 404
+        error = requests.HTTPError("HTTP 404")
+        error.response = response
+        backend, request = self._package_backend([error])
+        ready = []
+        with patch("mia_backend.replace", return_value=SimpleNamespace(parameters={}, company_tax_code="0101")):
+            result = backend.ensure_invoice_packages(
+                request, ready_callback=lambda *_args: ready.append(_args),
+            )
+        self.assertEqual(result["outcomes"]["source_confirmed_unavailable"], 1)
+        self.assertEqual(result["outcomes"]["source_retry_exhausted"], 0)
+        self.assertEqual(ready[0][1:], ("unavailable", "source_confirmed_unavailable"))
 
     def test_package_retry_wait_can_cancel_without_another_attempt(self):
         backend, request = self._package_backend([self._transient_500()])

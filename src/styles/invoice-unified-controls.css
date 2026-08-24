@@ -82,3 +82,10 @@
   opacity: 1;
   overflow: visible;
 }
+
+/* The HDDT storage picker is indented for its toolbar actions. Artifact export
+   uses the full toolbar grid, so keep it aligned with the date field. */
+.artifact-account-page.invoice-page .artifact-toolbar-card .invoice-export-folder {
+  left: 12px;
+  width: min(640px, calc(100% - 24px));
+}

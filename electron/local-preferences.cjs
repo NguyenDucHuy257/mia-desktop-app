@@ -56,10 +56,18 @@ function timestampKey(line) {
   return match ? match[1].replace(' ', 'T').replace(',', '.') : '';
 }
 
+function diagnosticLevel(line) {
+  const match = line.match(/(?:^|\s)(WARN|WARNING|ERROR)(?:\s|$)/i);
+  if (!match) return null;
+  return match[1].toLowerCase() === 'warning' ? 'warn' : match[1].toLowerCase();
+}
+
 async function readTail(filename, source, limit = 160) {
   try {
     const content = await fs.readFile(filename, 'utf8');
-    return content.split(/\r?\n/).filter(Boolean).slice(-limit).map((line) => ({
+    return content.split(/\r?\n/)
+      .filter((line) => Boolean(line) && diagnosticLevel(line))
+      .slice(-limit).map((line) => ({
       timestamp: timestampKey(line),
       line: `[${source}] ${sanitizeLogLine(line)}`,
     }));
@@ -88,14 +96,18 @@ async function readSanitizedLogs(userDataDirectory) {
 
 function parseLogEntry(line, index) {
   const match = line.match(/^\[([^\]]+)\]\s+(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s+(INFO|WARN|WARNING|ERROR)\s+([^\s]+)\s*(.*)$/i);
-  if (!match) {
-    return { id: `legacy-${index}`, timestamp: '', level: 'info', source: 'system', event: 'legacy_log', details: line };
-  }
-  const [, source, timestamp, rawLevel, event, rawDetails] = match;
+  if (!match) return null;
+  const [, source, timestamp, rawLevel, parsedEvent, rawDetails] = match;
   const level = rawLevel.toLowerCase() === 'warning' ? 'warn' : rawLevel.toLowerCase();
+  let event = parsedEvent;
   let details = rawDetails;
+  const runtimeEvent = rawDetails.match(/^((?:source|artifact|pdf)_[a-z0-9_.-]+)\s*(.*)$/i);
+  if (runtimeEvent) {
+    event = runtimeEvent[1];
+    details = runtimeEvent[2];
+  }
   try {
-    const value = JSON.parse(rawDetails);
+    const value = JSON.parse(details);
     details = Object.keys(value).length ? JSON.stringify(value, null, 2) : '';
   } catch {
     // Runtime/crawler logs are not guaranteed to use the renderer JSON format.
@@ -112,7 +124,7 @@ function parseLogEntry(line, index) {
 
 async function readSanitizedLogEntries(userDataDirectory) {
   const lines = await readSanitizedLogs(userDataDirectory);
-  return lines.map(parseLogEntry).reverse();
+  return lines.map(parseLogEntry).filter(Boolean).reverse();
 }
 
 async function clearDiagnosticLogs(userDataDirectory) {
