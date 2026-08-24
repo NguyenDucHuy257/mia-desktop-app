@@ -59,6 +59,8 @@ function timestampKey(line) {
 function diagnosticLevel(line) {
   if (
     /package_request_failed.*retryable=true/i.test(line)
+    || /python_runtime_timeout.*artifacts\.batch\.status/i.test(line)
+    || /runtime_rpc_end.*artifacts\.batch\.status.*runtime_timeout/i.test(line)
     || /package_(?:request_retry|response_unavailable)/i.test(line)
     || /Invoice package is unavailable on the tax portal;\s*not retrying/i.test(line)
     || /retrying with the same token\/route/i.test(line)

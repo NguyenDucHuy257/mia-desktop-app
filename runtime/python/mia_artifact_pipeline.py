@@ -42,6 +42,22 @@ def _filename_segment(value: Any) -> str:
     return text[:80]
 
 
+def _safe_failure_message(value: Any, fallback: str = "Không thể tạo file") -> str:
+    text = str(value or "").strip() or fallback
+    friendly = {
+        "xml_cache_missing": "Không tìm thấy file XML đã tải",
+        "html_bundle_incomplete": "HTML thiếu tài nguyên cần thiết",
+        "artifact_write_failed": "Không thể ghi file vào thư mục lưu trữ",
+        "internal_error": fallback,
+    }
+    text = friendly.get(text, text)
+    text = re.sub(
+        r"(?i)(password|token|secret|authorization|cookie|session|credential|api[_-]?key)\s*[=:]\s*\S+",
+        r"\1=[redacted]", text,
+    )
+    return text[:300]
+
+
 def _invoice_date_filename_token(target: dict[str, Any]) -> str:
     raw = str(target.get("nlap_date") or target.get("nlap") or "").strip()
     iso = re.match(r"^(\d{4})-(\d{2})-(\d{2})", raw)
@@ -264,13 +280,6 @@ def _copy_atomically(
     destination.mkdir(parents=True, exist_ok=True)
     basename = _safe_filename(export_basename) if export_basename else _safe_filename(source.stem)
     target = destination / (basename + source.suffix.casefold())
-    stem, suffix = target.stem, target.suffix
-    copy_index = 1
-    while target.exists() and copy_index < 1000:
-        target = destination / f"{stem} ({copy_index}){suffix}"
-        copy_index += 1
-    if target.exists():
-        raise OSError("artifact_name_exhausted")
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.name}.", suffix=".tmp", dir=destination
     )
@@ -282,6 +291,12 @@ def _copy_atomically(
             writer.flush()
             os.fsync(writer.fileno())
         os.replace(temporary, target)
+        if os.name != "nt":
+            directory_fd = os.open(destination, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         return target
     finally:
         temporary.unlink(missing_ok=True)
@@ -479,7 +494,6 @@ class ArtifactInspector:
         if not database.is_file():
             return [(requested_from, requested_to)]
         try:
-            from app.services.overview_downloader import ELECTRONIC_STATUSES
             with closing(sqlite3.connect(database, timeout=5)) as connection:
                 connection.row_factory = sqlite3.Row
                 exists = connection.execute(
@@ -498,24 +512,28 @@ class ArtifactInspector:
             return [(requested_from, requested_to)]
         missing: list[tuple[date, date]] = []
         for direction in value["directions"]:
-            for query_type in QUERY_TYPES:
-                statuses = tuple(str(item) for item in ELECTRONIC_STATUSES) if query_type == "query" else ("all",)
-                for status in statuses:
-                    intervals = []
-                    for row in rows:
-                        fetched = int(row.get("fetched_count") or 0)
-                        expected = row.get("expected_total")
-                        valid = (
-                            row["direction"] == direction
-                            and row["query_type"] == query_type
-                            and str(row["status_filter"]) == status
-                            and row["checkpoint_status"] == "finalized"
-                            and (expected is None or fetched == int(expected))
-                            and (fetched == 0 or int(row.get("page_number") or 0) >= 1)
-                        )
-                        if valid:
-                            intervals.append((date.fromisoformat(row["from_date"]), date.fromisoformat(row["to_date"])))
-                    missing.extend(_missing_intervals(requested_from, requested_to, intervals))
+            # A persisted finalized Overview interval is the same coverage
+            # source-of-truth used by invoice management. Missing scopes must
+            # not subtract dates already finalized by another source scope;
+            # doing so caused one absent status/query row to poison the entire
+            # requested range after the valid intervals were merged.
+            intervals = []
+            for row in rows:
+                fetched = int(row.get("fetched_count") or 0)
+                expected = row.get("expected_total")
+                valid = (
+                    row["direction"] == direction
+                    and row["query_type"] in QUERY_TYPES
+                    and row["checkpoint_status"] == "finalized"
+                    and (expected is None or fetched == int(expected))
+                    and (fetched == 0 or int(row.get("page_number") or 0) >= 1)
+                )
+                if valid:
+                    intervals.append((
+                        date.fromisoformat(row["from_date"]),
+                        date.fromisoformat(row["to_date"]),
+                    ))
+            missing.extend(_missing_intervals(requested_from, requested_to, intervals))
         return _merge_intervals(missing)
 
 
@@ -640,6 +658,9 @@ class ArtifactBatchCoordinator:
         self.lock = threading.RLock()
         self.global_cancel = threading.Event()
         self.format_cancel = {kind: threading.Event() for kind in KINDS}
+        self.failures: dict[str, dict[str, dict[str, Any]]] = {
+            connection_id: {} for connection_id in self.value["connection_ids"]
+        }
         self.state: dict[str, Any] = {
             "status": "running", "current_account_id": None,
             "accounts": {}, "formats": {}, "warning_count": 0,
@@ -663,7 +684,33 @@ class ArtifactBatchCoordinator:
 
     def view(self) -> dict[str, Any]:
         with self.lock:
-            return json.loads(json.dumps(self.state))
+            # Status polling must remain a RAM-only bounded snapshot. Structured
+            # invoice failures are exposed by a separate on-demand RPC.
+            return {
+                "status": self.state["status"],
+                "current_account_id": self.state["current_account_id"],
+                "warning_count": self.state["warning_count"],
+                "accounts": {
+                    key: {
+                        **value,
+                        "cached": dict(value.get("cached") or {}),
+                        "missing_ranges": [dict(item) for item in value.get("missing_ranges") or ()],
+                    }
+                    for key, value in self.state["accounts"].items()
+                },
+                "formats": {
+                    key: dict(value) for key, value in self.state["formats"].items()
+                },
+            }
+
+    def failure_view(
+        self, connection_id: str, offset: int = 0, limit: int = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
+        if connection_id not in self.failures:
+            raise ValueError("invalid_artifact_account")
+        with self.lock:
+            values = list(self.failures[connection_id].values())
+            return [dict(item) for item in values[offset:offset + limit]], len(values)
 
     def _emit(self) -> None:
         if self.callback:
@@ -689,6 +736,7 @@ class ArtifactBatchCoordinator:
                     "total": snapshots[connection_id]["total"],
                     "cached": snapshots[connection_id]["cached"],
                     "missing_ranges": snapshots[connection_id]["missing_ranges"],
+                    "failure_count": 0,
                 }
                 for connection_id in self.value["connection_ids"]
             }
@@ -757,7 +805,7 @@ class ArtifactBatchCoordinator:
                 kind: {
                     "status": "preparing" if kind == "pdf" else "running",
                     "processed": 0, "total": total, "percent": 0,
-                    "current_invoice": None, "failed": 0,
+                    "current_invoice": None, "failed": 0, "skipped": 0,
                 }
                 for kind in self.value["kinds"]
             }
@@ -797,16 +845,28 @@ class ArtifactBatchCoordinator:
             export_basename = build_invoice_export_basename(target)
             display = " - ".join(str(target.get(name) or "") for name in ("khhdon", "shdon", "nbmst"))
             if state == "missing_original" or outcome == "missing_original":
+                self._record_failure(
+                    connection_id, target, self.value["kinds"],
+                    "missing_original", "Không tồn tại hồ sơ gốc",
+                )
                 for kind in self.value["kinds"]:
-                    self._advance(kind, display)
+                    self._skip(kind, display)
                 return
             if state == "unavailable" or outcome in {
                 "unavailable", "source_confirmed_unavailable", "source_retry_exhausted",
             }:
                 with self.lock:
                     self.state["warning_count"] += 1
+                message = (
+                    "Không lấy được gói dữ liệu sau 7 lần thử"
+                    if outcome == "source_retry_exhausted"
+                    else "Không thể lấy gói dữ liệu từ nguồn"
+                )
+                self._record_failure(
+                    connection_id, target, self.value["kinds"], outcome, message,
+                )
                 for kind in self.value["kinds"]:
-                    self._advance(kind, display)
+                    self._advance(kind, display, failed=True)
                 return
             if state != "completed":
                 with self.lock:
@@ -816,11 +876,19 @@ class ArtifactBatchCoordinator:
                         "artifact_package_failed format=XML/HTML account_ref=%s invoice_ref=%s outcome=%s",
                         connection_id[-8:], _safe_filename(display)[:80], outcome,
                     )
+                self._record_failure(
+                    connection_id, target, self.value["kinds"],
+                    "package_failed", "Không thể tải gói dữ liệu hóa đơn",
+                )
                 for kind in self.value["kinds"]:
                     self._advance(kind, display, failed=True)
                 return
             package = _package_row(database, tax_code, target)
             if package is None:
+                self._record_failure(
+                    connection_id, target, self.value["kinds"],
+                    "package_cache_missing", "Không tìm thấy gói dữ liệu đã tải",
+                )
                 for kind in self.value["kinds"]:
                     self._advance(kind, display, failed=True)
                 return
@@ -842,6 +910,10 @@ class ArtifactBatchCoordinator:
                             connection_id[-8:], _safe_filename(display)[:80],
                             type(error).__name__, str(error)[:200],
                         )
+                    self._record_failure(
+                        connection_id, target, ["xml"], "xml_export_failed",
+                        str(error)[:240] or type(error).__name__,
+                    )
                     self._advance("xml", display, failed=True)
             if "html" in self.value["kinds"] and not self.format_cancel["html"].is_set():
                 try:
@@ -860,6 +932,10 @@ class ArtifactBatchCoordinator:
                             connection_id[-8:], _safe_filename(display)[:80],
                             type(error).__name__, str(error)[:200],
                         )
+                    self._record_failure(
+                        connection_id, target, ["html"], "html_export_failed",
+                        str(error)[:240] or type(error).__name__,
+                    )
                     self._advance("html", display, failed=True)
             if "pdf" in self.value["kinds"] and not self.format_cancel["pdf"].is_set():
                 if html_ready and pdf_pool is not None:
@@ -873,6 +949,10 @@ class ArtifactBatchCoordinator:
                             "artifact_dependency_missing format=PDF account_ref=%s invoice_ref=%s error_type=FileNotFoundError message=html_bundle_incomplete",
                             connection_id[-8:], _safe_filename(display)[:80],
                         )
+                    self._record_failure(
+                        connection_id, target, ["pdf"], "pdf_dependency_missing",
+                        "HTML thiếu tài nguyên cần thiết",
+                    )
                     self._advance("pdf", display, failed=True)
 
         target_keys = set(target_map)
@@ -921,10 +1001,55 @@ class ArtifactBatchCoordinator:
             return
         with self.lock:
             item = self.state["formats"][kind]
-            item["processed"] += 1
+            item["processed"] += int(not failed)
             item["failed"] += int(failed)
             item["current_invoice"] = display[:300]
-            item["percent"] = item["processed"] / item["total"] * 100 if item["total"] else 100
+            completed = item["processed"] + item["failed"] + item.get("skipped", 0)
+            item["percent"] = completed / item["total"] * 100 if item["total"] else 100
+        self._emit()
+
+    def _skip(self, kind: str, display: str) -> None:
+        if self.format_cancel[kind].is_set():
+            return
+        with self.lock:
+            item = self.state["formats"][kind]
+            item["skipped"] = int(item.get("skipped") or 0) + 1
+            item["current_invoice"] = display[:300]
+            completed = item["processed"] + item["failed"] + item["skipped"]
+            item["percent"] = completed / item["total"] * 100 if item["total"] else 100
+        self._emit()
+
+    def _record_failure(
+        self, connection_id: str, target: dict[str, Any],
+        formats: list[str] | tuple[str, ...], category: str, message: str,
+    ) -> None:
+        key = str(target.get("artifact_key") or "")
+        if not key:
+            return
+        with self.lock:
+            account_failures = self.failures[connection_id]
+            existing = account_failures.get(key)
+            affected = sorted(set(formats) | set(existing.get("affected_formats") or () if existing else ()))
+            messages = list(existing.get("messages") or () if existing else ())
+            clean_message = _safe_failure_message(message, category)
+            if clean_message and clean_message not in messages:
+                messages.append(clean_message)
+            account_failures[key] = {
+                "account_id": connection_id,
+                "invoice_key": key,
+                "date": str(target.get("nlap_date") or target.get("nlap") or ""),
+                "direction": str(target.get("direction") or ""),
+                "khmshdon": str(target.get("khmshdon") or ""),
+                "khhdon": str(target.get("khhdon") or ""),
+                "shdon": str(target.get("shdon") or ""),
+                "nbmst": str(target.get("nbmst") or ""),
+                "partner_name": str(target.get("partner_name") or ""),
+                "affected_formats": affected,
+                "category": category if existing is None else str(existing.get("category") or category),
+                "message": "; ".join(messages),
+                "messages": messages,
+            }
+            self.state["accounts"][connection_id]["failure_count"] = len(account_failures)
         self._emit()
 
     def _mark_cached(
@@ -980,6 +1105,10 @@ class ArtifactBatchCoordinator:
                     str(item.get("connection_id") or "")[-8:], _safe_filename(display)[:80],
                     type(error).__name__, str(error)[:200],
                 )
+            self._record_failure(
+                str(item.get("connection_id") or ""), target, ["pdf"],
+                "pdf_failed", str(error)[:240] or type(error).__name__,
+            )
             self._advance("pdf", display, failed=True)
 
     @staticmethod
@@ -995,7 +1124,10 @@ class ArtifactBatchCoordinator:
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(f".{target.name}.{threading.get_ident()}.tmp")
             try:
-                shutil.copyfile(source, temporary)
+                with source.open("rb") as reader, temporary.open("wb") as writer:
+                    shutil.copyfileobj(reader, writer)
+                    writer.flush()
+                    os.fsync(writer.fileno())
                 os.replace(temporary, target)
             finally:
                 temporary.unlink(missing_ok=True)

@@ -1,7 +1,11 @@
+import io
+import json
 import logging
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import mia_runtime
@@ -26,6 +30,39 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
             mia_runtime.logger,
             mia_runtime.production_backend,
         ) = self.previous
+
+    def test_slow_artifact_snapshot_does_not_starve_batch_status_rpc(self):
+        snapshot_release = threading.Event()
+        status_seen = threading.Event()
+        snapshot_written = threading.Event()
+
+        def dispatch(method, _params):
+            if method == "artifacts.snapshot":
+                snapshot_release.wait(1)
+                return {"accounts": []}, False
+            if method == "artifacts.batch.status":
+                status_seen.set()
+                return {"status": "running"}, False
+            if method == "system.shutdown":
+                return {"stopping": True}, True
+            raise AssertionError(method)
+
+        requests = b"".join(
+            (json.dumps({"jsonrpc": "2.0", "id": index, "method": method, "params": {}}) + "\n").encode()
+            for index, method in enumerate((
+                "artifacts.snapshot", "artifacts.batch.status", "system.shutdown",
+            ), start=1)
+        )
+        try:
+            with patch.object(mia_runtime, "dispatch", side_effect=dispatch), \
+                 patch.object(mia_runtime, "write_message", side_effect=lambda value: snapshot_written.set() if value.get("id") == 1 else None), \
+                 patch.object(mia_runtime.sys, "stdin", SimpleNamespace(buffer=io.BytesIO(requests))):
+                self.assertEqual(mia_runtime.serve(), 0)
+                self.assertTrue(status_seen.wait(0.5))
+                snapshot_release.set()
+                self.assertTrue(snapshot_written.wait(0.5))
+        finally:
+            snapshot_release.set()
 
     def test_production_backend_is_the_single_source_runtime_instance(self):
         backend = Mock()

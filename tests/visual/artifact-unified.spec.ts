@@ -104,6 +104,7 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   expect(Math.max(...threeColumnWidths) - Math.min(...threeColumnWidths)).toBeLessThanOrEqual(1);
   await expect(page.locator('.artifact-progress-cards')).not.toContainText('Đang xử lý:');
   await expect(page.locator('.artifact-progress-cards')).not.toContainText('hóa đơn');
+  await expect(page.locator('.artifact-progress-cards').getByRole('button')).toHaveCount(0);
   await expect(page.getByText('Đã hoàn thành tải XML/HTML/PDF.')).toBeVisible({ timeout: 4_000 });
 
   const calls = await page.evaluate(() => (window as typeof window & { artifactCalls: { snapshots: unknown[]; starts: Array<Record<string, unknown>> } }).artifactCalls);
@@ -164,7 +165,7 @@ test('missing local coverage blocks downloads without starting an invoice sync j
   expect(starts.batchStarts).toHaveLength(0);
 });
 
-test('PDF can be selected alone and per-format cancellation stays independent', async ({ page }) => {
+test('PDF can be selected alone and only global batch cancellation is exposed', async ({ page }) => {
   await page.addInitScript(({ accountValue }) => {
     const starts: unknown[] = [];
     const cancellations: unknown[] = [];
@@ -197,10 +198,11 @@ test('PDF can be selected alone and per-format cancellation stays independent', 
     card: container.querySelector<HTMLElement>('.artifact-progress-card')?.getBoundingClientRect().width ?? 0,
   }));
   expect(Math.abs(singleLayout.container - singleLayout.card)).toBeLessThanOrEqual(1);
-  await page.locator('.artifact-progress-card[data-kind="pdf"]').getByRole('button', { name: 'Dừng' }).click();
+  await expect(page.locator('.artifact-progress-card[data-kind="pdf"]').getByRole('button')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Dừng tải', exact: true }).click();
   const calls = await page.evaluate(() => (window as typeof window & { pdfOnlyCalls: { starts: Array<Record<string, unknown>>; cancellations: unknown[] } }).pdfOnlyCalls);
   expect(calls.starts[0]).toMatchObject({ kinds: ['pdf'], pdf_concurrency: 100 });
-  expect(calls.cancellations).toEqual([{ kind: 'pdf' }]);
+  expect(calls.cancellations).toEqual([undefined]);
 });
 
 test('artifact date range and account selection transfer back to invoice management', async ({ page }) => {
@@ -348,3 +350,89 @@ for (const width of [1024, 1280, 1500, 1600]) {
     expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
   });
 }
+
+test('coverage stays checking until the authoritative response arrives', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        coverage: async (request: unknown) => { await new Promise((resolve) => setTimeout(resolve, 1_000)); return { ...(request as object), accounts: [{ connection_id: accountValue.connection_id, ready: false, missing_ranges: [{ date_from: '2026-04-01', date_to: '2026-08-31' }] }] }; },
+        snapshot: async (request: unknown) => ({ ...(request as object), accounts: [] }), startBatch: async () => ({ task_id: 'unused', status: 'running' }), batchStatus: async () => ({}), cancelBatch: async () => ({ cancelled: true }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  await expect(page.locator('.artifact-account-status')).toHaveText('Đang kiểm tra');
+  await expect(page.locator('.artifact-account-status')).not.toContainText('Chưa đồng bộ');
+  await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/08/2026', { timeout: 3_000 });
+});
+
+test('slow and transient status polls never overlap or stop the live batch', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    const stats = { inFlight: 0, maxInFlight: 0, calls: 0 };
+    Object.defineProperty(window, 'artifactPollStats', { value: stats });
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        snapshot: async (request: unknown) => ({ ...(request as object), accounts: [{ connection_id: accountValue.connection_id, ready: true, missing_ranges: [], total: 10, cached: { xml: 0, html: 0, pdf: 0 } }] }),
+        startBatch: async () => ({ task_id: 'serial-poll', status: 'running' }),
+        batchStatus: async () => {
+          stats.calls += 1; stats.inFlight += 1; stats.maxInFlight = Math.max(stats.maxInFlight, stats.inFlight);
+          const call = stats.calls;
+          await new Promise((resolve) => setTimeout(resolve, 1_000));
+          stats.inFlight -= 1;
+          if (call === 1) throw Object.assign(new Error('Runtime request timed out.'), { code: 'runtime_timeout' });
+          return { task_id: 'serial-poll', status: 'running', current_account_id: accountValue.connection_id, accounts: { [accountValue.connection_id]: { connection_id: accountValue.connection_id, ready: true, missing_ranges: [], total: 10, cached: { xml: 1, html: 1, pdf: 0 }, status: 'downloading', failure_count: 0 } }, formats: { xml: { status: 'running', processed: 1, total: 10, percent: 10, current_invoice: null, failed: 0 }, html: { status: 'running', processed: 1, total: 10, percent: 10, current_invoice: null, failed: 0 } }, warning_count: 0 };
+        },
+        cancelBatch: async () => ({ cancelled: true }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { artifactPollStats: { calls: number } }).artifactPollStats.calls)).toBeGreaterThanOrEqual(2);
+  const stats = await page.evaluate(() => (window as typeof window & { artifactPollStats: { maxInFlight: number } }).artifactPollStats);
+  expect(stats.maxInFlight).toBe(1);
+  await expect(page.getByRole('button', { name: 'Dừng tải', exact: true })).toBeEnabled();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+});
+
+test('missing original appears immediately in the structured account failure table without failing the batch', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    let statusCalls = 0;
+    Object.defineProperty(window, 'failureStatusCalls', { get: () => statusCalls });
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        snapshot: async (request: unknown) => ({ ...(request as object), accounts: [{ connection_id: accountValue.connection_id, ready: true, missing_ranges: [], total: 100, cached: { xml: 0, html: 0, pdf: 0 } }] }),
+        startBatch: async () => ({ task_id: 'failure-list', status: 'running' }),
+        batchStatus: async () => { statusCalls += 1; return { task_id: 'failure-list', status: 'running', current_account_id: accountValue.connection_id, accounts: { [accountValue.connection_id]: { connection_id: accountValue.connection_id, ready: true, missing_ranges: [], total: 100, cached: { xml: 20, html: 20, pdf: 0 }, status: 'downloading', failure_count: 1 } }, formats: { xml: { status: 'running', processed: 20, total: 100, percent: 21, current_invoice: null, failed: 0, skipped: 1 }, html: { status: 'running', processed: 20, total: 100, percent: 21, current_invoice: null, failed: 0, skipped: 1 } }, warning_count: 0 }; },
+        batchFailures: async () => ({ task_id: 'failure-list', connection_id: accountValue.connection_id, total: 1, offset: 0, limit: 50, items: [{ account_id: accountValue.connection_id, invoice_key: 'purchase|query|0101|AA|21|1', date: '2026-08-21', direction: 'purchase', khmshdon: '1', khhdon: 'AA', shdon: '21', nbmst: '0101', partner_name: 'Đối tác mẫu', affected_formats: ['xml', 'html'], category: 'missing_original', message: 'Không tồn tại hồ sơ gốc' }] }),
+        cancelBatch: async () => ({ cancelled: true }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  const failures = page.getByRole('button', { name: 'Danh sách hóa đơn lỗi' });
+  await expect(failures).toBeVisible();
+  await failures.click();
+  await expect(page.getByRole('heading', { name: 'Danh sách hóa đơn lỗi' })).toBeVisible();
+  await expect(page.getByLabel('Bảng hóa đơn không tạo được file')).toContainText('Không tồn tại hồ sơ gốc');
+  await expect(page.getByLabel('Bảng hóa đơn không tạo được file')).toContainText('XML, HTML');
+  const callsBefore = await page.evaluate(() => (window as typeof window & { failureStatusCalls: number }).failureStatusCalls);
+  await page.waitForTimeout(900);
+  expect(await page.evaluate(() => (window as typeof window & { failureStatusCalls: number }).failureStatusCalls)).toBeGreaterThan(callsBefore);
+  await page.getByRole('button', { name: /Quay lại XML\/HTML\/PDF/ }).click();
+  await expect(page.getByRole('button', { name: 'XML + HTML' })).toBeVisible();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+});

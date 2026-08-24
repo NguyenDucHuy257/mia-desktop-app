@@ -59,6 +59,8 @@ describe('local preferences and logs', () => {
       '2026-08-24 22:15:48,000 INFO runtime package_cache_hit',
       '2026-08-24 22:15:48,100 WARNING runtime package_request_failed attempt=1 retryable=true',
       '2026-08-24 22:15:48,200 WARNING app.services.portal_session Invoice package is unavailable on the tax portal; not retrying a permanent HTTP 500 response',
+      '2026-08-24 22:15:48,300 WARNING python_runtime_timeout {"method":"artifacts.batch.status","timeout_ms":5000}',
+      '2026-08-24 22:15:48,400 WARNING runtime_rpc_end method=artifacts.batch.status code=runtime_timeout',
       '2026-08-24 22:15:49,000 WARNING runtime source_retry_exhausted format=XML mst=0101234567 token=secret-value status=500',
     ].join('\n'));
     const lines = await readSanitizedLogs(directory);

@@ -45,7 +45,8 @@ export interface MiaRuntimeBridge {
     snapshot(request: ArtifactSnapshotRequest): Promise<ArtifactSnapshot>;
     startBatch(request: ArtifactBatchRequest): Promise<{ task_id: string; status: string }>;
     batchStatus(request: { task_id: string }): Promise<ArtifactBatchStatus>;
-    cancelBatch(request: { kind?: InvoiceArtifactKind | null }): Promise<{ cancelled: boolean }>;
+    batchFailures(request: { task_id: string; connection_id: string; offset?: number; limit?: number }): Promise<ArtifactFailureList>;
+    cancelBatch(): Promise<{ cancelled: boolean }>;
     openDirectory(directory: string): Promise<boolean>;
     onExportProgress(listener: (progress: RuntimeExportProgress) => void): () => void;
     onInvoiceProgress(listener: (progress: RuntimeArtifactProgress) => void): () => void;
@@ -105,9 +106,11 @@ export interface ArtifactAccountSnapshot { connection_id: string; ready: boolean
 export interface ArtifactCoverageAccount { connection_id: string; ready: boolean; missing_ranges: Array<{ date_from: string; date_to: string }> }
 export interface ArtifactCoverage extends ArtifactSnapshotRequest { accounts: ArtifactCoverageAccount[] }
 export interface ArtifactSnapshot extends ArtifactSnapshotRequest { accounts: ArtifactAccountSnapshot[] }
-export interface ArtifactFormatProgress { status: 'preparing' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'; processed: number; total: number; percent: number; current_invoice: string | null; failed: number }
-export interface ArtifactAccountProgress extends ArtifactAccountSnapshot { status: 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped'; error?: string }
+export interface ArtifactFormatProgress { status: 'preparing' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'; processed: number; total: number; percent: number; current_invoice: string | null; failed: number; skipped?: number }
+export interface ArtifactAccountProgress extends ArtifactAccountSnapshot { status: 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped'; error?: string; failure_count?: number }
 export interface ArtifactBatchStatus { task_id: string; status: 'running' | 'completed' | 'failed' | 'stopped'; current_account_id: string | null; accounts: Record<string, ArtifactAccountProgress>; formats: Partial<Record<InvoiceArtifactKind, ArtifactFormatProgress>>; warning_count: number; error?: string | null }
+export interface ArtifactFailureRecord { account_id: string; invoice_key: string; date: string; direction: InvoiceDirection; khmshdon: string; khhdon: string; shdon: string; nbmst: string; partner_name: string; affected_formats: InvoiceArtifactKind[]; category: string; message: string }
+export interface ArtifactFailureList { task_id: string; connection_id: string; items: ArtifactFailureRecord[]; total: number; offset: number; limit: number }
 export interface ArtifactBatchRequest extends ArtifactSnapshotRequest { destination: string; kinds: InvoiceArtifactKind[]; pdf_concurrency: number }
 export interface ArtifactExportRequest {
   destination: string;

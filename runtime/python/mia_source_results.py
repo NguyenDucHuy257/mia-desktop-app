@@ -501,6 +501,7 @@ def read_artifact_targets(backend, query: dict[str, Any]) -> list[dict[str, Any]
                     "khmshdon": str(fields.get("khmshdon") or ""),
                     "nlap": fields.get("nlap") or fields.get("tdlap"),
                     "nlap_date": fields.get("nlap_date"),
+                    "partner_name": fields.get("nbten") if direction == "purchase" else fields.get("nmten"),
                 }
                 target["artifact_key"] = "|".join(str(target[name]) for name in (
                     "direction", "query_type", "nbmst", "khhdon", "shdon", "khmshdon",

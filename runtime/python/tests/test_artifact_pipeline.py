@@ -19,6 +19,7 @@ from mia_artifact_pipeline import (
     ArtifactInspector,
     _PdfWorkerPool,
     _create_pdf_renderer,
+    _copy_atomically,
     _missing_intervals,
     _pdf_cache_paths,
     build_invoice_export_basename,
@@ -155,6 +156,57 @@ class ArtifactPipelineTests(unittest.TestCase):
             snapshot = inspector.coverage(request)["accounts"][0]
             self.assertTrue(snapshot["ready"])
             self.assertEqual(snapshot["missing_ranges"], [])
+
+    def test_coverage_reports_only_tail_after_three_finalized_months(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            for month in (1, 2, 3):
+                self._checkpoint_month(database, month)
+            account = ArtifactInspector(FakeBackend(root)).coverage({
+                "connection_ids": ["conn_1"], "directions": ["purchase"],
+                "date_from": "2026-01-01", "date_to": "2026-08-31",
+            })["accounts"][0]
+            self.assertEqual(account["missing_ranges"], [{
+                "date_from": "2026-04-01", "date_to": "2026-08-31",
+            }])
+
+    def test_coverage_preserves_disjoint_month_gaps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            for month in (1, 2, 3, 5, 6):
+                self._checkpoint_month(database, month)
+            account = ArtifactInspector(FakeBackend(root)).coverage({
+                "connection_ids": ["conn_1"], "directions": ["purchase"],
+                "date_from": "2026-01-01", "date_to": "2026-08-31",
+            })["accounts"][0]
+            self.assertEqual(account["missing_ranges"], [
+                {"date_from": "2026-04-01", "date_to": "2026-04-30"},
+                {"date_from": "2026-07-01", "date_to": "2026-08-31"},
+            ])
+
+    def test_one_finalized_source_scope_is_not_poisoned_by_absent_scopes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    """INSERT INTO invoice_overview_checkpoints(
+                        company_tax_code,direction,query_type,from_date,to_date,
+                        status_filter,checkpoint_status,fetched_count,expected_total,page_number
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    ("0101234567", "purchase", "query", "2026-01-01", "2026-03-31",
+                     "5", "finalized", 10, 10, 1),
+                )
+                connection.commit()
+            account = ArtifactInspector(FakeBackend(root)).coverage({
+                "connection_ids": ["conn_1"], "directions": ["purchase"],
+                "date_from": "2026-01-01", "date_to": "2026-08-31",
+            })["accounts"][0]
+            self.assertEqual(account["missing_ranges"], [{
+                "date_from": "2026-04-01", "date_to": "2026-08-31",
+            }])
 
     def test_coverage_is_scoped_to_the_selected_direction(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -370,6 +422,20 @@ class ArtifactPipelineTests(unittest.TestCase):
         self.assertEqual(value, "20231015_109")
         self.assertNotRegex(value, r'[<>:"/\\|?*]|[. ]$|None|null|undefined')
 
+    def test_atomic_export_overwrites_same_canonical_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.xml"
+            output = root / "output"
+            source.write_text("first", encoding="utf-8")
+            first = _copy_atomically(source, output, "20260101_1_A_1")
+            source.write_text("second", encoding="utf-8")
+            second = _copy_atomically(source, output, "20260101_1_A_1")
+            self.assertEqual(first, second)
+            self.assertEqual(second.read_text(encoding="utf-8"), "second")
+            self.assertEqual([item.name for item in output.glob("*.xml")], ["20260101_1_A_1.xml"])
+            self.assertFalse(list(output.glob("*.tmp")))
+
     def test_xml_only_does_not_create_an_html_output_folder(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -521,9 +587,26 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["accounts"]["conn_1"]["status"], "completed")
             self.assertEqual(result["formats"]["xml"]["failed"], 0)
             self.assertEqual(result["formats"]["html"]["failed"], 0)
+            self.assertEqual(result["formats"]["xml"]["processed"], 0)
+            self.assertEqual(result["formats"]["html"]["processed"], 0)
+            self.assertEqual(result["formats"]["xml"]["skipped"], 1)
             self.assertEqual(result["warning_count"], 0)
+            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 1)
+            coordinator = ArtifactBatchCoordinator(Backend(root), {
+                "destination": str(root / "output-2"), "connection_ids": ["conn_1"],
+                "directions": ["purchase"], "kinds": ["xml", "html"],
+                "date_from": "2026-01-01", "date_to": "2026-01-31",
+                "pdf_concurrency": 5,
+            })
+            with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
+                coordinator.run()
+            failures, total = coordinator.failure_view("conn_1")
+            self.assertEqual(total, 1)
+            self.assertEqual(failures[0]["category"], "missing_original")
+            self.assertEqual(failures[0]["message"], "Không tồn tại hồ sơ gốc")
+            self.assertEqual(failures[0]["affected_formats"], ["html", "xml"])
 
-    def test_retry_exhausted_package_is_a_distinct_nonfailed_warning_outcome(self):
+    def test_retry_exhausted_package_is_one_structured_terminal_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = {
@@ -545,9 +628,44 @@ class ArtifactPipelineTests(unittest.TestCase):
                     "date_from": "2026-01-01", "date_to": "2026-01-31",
                     "pdf_concurrency": 1,
                 }, logger=logger).run()
-            self.assertEqual(result["formats"]["xml"]["failed"], 0)
+            self.assertEqual(result["formats"]["xml"]["failed"], 1)
             self.assertEqual(result["warning_count"], 1)
+            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 1)
             logger.warning.assert_not_called()
+
+    def test_structured_failures_deduplicate_invoice_and_merge_formats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            coordinator = ArtifactBatchCoordinator(FakeBackend(Path(directory)), {
+                "destination": str(Path(directory) / "output"),
+                "connection_ids": ["conn_1"], "directions": ["purchase"],
+                "kinds": ["xml", "html", "pdf"],
+                "date_from": "2026-01-01", "date_to": "2026-01-31",
+                "pdf_concurrency": 1,
+            })
+            coordinator.state["accounts"] = {"conn_1": {"failure_count": 0}}
+            target = {
+                "artifact_key": "purchase|query|0101|AA|1|1",
+                "direction": "purchase", "query_type": "query",
+                "nbmst": "0101", "khhdon": "AA", "shdon": "1",
+                "khmshdon": "1", "nlap_date": "2026-01-15",
+                "partner_name": "Đối tác",
+            }
+            coordinator._record_failure(
+                "conn_1", target, ["xml", "html"],
+                "source_retry_exhausted", "Không lấy được gói dữ liệu sau 7 lần thử",
+            )
+            coordinator._record_failure(
+                "conn_1", target, ["pdf"], "pdf_failed", "Chromium render failed",
+            )
+            coordinator._record_failure(
+                "conn_1", target, ["pdf"], "pdf_failed", "token=secret-value timeout",
+            )
+            items, total = coordinator.failure_view("conn_1")
+            self.assertEqual(total, 1)
+            self.assertEqual(items[0]["affected_formats"], ["html", "pdf", "xml"])
+            self.assertIn("Chromium render failed", items[0]["message"])
+            self.assertNotIn("secret-value", items[0]["message"])
+            self.assertEqual(coordinator.view()["accounts"]["conn_1"]["failure_count"], 1)
 
     def test_user_cancellation_marks_account_stopped_not_error(self):
         with tempfile.TemporaryDirectory() as directory:

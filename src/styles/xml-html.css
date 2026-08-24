@@ -15,7 +15,7 @@
 .artifact-progress-cards[data-count='1'] { --artifact-card-count: 1; }
 .artifact-progress-cards[data-count='2'] { --artifact-card-count: 2; }
 .artifact-progress-cards[data-count='3'] { --artifact-card-count: 3; }
-.artifact-progress-card { min-width: 0; height: 76px; min-height: 0; padding: 4px 7px; border-left: 4px solid #15803d; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 26px 20px 4px; align-items: center; gap: 3px 8px; }
+.artifact-progress-card { min-width: 0; height: 68px; min-height: 0; padding: 4px 7px; border-left: 4px solid #15803d; display: grid; grid-template-rows: 26px 16px 4px; align-items: center; gap: 3px; }
 .artifact-progress-card[data-kind='html'] { border-left-color: #2563eb; }
 .artifact-progress-card[data-kind='pdf'] { border-left-color: #a33b55; }
 .artifact-progress-card > header { grid-column: 1 / -1; display: grid; grid-template-columns: 24px auto 1fr auto; align-items: center; gap: 6px; }
@@ -30,9 +30,8 @@
 .artifact-progress-track > span { display: block; height: 100%; border-radius: inherit; background: #15803d; transition: width 180ms ease; }
 .artifact-progress-card[data-kind='html'] .artifact-progress-track > span { background: #2563eb; }
 .artifact-progress-card[data-kind='pdf'] .artifact-progress-track > span { background: #a33b55; }
-.artifact-progress-card .artifact-format-stop { height: 20px; padding: 0 7px; border: 1px solid var(--mia-danger); border-radius: var(--mia-radius-ui); background: #fff; color: var(--mia-danger); font-size: 9px; font-weight: 700; white-space: nowrap; }
 .artifact-account-table { min-height: 360px; flex: 1; overflow: auto; }
-.artifact-account-table .table-grid { min-width: 1080px; grid-template-columns: 52px 120px minmax(220px, 1fr) 150px minmax(190px, 1fr) 150px 70px; }
+.artifact-account-table .table-grid { min-width: 1190px; grid-template-columns: 52px 120px minmax(220px, 1fr) 150px minmax(190px, 1fr) 150px 180px; }
 .artifact-account-row > span, .artifact-account-row > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
 .artifact-account-row > strong { white-space: nowrap; }
 .artifact-account-row > .selection-button { justify-self: center; margin-left: 6px; }
@@ -41,6 +40,7 @@
 .artifact-quantity strong { display: inline-block; width: 35px; color: #1f2937; }
 .artifact-account-status { line-height: 15px; white-space: normal; }
 .artifact-account-status[data-status='ready'], .artifact-account-status[data-status='completed'] { color: #166534; font-weight: 700; }
+.artifact-account-status[data-status='checking'] { color: #475569; font-weight: 600; }
 .artifact-account-status[data-status='not_ready'] { color: #b45309; }
 .artifact-account-status[data-status='error'] { color: #b91c1c; }
 .artifact-row-progress { display: flex; align-items: center; gap: 7px; }
@@ -48,9 +48,11 @@
 .artifact-row-progress b { display: block; height: 100%; background: #16a34a; }
 .artifact-row-progress em { width: 30px; font-style: normal; font-size: 10px; }
 .artifact-row-action { text-align: center; color: #94a3b8; }
+.artifact-row-action .row-result-button { max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+.artifact-failure-page { display: flex; flex-direction: column; }
+.artifact-failure-page .results-header--figma { flex: 0 0 auto; }
+.artifact-failure-page .results-table--excel-schema { min-height: 300px; }
+.artifact-failure-page .results-state { width: 100%; min-height: 120px; display: grid; place-items: center; color: #64748b; }
 .artifact-table-state { min-height: 120px; display: grid; place-items: center; color: #64748b; font-size: 12px; }
-.artifact-progress-card .artifact-format-stop:hover,
-.artifact-progress-card .artifact-format-stop:focus-visible { background: #fff1f2; outline: 0; }
-.artifact-progress-card .artifact-format-stop:active { background: #ffe4e6; }
 @media (max-width: 1180px) { .artifact-toolbar-card { flex-wrap: wrap; padding-bottom: 54px; } }
 @media (max-width: 760px) { .artifact-progress-cards { grid-template-columns: 1fr; } .artifact-account-filters { align-items: stretch; flex-direction: column; } }
