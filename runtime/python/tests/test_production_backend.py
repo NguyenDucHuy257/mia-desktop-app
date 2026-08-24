@@ -9,7 +9,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from mia_backend import ProductionBackend, package_retry_delay
+from mia_backend import (
+    DesktopInvoicePackageRepository,
+    ProductionBackend,
+    _DESKTOP_PACKAGE_POLICY,
+    package_retry_delay,
+)
 
 
 class ProductionBackendTests(unittest.TestCase):
@@ -551,6 +556,51 @@ class ProductionBackendTests(unittest.TestCase):
         finally:
             current.close()
         self.assertEqual(terminal_marker, 1)
+
+    def test_repository_policy_defers_terminal_unavailable_persistence(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        repository = DesktopInvoicePackageRepository(
+            Path(temporary.name) / "invoices.sqlite3"
+        )
+        value = {
+            "company_tax_code": "0101", "direction": "purchase",
+            "query_type": "query", "invoice_category": "purchase",
+            "nbmst": "0101", "khhdon": "AA", "shdon": "1",
+            "khmshdon": "1", "nlap": "2026-08-01",
+            "nlap_date": "2026-08-01", "error_message": "attempt miss",
+            "unavailable": True,
+        }
+        _DESKTOP_PACKAGE_POLICY.retry_unavailable = True
+        _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = False
+        try:
+            repository.upsert_package_error(**value)
+        finally:
+            _DESKTOP_PACKAGE_POLICY.retry_unavailable = False
+            _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = False
+        self.assertIsNone(repository.get_package_by_invoice_key(
+            "0101", "purchase", "query", "0101", "AA", "1", "1"
+        ))
+
+        _DESKTOP_PACKAGE_POLICY.retry_unavailable = True
+        _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = True
+        try:
+            repository.upsert_package_error(**value)
+        finally:
+            _DESKTOP_PACKAGE_POLICY.retry_unavailable = False
+            _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = False
+        row = repository.get_package_by_invoice_key(
+            "0101", "purchase", "query", "0101", "AA", "1", "1"
+        )
+        self.assertEqual(row["unavailable"], 1)
+        _DESKTOP_PACKAGE_POLICY.retry_unavailable = True
+        try:
+            retry_view = repository.get_package_by_invoice_key(
+                "0101", "purchase", "query", "0101", "AA", "1", "1"
+            )
+        finally:
+            _DESKTOP_PACKAGE_POLICY.retry_unavailable = False
+        self.assertEqual(retry_view["unavailable"], 0)
 
     def test_existing_unavailable_row_is_retried_without_deleting_cache_fields(self):
         backend, request = self._package_backend([{"outcome": "downloaded"}])

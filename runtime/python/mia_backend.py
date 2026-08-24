@@ -156,6 +156,51 @@ sys.modules["app.job_engine.worker"] = worker_shim
 
 from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
 import mia_source_backend as source_backend_module
+import app.worker_runtime.handler as source_handler_module
+from app.repositories.invoice_package_repository import (
+    InvoicePackageRepository as SourceInvoicePackageRepository,
+)
+
+
+_DESKTOP_PACKAGE_POLICY = threading.local()
+
+
+class DesktopInvoicePackageRepository(SourceInvoicePackageRepository):
+    """Source repository with an opt-in, user-batch negative-cache policy.
+
+    With no thread-local policy this class is byte-for-byte behavioral parity
+    with the source repository. Artifact downloads opt in while holding the
+    source execution lock: prior unavailable rows are ignored for lookup and an
+    unavailable attempt is not durably recorded until the last attempt.
+    """
+
+    def get_package_by_invoice_key(self, *args, **kwargs):
+        row = super().get_package_by_invoice_key(*args, **kwargs)
+        if (
+            row
+            and row.get("unavailable")
+            and getattr(_DESKTOP_PACKAGE_POLICY, "retry_unavailable", False)
+        ):
+            row = dict(row)
+            row["unavailable"] = 0
+            row["unavailable_reason"] = None
+        return row
+
+    def upsert_package_error(self, *args, **kwargs):
+        if (
+            kwargs.get("unavailable")
+            and getattr(_DESKTOP_PACKAGE_POLICY, "retry_unavailable", False)
+            and not getattr(
+                _DESKTOP_PACKAGE_POLICY, "persist_terminal_unavailable", False
+            )
+        ):
+            return None
+        return super().upsert_package_error(*args, **kwargs)
+
+
+# This is a desktop host policy, not a source/vendor modification. Overview and
+# Detail calls have no policy set and therefore retain exact source behavior.
+source_handler_module.InvoicePackageRepository = DesktopInvoicePackageRepository
 
 source_backend_module.WORKER_ID = "desktop-local-worker"
 # Keep the vendored source pipeline authoritative while replacing only its
@@ -606,7 +651,15 @@ class ProductionBackend(SourceBackend):
                             target_index, len(targets), attempt, PACKAGE_MAX_ATTEMPTS,
                         )
                     try:
-                        outcome = self.handler.run_xml_unit(job, payload) or {}
+                        _DESKTOP_PACKAGE_POLICY.retry_unavailable = True
+                        _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = (
+                            attempt == PACKAGE_MAX_ATTEMPTS
+                        )
+                        try:
+                            outcome = self.handler.run_xml_unit(job, payload) or {}
+                        finally:
+                            _DESKTOP_PACKAGE_POLICY.retry_unavailable = False
+                            _DESKTOP_PACKAGE_POLICY.persist_terminal_unavailable = False
                         outcome_name = str(outcome.get("outcome") or "downloaded")
                         if outcome_name == "unavailable":
                             if self.logger is not None:
@@ -615,9 +668,9 @@ class ProductionBackend(SourceBackend):
                                     target_index, len(targets), attempt, PACKAGE_MAX_ATTEMPTS,
                                 )
                             if attempt < PACKAGE_MAX_ATTEMPTS:
-                                # The source handler persists its attempt result.
-                                # Remove that negative marker before the next
-                                # attempt so it cannot short-circuit HTTP.
+                                # Defensive cleanup also supports older/custom
+                                # handlers that may persist an attempt outcome
+                                # without using the desktop repository adapter.
                                 _reset_desktop_package_unavailable(
                                     self.data_root, job.company_tax_code, target
                                 )
