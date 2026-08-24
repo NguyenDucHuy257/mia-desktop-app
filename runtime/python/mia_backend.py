@@ -9,11 +9,13 @@ repository. Crawl/cache/session/result behavior stays in the vendored source.
 from __future__ import annotations
 
 import sys
+import sqlite3
 import threading
 import time
 import types
 from dataclasses import replace
 from datetime import datetime
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,6 +53,8 @@ def _exception_chain(error):
 def _package_error_kind(error):
     """Return transient/auth/permanent for a source package exception."""
     chain = tuple(_exception_chain(error))
+    if any(type(item).__name__ == "InvoicePackageUnavailableError" for item in chain):
+        return "unavailable"
     for item in chain:
         if isinstance(item, requests.HTTPError):
             status = getattr(getattr(item, "response", None), "status_code", None)
@@ -86,6 +90,38 @@ def _wait_for_package_retry(delay, cancel_callback, wait_event=None):
         if remaining <= 0:
             return
         event.wait(min(0.1, remaining))
+
+
+def _reset_desktop_package_unavailable(data_root, company_tax_code, target):
+    """Make a prior terminal package miss eligible for a new user batch.
+
+    Only the unavailable/error marker is cleared. Valid ZIP/XML/HTML paths and
+    fetched flags remain untouched so the source handler can still reuse a
+    verified cache without another HTTP request.
+    """
+    database = Path(data_root) / str(company_tax_code) / "db" / "invoices.sqlite3"
+    if not database.is_file():
+        return False
+    try:
+        with closing(sqlite3.connect(database, timeout=5)) as connection:
+            with connection:
+                cursor = connection.execute(
+                    """UPDATE invoice_package_items
+                       SET unavailable=0, unavailable_reason=NULL,
+                           error_message=NULL, updated_at=datetime('now')
+                       WHERE company_tax_code=? AND direction=? AND query_type=?
+                         AND nbmst=? AND khhdon=? AND shdon=? AND khmshdon=?
+                         AND unavailable=1""",
+                    (
+                        str(company_tax_code), str(target["direction"]),
+                        str(target["query_type"]), str(target["nbmst"]),
+                        str(target["khhdon"]), str(target["shdon"]),
+                        str(target["khmshdon"]),
+                    ),
+                )
+                return cursor.rowcount > 0
+    except sqlite3.Error:
+        return False
 
 
 # The upstream service imports Pydantic DTOs because its normal transport is
@@ -539,6 +575,12 @@ class ProductionBackend(SourceBackend):
                 # additionally requires the complete offline asset bundle; an
                 # incomplete cache row is requeued before the shared package
                 # call so the source can repair it with one ZIP request.
+                # A miss from a previous user-initiated download is not a
+                # permanent negative cache. Clear only its marker before cache
+                # verification; valid files and fetched flags remain intact.
+                _reset_desktop_package_unavailable(
+                    self.data_root, job.company_tax_code, target
+                )
                 from mia_artifact_pipeline import invalidate_incomplete_html_bundle
                 invalidate_incomplete_html_bundle(
                     self.data_root, job.company_tax_code, target
@@ -567,11 +609,42 @@ class ProductionBackend(SourceBackend):
                         outcome = self.handler.run_xml_unit(job, payload) or {}
                         outcome_name = str(outcome.get("outcome") or "downloaded")
                         if outcome_name == "unavailable":
+                            if self.logger is not None:
+                                self.logger.info(
+                                    "package_response_unavailable item=%s/%s attempt=%s/%s",
+                                    target_index, len(targets), attempt, PACKAGE_MAX_ATTEMPTS,
+                                )
+                            if attempt < PACKAGE_MAX_ATTEMPTS:
+                                # The source handler persists its attempt result.
+                                # Remove that negative marker before the next
+                                # attempt so it cannot short-circuit HTTP.
+                                _reset_desktop_package_unavailable(
+                                    self.data_root, job.company_tax_code, target
+                                )
+                                delay = package_retry_delay(attempt)
+                                if self.logger is not None:
+                                    self.logger.info(
+                                        "package_request_retry item=%s/%s attempt=%s retry_in=%s reason=unavailable",
+                                        target_index, len(targets), attempt + 1, delay,
+                                    )
+                                if retry_wait is not None:
+                                    retry_wait(delay, cancel_callback)
+                                else:
+                                    _wait_for_package_retry(delay, cancel_callback)
+                                continue
                             state = "unavailable"
                             outcome_name = "source_confirmed_unavailable"
+                            outcomes[outcome_name] += 1
+                            if self.logger is not None:
+                                self.logger.warning(
+                                    "source_confirmed_unavailable format=XML/HTML account_ref=%s item=%s/%s "
+                                    "invoice_ref=%s attempts=%s",
+                                    connection_id[-8:], target_index, len(targets),
+                                    str(target.get("shdon") or "-")[:80], attempt,
+                                )
                         else:
                             state = "completed"
-                        outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
+                            outcomes[outcome_name if outcome_name in outcomes else "downloaded"] += 1
                         if self.logger is not None:
                             self.logger.info(
                                 "package_request_completed item=%s/%s attempt=%s outcome=%s",
@@ -579,24 +652,27 @@ class ProductionBackend(SourceBackend):
                             )
                         break
                     except Exception as error:
+                        if isinstance(error, ValueError) and str(error) == "artifact_cancelled":
+                            raise
                         error_kind = _package_error_kind(error)
-                        retryable = error_kind in {"transient", "auth"} and attempt < PACKAGE_MAX_ATTEMPTS
+                        retryable = error_kind in {"transient", "auth", "unavailable"} and attempt < PACKAGE_MAX_ATTEMPTS
                         if self.logger is not None:
-                            self.logger.warning(
+                            log_method = self.logger.info if retryable else self.logger.warning
+                            log_method(
                                 "package_request_failed item=%s/%s attempt=%s error_type=%s category=%s retryable=%s",
                                 target_index, len(targets), attempt, type(error).__name__,
                                 error_kind, str(retryable).lower(),
                             )
                         if not retryable:
-                            if error_kind == "permanent":
+                            if error_kind in {"permanent", "unavailable"}:
                                 state = "unavailable"
                                 outcome_name = "source_confirmed_unavailable"
                                 outcomes[outcome_name] += 1
                                 if self.logger is not None:
                                     self.logger.warning(
-                                        "source_confirmed_unavailable format=XML/HTML item=%s/%s "
+                                        "source_confirmed_unavailable format=XML/HTML account_ref=%s item=%s/%s "
                                         "invoice_ref=%s status=unavailable error_type=%s",
-                                        target_index, len(targets),
+                                        connection_id[-8:], target_index, len(targets),
                                         str(target.get("shdon") or "-")[:80], type(error).__name__,
                                     )
                             elif error_kind in {"transient", "auth"}:
@@ -606,9 +682,9 @@ class ProductionBackend(SourceBackend):
                                 status = getattr(getattr(error, "response", None), "status_code", None)
                                 if self.logger is not None:
                                     self.logger.warning(
-                                        "source_retry_exhausted format=XML/HTML item=%s/%s "
+                                        "source_retry_exhausted format=XML/HTML account_ref=%s item=%s/%s "
                                         "invoice_ref=%s status=%s error_type=%s attempts=%s",
-                                        target_index, len(targets),
+                                        connection_id[-8:], target_index, len(targets),
                                         str(target.get("shdon") or "-")[:80], status or error_kind,
                                         type(error).__name__, attempt,
                                     )
@@ -619,6 +695,10 @@ class ProductionBackend(SourceBackend):
                             # Reuse the source authentication contract; credentials
                             # and refreshed session material stay inside the source layer.
                             self.handler.authenticate_job(job)
+                        if error_kind == "unavailable":
+                            _reset_desktop_package_unavailable(
+                                self.data_root, job.company_tax_code, target
+                            )
                         delay = package_retry_delay(attempt)
                         if self.logger is not None:
                             self.logger.info(

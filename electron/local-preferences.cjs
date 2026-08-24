@@ -57,6 +57,12 @@ function timestampKey(line) {
 }
 
 function diagnosticLevel(line) {
+  if (
+    /package_request_failed.*retryable=true/i.test(line)
+    || /package_(?:request_retry|response_unavailable)/i.test(line)
+    || /Invoice package is unavailable on the tax portal;\s*not retrying/i.test(line)
+    || /retrying with the same token\/route/i.test(line)
+  ) return null;
   const match = line.match(/(?:^|\s)(WARN|WARNING|ERROR)(?:\s|$)/i);
   if (!match) return null;
   return match[1].toLowerCase() === 'warning' ? 'warn' : match[1].toLowerCase();

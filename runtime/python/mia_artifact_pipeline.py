@@ -763,12 +763,6 @@ class ArtifactBatchCoordinator:
             }:
                 with self.lock:
                     self.state["warning_count"] += 1
-                if self.logger is not None:
-                    self.logger.warning(
-                        "%s format=XML/HTML account_ref=%s invoice_ref=%s",
-                        outcome if outcome != "unavailable" else "source_confirmed_unavailable",
-                        connection_id[-8:], _safe_filename(display)[:80],
-                    )
                 for kind in self.value["kinds"]:
                     self._advance(kind, display)
                 return
