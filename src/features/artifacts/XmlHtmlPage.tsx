@@ -71,11 +71,10 @@ function ProgressCard({ kind, lifecycle }: { kind: InvoiceArtifactKind; lifecycl
     ? progress.status === 'preparing' ? 'Đang chuẩn bị dữ liệu...' : progress.status === 'completed' ? 'Đã xuất PDF' : 'Đang xuất PDF...'
     : progress.status === 'completed' ? `Đã tải ${kind.toUpperCase()}` : `Đang tải ${kind.toUpperCase()}...`;
   return <article className="artifact-progress-card data-card" data-kind={kind} data-status={progress.status}>
-    <header><FormatIcon kind={kind} /><div><h2>{kind.toUpperCase()}</h2><span>{label}</span></div></header>
-    <div className="artifact-progress-copy"><span>Tiến độ: {progress.processed.toLocaleString('vi-VN')} / {progress.total.toLocaleString('vi-VN')}</span><strong>{Math.round(progress.percent)}%</strong></div>
+    <header><FormatIcon kind={kind} /><h2>{kind.toUpperCase()}</h2><span>{progress.processed.toLocaleString('vi-VN')} / {progress.total.toLocaleString('vi-VN')}</span><strong>{Math.round(progress.percent)}%</strong></header>
+    <div className="artifact-progress-status">{label}</div>
     <div className="artifact-progress-track"><span style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }} /></div>
-    <p title={progress.current_invoice ?? ''}>{progress.current_invoice ? `Đang xử lý: ${progress.current_invoice}` : kind === 'pdf' && progress.status === 'preparing' ? 'Đang chờ HTML và tài nguyên offline đầu tiên.' : 'Đang chuẩn bị danh sách hóa đơn...'}</p>
-    <footer><small>{progress.processed.toLocaleString('vi-VN')} / {progress.total.toLocaleString('vi-VN')} hóa đơn</small><button type="button" disabled={['completed', 'stopped', 'failed', 'stopping'].includes(progress.status)} onClick={() => void lifecycle.stop(kind)}>Dừng {kind.toUpperCase()}</button></footer>
+    <button className="artifact-format-stop" type="button" disabled={['completed', 'stopped', 'failed', 'stopping'].includes(progress.status)} onClick={() => void lifecycle.stop(kind)}>Dừng {kind.toUpperCase()}</button>
   </article>;
 }
 

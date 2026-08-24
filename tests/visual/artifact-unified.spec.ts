@@ -81,6 +81,29 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   });
   await downloadButton.click();
   await expect(page.locator('.artifact-progress-card')).toHaveCount(2);
+  const progressLayout = await page.locator('.artifact-progress-cards').evaluate((container) => {
+    const cards = [...container.querySelectorAll<HTMLElement>('.artifact-progress-card')];
+    const bounds = container.getBoundingClientRect();
+    return { containerWidth: bounds.width, cardWidths: cards.map((card) => card.getBoundingClientRect().width), cardHeights: cards.map((card) => card.getBoundingClientRect().height) };
+  });
+  expect(progressLayout.cardWidths).toHaveLength(2);
+  expect(Math.abs(progressLayout.cardWidths[0] - progressLayout.cardWidths[1])).toBeLessThanOrEqual(1);
+  expect(progressLayout.cardWidths.reduce((sum, width) => sum + width, 0)).toBeGreaterThan(progressLayout.containerWidth - 20);
+  expect(Math.max(...progressLayout.cardHeights)).toBeLessThan(90);
+  const threeColumnWidths = await page.locator('.artifact-progress-cards').evaluate((container) => {
+    const cards = [...container.querySelectorAll<HTMLElement>('.artifact-progress-card')];
+    const clone = cards[0].cloneNode(true) as HTMLElement;
+    container.append(clone);
+    container.setAttribute('data-count', '3');
+    const widths = [...container.querySelectorAll<HTMLElement>('.artifact-progress-card')].map((card) => card.getBoundingClientRect().width);
+    clone.remove();
+    container.setAttribute('data-count', '2');
+    return widths;
+  });
+  expect(threeColumnWidths).toHaveLength(3);
+  expect(Math.max(...threeColumnWidths) - Math.min(...threeColumnWidths)).toBeLessThanOrEqual(1);
+  await expect(page.locator('.artifact-progress-cards')).not.toContainText('Đang xử lý:');
+  await expect(page.locator('.artifact-progress-cards')).not.toContainText('hóa đơn');
   await expect(page.getByText('Đã hoàn thành tải XML/HTML/PDF.')).toBeVisible({ timeout: 4_000 });
 
   const calls = await page.evaluate(() => (window as typeof window & { artifactCalls: { snapshots: unknown[]; starts: Array<Record<string, unknown>> } }).artifactCalls);
@@ -169,6 +192,11 @@ test('PDF can be selected alone and per-format cancellation stays independent', 
   await expect(page.getByRole('button', { name: 'Tải xuống', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
   await expect(page.locator('.artifact-progress-card[data-kind="pdf"]')).toBeVisible();
+  const singleLayout = await page.locator('.artifact-progress-cards').evaluate((container) => ({
+    container: container.getBoundingClientRect().width,
+    card: container.querySelector<HTMLElement>('.artifact-progress-card')?.getBoundingClientRect().width ?? 0,
+  }));
+  expect(Math.abs(singleLayout.container - singleLayout.card)).toBeLessThanOrEqual(1);
   await page.locator('.artifact-progress-card[data-kind="pdf"]').getByRole('button', { name: 'Dừng' }).click();
   const calls = await page.evaluate(() => (window as typeof window & { pdfOnlyCalls: { starts: Array<Record<string, unknown>>; cancellations: unknown[] } }).pdfOnlyCalls);
   expect(calls.starts[0]).toMatchObject({ kinds: ['pdf'], pdf_concurrency: 100 });

@@ -101,4 +101,20 @@ describe('invoice result control presentation', () => {
     expect(styles).not.toContain('translateY');
     expect(styles).not.toContain('scale(');
   });
+
+  it('uses compact full-width equal artifact progress columns without invoice-detail copy', async () => {
+    const [page, styles] = await Promise.all([
+      source('src/features/artifacts/XmlHtmlPage.tsx'),
+      source('src/styles/xml-html.css'),
+    ]);
+    expect(styles).toContain('width: 100%; display: grid');
+    expect(styles).toContain('repeat(var(--artifact-card-count, 3), minmax(0, 1fr))');
+    expect(styles).toContain("[data-count='1']");
+    expect(styles).toContain("[data-count='2']");
+    expect(styles).toContain("[data-count='3']");
+    expect(styles).toContain('height: 76px');
+    expect(styles).toContain('min-height: 0');
+    expect(page).not.toContain('Đang xử lý:');
+    expect(page).not.toContain('hóa đơn</small>');
+  });
 });

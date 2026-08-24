@@ -21,6 +21,7 @@ from mia_artifact_pipeline import (
     _create_pdf_renderer,
     _missing_intervals,
     _pdf_cache_paths,
+    build_invoice_export_basename,
     html_dependency_files,
     html_fingerprint,
     pdf_cache_valid,
@@ -317,9 +318,10 @@ class ArtifactPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = {
-                "artifact_key": "purchase|query|0101|AA|1|1",
+                "artifact_key": "purchase|query|0101|C23TTL|00109|1",
                 "direction": "purchase", "query_type": "query", "nbmst": "0101",
-                "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+                "khhdon": "C23TTL", "shdon": "00109", "khmshdon": "1",
+                "nlap_date": "2023-10-15",
             }
             self._package_cache(root, [target])
 
@@ -349,8 +351,24 @@ class ArtifactPipelineTests(unittest.TestCase):
                 }).run()
             self.assertEqual(backend.package_calls, 1)
             self.assertEqual(result["status"], "completed")
-            self.assertEqual(len(list((root / "output").rglob("*.xml"))), 1)
-            self.assertEqual(len(list((root / "output").rglob("*.html"))), 1)
+            xml = next((root / "output").rglob("*.xml"))
+            html = next((root / "output").rglob("*.html"))
+            self.assertEqual(xml.stem, "20231015_1_C23TTL_00109_0101")
+            self.assertEqual(html.stem, xml.stem)
+            self.assertTrue((html.parent / "sign-check.jpg").is_file())
+            self.assertTrue((html.parent / "viewinvoice-bg.jpg").is_file())
+
+    def test_export_basename_sanitizes_windows_characters_and_missing_fields(self):
+        self.assertEqual(build_invoice_export_basename({
+            "nlap": "15/10/2023 09:00", "khmshdon": "1/2",
+            "khhdon": 'C23:TTL*?', "shdon": "000109", "nbmst": None,
+        }), "20231015_1_2_C23_TTL_000109")
+        value = build_invoice_export_basename({
+            "nlap_date": "2023-10-15", "khmshdon": None,
+            "khhdon": " ", "shdon": "109.", "nbmst": "undefined",
+        })
+        self.assertEqual(value, "20231015_109")
+        self.assertNotRegex(value, r'[<>:"/\\|?*]|[. ]$|None|null|undefined')
 
     def test_xml_only_does_not_create_an_html_output_folder(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -430,7 +448,11 @@ class ArtifactPipelineTests(unittest.TestCase):
             html.write_text("<html><body>invoice</body></html>", encoding="utf-8")
             (package / "sign-check.jpg").write_bytes(b"real-sign")
             (package / "viewinvoice-bg.jpg").write_bytes(b"real-background")
-            target = {"artifact_key": "purchase|query|0101|AA|1|1"}
+            target = {
+                "artifact_key": "purchase|query|0101|C23TTL|00109|1",
+                "nlap_date": "2023-10-15", "khmshdon": "1",
+                "khhdon": "C23TTL", "shdon": "00109", "nbmst": "0101",
+            }
             coordinator = object.__new__(ArtifactBatchCoordinator)
             coordinator.data_root = root
             coordinator.global_cancel = threading.Event()
@@ -452,6 +474,7 @@ class ArtifactPipelineTests(unittest.TestCase):
                 "connection_id": "conn_1", "cache_keys": {"pdf": set()},
             }, "0101234567", root / "output", lambda assets: asset_roots.append(assets) or renderer)
             exported = next((root / "output").glob("*.pdf"))
+            self.assertEqual(exported.stem, "20231015_1_C23TTL_00109_0101")
             self.assertEqual(asset_roots, [package])
             self.assertTrue(exported.read_bytes().startswith(b"%PDF-"))
             self.assertTrue(exported.read_bytes().rstrip().endswith(b"%%EOF"))
@@ -473,7 +496,7 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertTrue(atomic_pdf.read_bytes().startswith(b"%PDF-"))
             self.assertTrue(atomic_pdf.read_bytes().rstrip().endswith(b"%%EOF"))
 
-    def test_unavailable_package_completes_account_without_failed_format_items(self):
+    def test_missing_original_completes_without_warning_or_failed_items(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = {
@@ -485,7 +508,7 @@ class ArtifactPipelineTests(unittest.TestCase):
                 def artifact_targets_for_export(self, request):
                     return [target] if request["query_type"] == "query" else []
                 def ensure_invoice_packages(self, _request, **kwargs):
-                    kwargs["ready_callback"](target, "unavailable", "source_confirmed_unavailable")
+                    kwargs["ready_callback"](target, "missing_original", "missing_original")
             snapshot = {"accounts": [{"connection_id": "conn_1", "ready": True, "missing_ranges": [], "total": 1, "cached": {"xml": 0, "html": 0, "pdf": 0}}]}
             with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
                 result = ArtifactBatchCoordinator(Backend(root), {
@@ -498,7 +521,7 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["accounts"]["conn_1"]["status"], "completed")
             self.assertEqual(result["formats"]["xml"]["failed"], 0)
             self.assertEqual(result["formats"]["html"]["failed"], 0)
-            self.assertEqual(result["warning_count"], 1)
+            self.assertEqual(result["warning_count"], 0)
 
     def test_retry_exhausted_package_is_a_distinct_nonfailed_warning_outcome(self):
         with tempfile.TemporaryDirectory() as directory:
