@@ -47,12 +47,14 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('border-radius', '6px');
   await expect(page.locator('.artifact-account-table')).toHaveCSS('border-radius', '6px');
   const dateBox = await page.locator('.artifact-toolbar-card .date-range-trigger').boundingBox();
+  const directionBox = await page.locator('.artifact-toolbar-card .artifact-direction-field').boundingBox();
   const folderBox = await page.locator('.artifact-toolbar-card .invoice-export-folder').boundingBox();
   expect(dateBox).not.toBeNull();
+  expect(directionBox).not.toBeNull();
   expect(folderBox).not.toBeNull();
-  expect(Math.abs((dateBox?.x ?? 0) - (folderBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((directionBox?.x ?? 0) - (folderBox?.x ?? 0))).toBeLessThanOrEqual(1);
   await expect(page.getByRole('heading', { name: 'XML/HTML/PDF' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'PDF', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'PDF', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Thêm tài khoản' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Đồng bộ dữ liệu' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Xóa tài khoản/ })).toHaveCount(0);
@@ -62,24 +64,26 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   const downloadButton = page.getByRole('button', { name: 'Tải xuống', exact: true });
   const stopButton = page.getByRole('button', { name: 'Dừng tải', exact: true });
   await expect(downloadButton).toHaveClass(/sync-button/);
-  await expect(stopButton).toHaveClass(/stop-button/);
   await expect(downloadButton.locator('.invoice-action-icon')).toHaveCount(1);
-  await expect(stopButton.locator('.stop-button-icon')).toHaveCount(1);
   await expect(downloadButton).toHaveCSS('border-radius', '6px');
-  await expect(stopButton).toHaveCSS('border-radius', '6px');
-  await expect(page.locator('.artifact-quantity')).toContainText('XML 4/12');
-  await expect(page.locator('.artifact-quantity')).toContainText('HTML 3/12');
-  await expect(page.locator('.artifact-quantity')).toContainText('PDF 2/12');
-  await page.getByRole('button', { name: 'XML + HTML' }).click();
-  await expect(page.getByLabel('Định dạng tải xuống').getByLabel('XML')).toBeChecked();
-  await expect(page.getByLabel('Định dạng tải xuống').getByLabel('HTML')).toBeChecked();
-  await expect(page.getByLabel('Định dạng tải xuống').getByLabel('PDF')).not.toBeChecked();
-  await page.keyboard.press('Escape');
+  await expect(stopButton).toHaveCount(0);
+  await expect(page.locator('.artifact-quantity-value[data-kind="xml"]')).toHaveText('4/12');
+  await expect(page.locator('.artifact-quantity-value[data-kind="html"]')).toHaveText('3/12');
+  await expect(page.locator('.artifact-quantity-value[data-kind="pdf"]')).toHaveText('2/12');
+  await expect(page.getByRole('checkbox', { name: 'XML', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'HTML', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'PDF', exact: true })).not.toBeChecked();
+  await expect(page.locator('.artifact-toolbar-field')).toHaveCount(3);
+  await expect(page.locator('.artifact-quantity-header')).toContainText('Số lượng hóa đơnXMLHTMLPDF');
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('Đã đồng bộ');
   await page.evaluate(() => document.fonts.ready);
   await expect(page).toHaveScreenshot('unified-artifact-account-1500x1024.png', {
     animations: 'disabled', maxDiffPixelRatio: 0.02, threshold: 0.25,
   });
   await downloadButton.click();
+  await expect(stopButton).toHaveClass(/stop-button/);
+  await expect(stopButton.locator('.stop-button-icon')).toHaveCount(1);
+  await expect(stopButton).toHaveCSS('border-radius', '6px');
   await expect(page.locator('.artifact-progress-card')).toHaveCount(2);
   const progressLayout = await page.locator('.artifact-progress-cards').evaluate((container) => {
     const cards = [...container.querySelectorAll<HTMLElement>('.artifact-progress-card')];
@@ -157,7 +161,7 @@ test('missing local coverage blocks downloads without starting an invoice sync j
 
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
-  await expect(page.locator('.artifact-account-status')).toContainText('Chưa đồng bộ');
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('Chưa đồng bộ');
   await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
   await expect(page.getByRole('alertdialog')).toContainText('chưa được đồng bộ đầy đủ');
   const starts = await page.evaluate(() => (window as typeof window & { forbiddenStarts: { jobStarts: unknown[]; batchStarts: unknown[] } }).forbiddenStarts);
@@ -185,11 +189,9 @@ test('PDF can be selected alone and only global batch cancellation is exposed', 
 
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
-  await page.getByRole('button', { name: 'XML + HTML' }).click();
-  const formats = page.getByLabel('Định dạng tải xuống');
-  await formats.getByText('XML').click();
-  await formats.getByText('HTML').click();
-  await formats.getByText('PDF').click();
+  await page.getByRole('checkbox', { name: 'XML', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'HTML', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'PDF', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Tải xuống', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
   await expect(page.locator('.artifact-progress-card[data-kind="pdf"]')).toBeVisible();
@@ -219,7 +221,7 @@ test('artifact date range and account selection transfer back to invoice managem
   }, { accountValue: account });
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
-  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.locator('.artifact-date-field .date-range-trigger').click();
   await page.getByLabel('Từ ngày nhập tay').fill('01/08/2026');
   await page.getByLabel('Đến ngày nhập tay').fill('23/08/2026');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
@@ -268,22 +270,22 @@ test('latest direction coverage wins and remains deterministic across tab remoun
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
   await page.getByRole('button', { name: 'Mua vào' }).click();
   await page.getByLabel('Loại hóa đơn').getByText('Bán ra', { exact: true }).click();
-  await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/05/2026');
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('01/04/2026 - 31/05/2026');
   await page.waitForTimeout(180);
-  await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/05/2026');
-  await expect(page.locator('.artifact-quantity')).toContainText('XML 10/20');
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('01/04/2026 - 31/05/2026');
+  await expect(page.locator('.artifact-quantity-value[data-kind="xml"]')).toHaveText('10/20');
 
   for (let index = 0; index < 2; index += 1) {
     await page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).click();
     await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Bán ra' })).toBeVisible();
-    await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/05/2026');
+    await expect(page.locator('.artifact-coverage-badge')).toContainText('01/04/2026 - 31/05/2026');
   }
 
   await page.getByRole('button', { name: 'Bán ra' }).click();
   await page.getByLabel('Loại hóa đơn').getByText('Mua vào', { exact: true }).click();
-  await expect(page.locator('.artifact-account-status')).toHaveText('Sẵn sàng tải');
-  await expect(page.locator('.artifact-quantity')).toContainText('XML 40/40');
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('Đã đồng bộ');
+  await expect(page.locator('.artifact-quantity-value[data-kind="xml"]')).toHaveText('40/40');
   const directions = await page.evaluate(() => (window as typeof window & { coverageDirections: string[] }).coverageDirections);
   expect(directions).toContain('purchase');
   expect(directions).toContain('sold');
@@ -332,12 +334,12 @@ test('active source polling refreshes persisted coverage after every finalized m
 
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
-  const status = page.locator('.artifact-account-status');
+  const status = page.locator('.artifact-coverage-badge');
   await expect(status).toContainText('01/02/2026 - 31/05/2026');
   await expect(status).toContainText('01/03/2026 - 31/05/2026');
   await expect(status).toContainText('01/04/2026 - 31/05/2026', { timeout: 4_500 });
   await expect(status).toContainText('01/05/2026 - 31/05/2026', { timeout: 4_500 });
-  await expect(status).toHaveText('Sẵn sàng tải', { timeout: 4_500 });
+  await expect(status).toContainText('Đã đồng bộ', { timeout: 4_500 });
 });
 
 for (const width of [1024, 1280, 1500, 1600]) {
@@ -365,9 +367,9 @@ test('coverage stays checking until the authoritative response arrives', async (
   }, { accountValue: account });
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
-  await expect(page.locator('.artifact-account-status')).toHaveText('Đang kiểm tra');
-  await expect(page.locator('.artifact-account-status')).not.toContainText('Chưa đồng bộ');
-  await expect(page.locator('.artifact-account-status')).toContainText('01/04/2026 - 31/08/2026', { timeout: 3_000 });
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('Đang kiểm tra');
+  await expect(page.locator('.artifact-coverage-badge')).not.toContainText('Chưa đồng bộ');
+  await expect(page.locator('.artifact-coverage-badge')).toContainText('01/04/2026 - 31/08/2026', { timeout: 3_000 });
 });
 
 test('slow and transient status polls never overlap or stop the live batch', async ({ page }) => {
@@ -423,16 +425,16 @@ test('missing original appears immediately in the structured account failure tab
   await page.goto('/', { waitUntil: 'commit' });
   await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
   await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
-  const failures = page.getByRole('button', { name: 'Danh sách hóa đơn lỗi' });
+  const failures = page.getByRole('button', { name: 'Xem kết quả' });
   await expect(failures).toBeVisible();
   await failures.click();
-  await expect(page.getByRole('heading', { name: 'Danh sách hóa đơn lỗi' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Xem kết quả' })).toBeVisible();
   await expect(page.getByLabel('Bảng hóa đơn không tạo được file')).toContainText('Không tồn tại hồ sơ gốc');
   await expect(page.getByLabel('Bảng hóa đơn không tạo được file')).toContainText('XML, HTML');
   const callsBefore = await page.evaluate(() => (window as typeof window & { failureStatusCalls: number }).failureStatusCalls);
   await page.waitForTimeout(900);
   expect(await page.evaluate(() => (window as typeof window & { failureStatusCalls: number }).failureStatusCalls)).toBeGreaterThan(callsBefore);
   await page.getByRole('button', { name: /Quay lại XML\/HTML\/PDF/ }).click();
-  await expect(page.getByRole('button', { name: 'XML + HTML' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'XML', exact: true })).toBeVisible();
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
