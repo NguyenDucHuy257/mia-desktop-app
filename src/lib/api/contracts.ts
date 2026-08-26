@@ -38,6 +38,23 @@ export interface CreateJobRequest {
   include_mvt?: boolean;
 }
 
+export interface InvoiceSyncState {
+  connection_id: string;
+  direction: InvoiceDirection;
+  status: 'not_synced' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  current_month: string | null;
+  current_until?: string | null;
+  sync_from: string | null;
+  sync_until: string | null;
+  invoice_count: number;
+  baseline_invoice_count: number | null;
+  added_invoice_count: number | null;
+  replaced_old_count?: number | null;
+  downloaded_new_count?: number | null;
+  last_job_id: string | null;
+  sync_mode: 'new' | 'supplement' | null;
+}
+
 /** Local JSON-RPC acceptance envelope. No server worker-slot concept exists. */
 export interface JobAccepted {
   job_id: string;
@@ -81,6 +98,8 @@ export interface JobStatusResponse {
     planned: number;
     percent: number;
   };
+  scope_progress?: { scope: string; processed: number; total: number } | null;
+  progress_totals?: Record<string, { processed: number; total: number }>;
   updated_at: string;
   error: null | { code: string; message: string; retryable: boolean };
 }

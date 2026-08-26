@@ -422,6 +422,25 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 )
             raise RpcError(-32070, code or "source_job_failed") from None
 
+    if method == "source.sync.states":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            if not isinstance(params, dict):
+                raise ValueError("invalid_params")
+            connection_ids = params.get("connection_ids")
+            direction = params.get("direction")
+            if (
+                not isinstance(connection_ids, list)
+                or len(connection_ids) > 500
+                or any(not isinstance(item, str) for item in connection_ids)
+                or direction not in {"purchase", "sold"}
+            ):
+                raise ValueError("invalid_params")
+            return _production_backend().sync_states(connection_ids, direction), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+
     if method == "storage.status":
         if storage is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -713,6 +732,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                         bool((result.get("pagination") or {}).get("has_more")),
                     )
                 return result, False
+            if method == "results.facets":
+                return _production_backend().result_facets(dict(params)), False
             if storage is None:
                 raise RpcError(-32011, "storage_not_initialized")
             if method == "results.import_overviews":

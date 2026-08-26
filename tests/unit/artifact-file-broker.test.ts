@@ -62,6 +62,26 @@ describe('artifact filesystem boundary', () => {
       direction: 'sold', query_type: 'sco-query', search: '000123',
     });
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['xml'], query_type: 'bad' })).toThrow('invalid_artifact_query_type');
+    expect(() => validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['xml'],
+      exclusion: { keys: ['invoice-a'], rules: [] },
+    })).toThrow('invalid_artifact_request');
+  });
+
+  it('validates independent Overview and Details filters for Excel only', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-filtered-results');
+    const request = validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'],
+      result_scopes: ['overview', 'details'], date_from: '2026-08-01', date_to: '2026-08-31',
+      result_filters: {
+        overview: { search: 'A', column_filters: { nbten: { values: ['Alpha'] } } },
+        details: { search: 'B', column_filters: { ten: { values: ['Dịch vụ'] } } },
+      },
+      exclusion: { keys: ['purchase|query|0101|AA|1|1'], rules: [] },
+    });
+    expect(request.result_filters.overview.column_filters).toEqual({ nbten: { values: ['Alpha'] } });
+    expect(request.result_filters.details.column_filters).toEqual({ ten: { values: ['Dịch vụ'] } });
+    expect(request.exclusion.keys).toHaveLength(1);
   });
 
   it('returns the broker envelope expected by preload for successful exports', async () => {

@@ -262,6 +262,8 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         status.current_month?.processed,
         status.current_month?.planned,
         status.current_month?.percent,
+        status.scope_progress?.processed,
+        status.scope_progress?.total,
         status.artifact_progress?.processed,
         status.artifact_progress?.completed_xml,
         status.artifact_progress?.completed_html,

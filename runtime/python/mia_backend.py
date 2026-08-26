@@ -13,6 +13,7 @@ import sqlite3
 import threading
 import time
 import types
+from calendar import monthrange
 from dataclasses import replace
 from datetime import datetime
 from contextlib import closing
@@ -193,6 +194,27 @@ def _export_error(code: str) -> dict[str, object]:
     return {"count": 0, "files": [], "error_code": code}
 
 
+def _progress_totals_from_state(state):
+    """Cumulative discovered denominators; moving month never resets counters."""
+    progress_totals = {}
+    for name, module in (state.get("modules") or {}).items():
+        if not isinstance(module, dict):
+            continue
+        discovered = [
+            month for month in module.get("months") or ()
+            if isinstance(month, dict) and month.get("planned") is not None
+        ]
+        total = sum(max(0, int(month.get("planned") or 0)) for month in discovered)
+        processed = sum(
+            min(max(0, int(month.get("processed") or 0)), max(0, int(month.get("planned") or 0)))
+            for month in discovered
+        )
+        if module.get("status") == "completed":
+            processed = total
+        progress_totals[str(name)] = {"processed": processed, "total": total}
+    return progress_totals
+
+
 def cancel_stale_jobs_for_desktop_session(data_dir, logger=None) -> int:
     """Cancel pre-launch work without constructing or starting a crawler."""
     repository = create_local_job_repository(
@@ -225,6 +247,151 @@ class ProductionBackend(SourceBackend):
         # (_save -> _load/_write). RLock prevents a self-deadlock without
         # changing source crawler/session/job behavior.
         self._metadata_lock = threading.RLock()
+
+    def _invoice_direction_metrics(self, tax_code: str, direction: str, job=None):
+        database = self.data_root / tax_code / "db" / "invoices.sqlite3"
+        if not database.is_file():
+            return {
+                "invoice_count": 0, "added_count": 0,
+                "replaced_old_count": None, "downloaded_new_count": None,
+                "sync_from": None, "sync_until": None,
+            }
+        with closing(sqlite3.connect(database, timeout=5)) as connection:
+            connection.execute("PRAGMA busy_timeout = 5000")
+            count = int(connection.execute(
+                "SELECT COUNT(*) FROM invoice_overview_items WHERE company_tax_code=? AND direction=?",
+                (tax_code, direction),
+            ).fetchone()[0])
+            coverage = connection.execute(
+                """SELECT MIN(from_date), MAX(to_date)
+                   FROM invoice_overview_checkpoints
+                   WHERE company_tax_code=? AND direction=? AND checkpoint_status='finalized'""",
+                (tax_code, direction),
+            ).fetchone()
+            baseline = job.parameters.get("baseline_invoice_count") if job is not None else None
+            added = max(0, count - int(baseline)) if baseline is not None else 0
+            replaced = job.parameters.get("replaced_old_count") if job is not None else None
+            downloaded = None
+            if (
+                job is not None and job.parameters.get("sync_mode") == "new"
+                and job.parameters.get("replacement_prepared") and replaced is not None
+            ):
+                downloaded = int(connection.execute(
+                    """SELECT COUNT(*) FROM invoice_overview_items
+                       WHERE company_tax_code=? AND direction=? AND nlap_date BETWEEN ? AND ?""",
+                    (tax_code, direction, str(job.parameters.get("date_from")), str(job.parameters.get("date_to"))),
+                ).fetchone()[0])
+        return {
+            "invoice_count": count,
+            "added_count": added,
+            "replaced_old_count": int(replaced) if replaced is not None else None,
+            "downloaded_new_count": downloaded,
+            "sync_from": coverage[0] if coverage else None,
+            "sync_until": coverage[1] if coverage else None,
+        }
+
+    @staticmethod
+    def _current_processing_until(job, state, month_key):
+        if not job or not month_key:
+            return None
+        stage = str(state.get("current_stage") or getattr(job, "current_stage", "") or "")
+        module = (state.get("modules") or {}).get(stage)
+        if isinstance(module, dict):
+            for month in module.get("months") or ():
+                if isinstance(month, dict) and str(month.get("key") or "") == month_key:
+                    to_date = str(month.get("to_date") or "")
+                    if len(to_date) == 10:
+                        return to_date
+        try:
+            year, month = (int(part) for part in month_key.split("-", 1))
+            month_end = f"{year:04d}-{month:02d}-{monthrange(year, month)[1]:02d}"
+        except (TypeError, ValueError):
+            return None
+        job_to = str(job.parameters.get("date_to") or "")
+        return min(month_end, job_to) if len(job_to) == 10 else month_end
+
+    def start(self, value: dict[str, object]) -> dict[str, object]:
+        intent = dict(value.get("intent") or {})
+        mode = intent.get("sync_mode")
+        directions = list(intent.get("directions") or ())
+        if mode in {"new", "supplement"} and len(directions) != 1:
+            raise ValueError("sync_mode_requires_one_direction")
+        direction = str((directions or [""])[0])
+        if mode in {"new", "supplement"}:
+            intent["force_refresh"] = mode == "new"
+            intent["refresh_latest_month"] = False
+            if hasattr(self, "data_root") and hasattr(self, "repository"):
+                connection = self.service.get_account_connection(
+                    str(intent["connection_id"]), owner_id=source_backend_module.OWNER_ID
+                )
+                baseline = self._invoice_direction_metrics(connection.username, direction)["invoice_count"]
+                self.repository.desktop_job_metadata = {
+                    "sync_mode": mode,
+                    "baseline_invoice_count": baseline,
+                }
+        try:
+            return super().start({**value, "intent": intent})
+        finally:
+            if hasattr(self, "repository"):
+                self.repository.desktop_job_metadata = None
+
+    def sync_states(self, connection_ids, direction):
+        if direction not in {"purchase", "sold"}:
+            raise ValueError("invalid_direction")
+        output = []
+        for connection_id in connection_ids:
+            connection = self.service.get_account_connection(
+                str(connection_id), owner_id=source_backend_module.OWNER_ID
+            )
+            job = self.repository.latest_invoice_job_for_direction(
+                str(connection_id), direction, owner_id=source_backend_module.OWNER_ID
+            )
+            metrics = self._invoice_direction_metrics(connection.username, direction, job)
+            state = dict(getattr(job, "progress_state", None) or {}) if job else {}
+            overview_module = (state.get("modules") or {}).get("overview")
+            overview_complete = isinstance(overview_module, dict) and overview_module.get("status") == "completed"
+            raw_status = str(getattr(job, "status", "")) if job else ""
+            active = {"queued", "starting", "waiting_account", "running", "processing", "downloading", "syncing", "cancelling"}
+            overview_requested = "overview" in set(job.parameters.get("scopes") or ()) if job else False
+            if raw_status in active and overview_complete:
+                status = "completed"
+            elif raw_status in active:
+                status = "running"
+            elif raw_status in {"failed", "abandoned"}:
+                status = "failed"
+            elif raw_status == "cancelled":
+                status = "cancelled"
+            elif overview_complete or (raw_status in {"completed", "completed_with_warning"} and overview_requested and not isinstance(overview_module, dict)):
+                status = "completed"
+            elif metrics["invoice_count"] > 0 or metrics["sync_until"]:
+                status = "completed"
+            else:
+                status = "not_synced"
+            month = state.get("current_month") if status == "running" else None
+            month_key = month.get("key") if isinstance(month, dict) else None
+            if status == "running" and not month_key and job:
+                date_from = str(job.parameters.get("date_from") or "")
+                month_key = date_from[:7] if len(date_from) >= 7 else None
+            baseline = job.parameters.get("baseline_invoice_count") if job else None
+            sync_from, sync_until = metrics["sync_from"], metrics["sync_until"]
+            if status == "completed" and job:
+                job_from, job_until = str(job.parameters.get("date_from") or ""), str(job.parameters.get("date_to") or "")
+                sync_from = job_from if len(job_from) == 10 else sync_from
+                sync_until = job_until if len(job_until) == 10 else sync_until
+            output.append({
+                "connection_id": str(connection_id), "direction": direction, "status": status,
+                "current_month": month_key,
+                "current_until": self._current_processing_until(job, state, month_key) if status == "running" else None,
+                "sync_from": sync_from, "sync_until": sync_until,
+                "invoice_count": metrics["invoice_count"],
+                "baseline_invoice_count": int(baseline) if baseline is not None else None,
+                "added_invoice_count": metrics["added_count"] if baseline is not None else None,
+                "replaced_old_count": metrics["replaced_old_count"],
+                "downloaded_new_count": metrics["downloaded_new_count"],
+                "last_job_id": job.job_id if job else None,
+                "sync_mode": job.parameters.get("sync_mode") if job else None,
+            })
+        return output
 
     def _source_company_name(self, connection) -> str:
         """Read the company profile through the source-managed durable session.
@@ -418,7 +585,18 @@ class ProductionBackend(SourceBackend):
             )
             job = normalized
         payload = SourceBackend.public_job(job)
+        if job.parameters.get("sync_mode") in {"new", "supplement"}:
+            payload["intent"]["sync_mode"] = job.parameters["sync_mode"]
+            payload["intent"]["force_refresh"] = job.parameters["sync_mode"] == "new"
+            payload["intent"]["refresh_latest_month"] = False
         state = dict(getattr(job, "progress_state", None) or {})
+        progress_totals = _progress_totals_from_state(state)
+        payload["progress_totals"] = progress_totals
+        active_stage = str(payload.get("stage") or "")
+        if active_stage in progress_totals:
+            payload["scope_progress"] = {"scope": active_stage, **progress_totals[active_stage]}
+        elif payload.get("status") in {"completed", "completed_with_warning"} and "overview" in progress_totals:
+            payload["scope_progress"] = {"scope": "overview", **progress_totals["overview"]}
         # The source repository already persists stage_progress_percent from its
         # ProgressSnapshot. Expose that value unchanged so the renderer can give
         # detailed auth/finalize feedback without inventing progress.
@@ -464,6 +642,10 @@ class ProductionBackend(SourceBackend):
         # dependency cost. All paging is delegated to source JobResultReader.
         from mia_source_results import read_results
         return read_results(self, kind, query)
+
+    def result_facets(self, query):
+        from mia_source_results import read_result_facets
+        return read_result_facets(self, query)
 
     def artifact_keys_for_export(self, value):
         """Resolve the exact filtered Overview set through the source reader.

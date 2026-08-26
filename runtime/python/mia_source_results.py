@@ -18,8 +18,10 @@ import sqlite3
 import tempfile
 import time
 from collections import OrderedDict
+from contextlib import closing
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
@@ -31,6 +33,23 @@ ExportProgressCallback = Callable[[dict[str, Any]], None]
 
 _RESULT_COUNT_CACHE: OrderedDict[tuple[Any, ...], int] = OrderedDict()
 _RESULT_COUNT_CACHE_LIMIT = 64
+_RESULT_ANALYSIS_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_RESULT_ANALYSIS_CACHE_LIMIT = 32
+_EXCLUSION_CACHE: OrderedDict[tuple[Any, ...], frozenset[str]] = OrderedDict()
+_EXCLUSION_CACHE_LIMIT = 16
+_LOOKUP_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str]] = OrderedDict()
+_LOOKUP_CACHE_LIMIT = 16_384
+
+MONETARY_RESULT_FIELDS = frozenset({
+    "tgtcthue", "tgtthue", "ttcktmai", "tgtphi", "tgtttbso",
+    "stckhau", "thtien", "tthue",
+})
+INVOICE_LEVEL_MONETARY_FIELDS = frozenset({
+    "tgtcthue", "tgtthue", "ttcktmai", "tgtphi", "tgtttbso",
+})
+PERCENT_RESULT_FIELDS = frozenset({"tsuat"})
+NUMBER_RESULT_FIELDS = MONETARY_RESULT_FIELDS | frozenset({"tgia", "dgia", "sluong"})
+CONDITIONAL_NUMBER_RESULT_FIELDS = frozenset({"stt", "shdon"})
 
 
 BLOCKED_RESULT_FIELDS = {
@@ -89,9 +108,122 @@ class _ExcelSafeDetailRowBuilder:
     def build_rows(
         self, payload: dict[str, Any], record: dict[str, Any]
     ) -> list[dict[str, Any]]:
+        from mia_invoice_lookup import resolve_invoice_lookup
+
+        lookup = resolve_invoice_lookup(
+            payload,
+            record,
+            available_xml=record.get("xml_path"),
+        )
         return [
-            _excel_safe_record(row)
+            _excel_safe_record({
+                **row,
+                "url": lookup.url or "",
+                "mk": lookup.code or "",
+            })
             for row in self._delegate.build_rows(payload, record)
+        ]
+
+
+class _LookupEnrichedResultReader:
+    """Enrich source result pages from persisted raw detail without recrawling."""
+
+    def __init__(self, database_path: Path) -> None:
+        from app.external_api.results import JobResultReader
+
+        self.database_path = Path(database_path)
+        self.delegate = JobResultReader(database_path)
+        self._revision = _database_revision(self.database_path)
+
+    def overview_page(self, job, *, limit: int, cursor: str | None) -> dict[str, Any]:
+        return self.delegate.overview_page(job, limit=limit, cursor=cursor)
+
+    def detail_page(self, job, *, limit: int, cursor: str | None) -> dict[str, Any]:
+        self._revision = _database_revision(self.database_path)
+        page = self.delegate.detail_page(job, limit=limit, cursor=cursor)
+        items = page.get("items") or []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url, code = self._lookup(item, job)
+            item["url"] = url
+            item["mk"] = code
+        return page
+
+    def _lookup(self, item: dict[str, Any], job) -> tuple[str, str]:
+        identity = tuple(str(item.get(name) or "") for name in (
+            "nbmst", "khhdon", "shdon", "khmshdon",
+        ))
+        cache_key = (
+            str(self.database_path.resolve()), self._revision,
+            job.company_tax_code, tuple(job.parameters.get("directions") or ()),
+            tuple(job.parameters.get("query_types") or ()), *identity,
+        )
+        cached = _LOOKUP_CACHE.get(cache_key)
+        if cached is not None:
+            _LOOKUP_CACHE.move_to_end(cache_key)
+            return cached
+
+        from mia_invoice_lookup import is_safe_lookup_url, normalize_lookup_key
+
+        existing_url = str(item.get("url") or "").strip()
+        existing_code = str(item.get("mk") or "").strip()
+        if normalize_lookup_key(existing_code).startswith("khongtimthaymatracu"):
+            existing_code = ""
+        value = (existing_url if is_safe_lookup_url(existing_url) else "", existing_code)
+        if self.database_path.is_file():
+            directions = tuple(job.parameters.get("directions") or ())
+            query_types = tuple(job.parameters.get("query_types") or ())
+            if directions and query_types:
+                direction_slots = ",".join("?" for _ in directions)
+                query_slots = ",".join("?" for _ in query_types)
+                try:
+                    with closing(sqlite3.connect(self.database_path)) as connection:
+                        connection.row_factory = sqlite3.Row
+                        row = connection.execute(f"""
+                            SELECT raw_detail_path, nbmst, khhdon, shdon, khmshdon,
+                                   direction, query_type
+                            FROM invoice_detail_items
+                            WHERE company_tax_code=?
+                              AND direction IN ({direction_slots})
+                              AND query_type IN ({query_slots})
+                              AND nbmst=? AND khhdon=? AND shdon=? AND khmshdon=?
+                              AND TRIM(raw_detail_path)<>''
+                              AND (error_message IS NULL OR TRIM(error_message)='')
+                            ORDER BY id DESC LIMIT 1
+                        """, (
+                            job.company_tax_code, *directions, *query_types, *identity,
+                        )).fetchone()
+                    if row is not None:
+                        raw_path = Path(str(row["raw_detail_path"] or ""))
+                        payload = json.loads(raw_path.read_text(encoding="utf-8"))
+                        if isinstance(payload, dict):
+                            from mia_invoice_lookup import resolve_invoice_lookup
+
+                            lookup = resolve_invoice_lookup(payload, dict(row))
+                            if lookup.status != "unresolved":
+                                value = (lookup.url or "", lookup.code or "")
+                except (OSError, UnicodeError, ValueError, TypeError, sqlite3.Error):
+                    value = ("", "")
+        _LOOKUP_CACHE[cache_key] = value
+        _LOOKUP_CACHE.move_to_end(cache_key)
+        while len(_LOOKUP_CACHE) > _LOOKUP_CACHE_LIMIT:
+            _LOOKUP_CACHE.popitem(last=False)
+        return value
+
+
+class _FilteredExcelSafeDetailRowBuilder(_ExcelSafeDetailRowBuilder):
+    def __init__(self, *, search: str, column_filters: Any) -> None:
+        super().__init__()
+        self.search = search
+        self.column_filters = column_filters
+
+    def build_rows(self, payload: dict[str, Any], record: dict[str, Any]) -> list[dict[str, Any]]:
+        rows = super().build_rows(payload, record)
+        return [
+            row for row in rows
+            if _search_matches(row, self.search)
+            and _matches_column_filters(row, self.column_filters)
         ]
 
 
@@ -125,6 +257,115 @@ def _search_matches(fields: dict[str, Any], search: str) -> bool:
     ).casefold()
 
 
+def _invoice_key(fields: dict[str, Any], direction: str, query_type: str | None = None) -> str:
+    """Stable business identity shared by Overview and every Detail line."""
+    return "|".join(str(value or "") for value in (
+        direction,
+        query_type or fields.get("query_type") or "query",
+        fields.get("nbmst"), fields.get("khhdon"), fields.get("shdon"),
+        fields.get("khmshdon"),
+    ))
+
+
+def _filter_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
+    return str(value)
+
+
+def _as_decimal(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        text = str(value)
+    else:
+        text = re.sub(r"\s+", "", str(value).strip())
+        negative_parentheses = text.startswith("(") and text.endswith(")")
+        if negative_parentheses:
+            text = text[1:-1]
+        text = re.sub(r"(?i)(VND|VNĐ|USD|EUR|GBP|JPY|CNY|RMB)", "", text)
+        text = text.replace("%", "").replace("₫", "").replace("đ", "").replace("Đ", "")
+        text = text.replace("$", "").replace("€", "").replace("£", "").replace("¥", "")
+        if negative_parentheses:
+            text = f"-{text}"
+    if not re.fullmatch(r"[+-]?[0-9.,]+", text):
+        return None
+
+    sign = ""
+    if text[:1] in {"+", "-"}:
+        sign, text = text[0], text[1:]
+    dots = text.count(".")
+    commas = text.count(",")
+    if dots and commas:
+        decimal_separator = "." if text.rfind(".") > text.rfind(",") else ","
+        grouping_separator = "," if decimal_separator == "." else "."
+        text = text.replace(grouping_separator, "")
+        text = text.replace(decimal_separator, ".")
+    elif dots or commas:
+        separator = "." if dots else ","
+        parts = text.split(separator)
+        grouping = len(parts) > 2 and all(len(part) == 3 for part in parts[1:])
+        if len(parts) == 2 and len(parts[1]) == 3:
+            grouping = True
+        text = "".join(parts) if grouping else "".join(parts[:-1]) + "." + parts[-1]
+    text = sign + text
+    try:
+        return Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _column_filter_matches(value: Any, rule: Any) -> bool:
+    if not isinstance(rule, dict):
+        return True
+    text = _filter_text(value)
+    normalized = text.casefold()
+    values = rule.get("values")
+    if isinstance(values, list):
+        allowed = {_filter_text(item).casefold() for item in values}
+        if normalized not in allowed:
+            return False
+    search = str(rule.get("search") or "").strip().casefold()
+    if search and search not in normalized:
+        return False
+    operator = str(rule.get("operator") or "")
+    operand = rule.get("value")
+    if not operator:
+        return True
+    if operator in {"contains", "not_contains", "starts_with", "ends_with", "equals", "not_equals"}:
+        expected = _filter_text(operand).casefold()
+        checks = {
+            "contains": expected in normalized,
+            "not_contains": expected not in normalized,
+            "starts_with": normalized.startswith(expected),
+            "ends_with": normalized.endswith(expected),
+            "equals": normalized == expected,
+            "not_equals": normalized != expected,
+        }
+        return checks[operator]
+    actual_number = _as_decimal(value)
+    expected_number = _as_decimal(operand)
+    if actual_number is None or expected_number is None:
+        return False
+    if operator == "gt": return actual_number > expected_number
+    if operator == "gte": return actual_number >= expected_number
+    if operator == "lt": return actual_number < expected_number
+    if operator == "lte": return actual_number <= expected_number
+    if operator == "number_equals": return actual_number == expected_number
+    if operator == "between":
+        upper = _as_decimal(rule.get("value_to"))
+        return upper is not None and expected_number <= actual_number <= upper
+    return True
+
+
+def _matches_column_filters(fields: dict[str, Any], filters: Any) -> bool:
+    if not isinstance(filters, dict):
+        return True
+    return all(_column_filter_matches(fields.get(str(key)), rule) for key, rule in filters.items())
+
+
 def _encode_page_cursor(direction_index: int, source_cursor: str | None) -> str:
     payload = json.dumps([1, direction_index, source_cursor], separators=(",", ":"))
     return base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
@@ -150,6 +391,30 @@ def _decode_page_cursor(value: str | None) -> tuple[int, str | None]:
     return decoded[1], decoded[2]
 
 
+def _encode_sorted_cursor(offset: int) -> str:
+    payload = json.dumps([2, offset], separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).rstrip(b"=").decode("ascii")
+
+
+def _decode_sorted_cursor(value: str | None) -> int:
+    if not value:
+        return 0
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    except Exception as error:
+        raise ValueError("invalid_result_cursor") from error
+    if (
+        not isinstance(decoded, list)
+        or len(decoded) != 2
+        or decoded[0] != 2
+        or not isinstance(decoded[1], int)
+        or decoded[1] < 0
+    ):
+        raise ValueError("invalid_result_cursor")
+    return decoded[1]
+
+
 def _source_template_dir() -> Path:
     return (
         Path(__file__).resolve().parent
@@ -158,8 +423,6 @@ def _source_template_dir() -> Path:
 
 
 def _result_context(backend, query: dict[str, Any]):
-    from app.external_api.results import JobResultReader
-
     base_job = backend._result_job(str(query["connection_id"]))
     if base_job is None:
         return None
@@ -205,7 +468,7 @@ def _result_context(backend, query: dict[str, Any]):
         "date_to": date_to,
         "directions": directions,
         "query_types": query_types,
-        "reader": JobResultReader(database_path),
+        "reader": _LookupEnrichedResultReader(database_path),
         "database_path": database_path,
     }
 
@@ -352,6 +615,208 @@ def _project_fields(
     }
 
 
+def _iter_matching_rows(kind: str, context, schema, search: str, column_filters: Any):
+    """Stream matching source rows without materializing the dataset in React."""
+    for direction in context["directions"]:
+        job = _job_for(context, direction)
+        cursor = None
+        while True:
+            page = (
+                context["reader"].overview_page(job, limit=200, cursor=cursor)
+                if kind == "overview"
+                else context["reader"].detail_page(job, limit=200, cursor=cursor)
+            )
+            for item in page.get("items") or ():
+                safe = _safe_fields(item)
+                safe["direction"] = direction
+                projected = _project_fields(kind, safe, schema, context)
+                if _search_matches(safe, search) and _matches_column_filters(projected, column_filters):
+                    yield safe, projected, _invoice_key(
+                        safe, direction, str(safe.get("query_type") or context["query_types"][0])
+                    )
+            pagination = page.get("pagination") or {}
+            if not pagination.get("has_more") or not pagination.get("next_cursor"):
+                break
+            cursor = str(pagination["next_cursor"])
+
+
+def _result_item(safe: dict[str, Any], projected: dict[str, Any], direction: str, context, excluded_keys) -> dict[str, Any]:
+    raw_id = safe.get("id")
+    if isinstance(raw_id, int):
+        row_id: int | str = raw_id
+    else:
+        fingerprint = json.dumps(
+            safe, ensure_ascii=False, default=str, sort_keys=True
+        ).encode("utf-8")
+        row_id = hashlib.sha256(fingerprint).hexdigest()[:20]
+    invoice_key = _invoice_key(
+        safe, direction, str(safe.get("query_type") or context["query_types"][0])
+    )
+    return {
+        "row_id": row_id,
+        "direction": direction,
+        "invoice_key": invoice_key,
+        "excluded": invoice_key in excluded_keys,
+        "fields": projected,
+    }
+
+
+def _read_sorted_results(kind: str, query: dict[str, Any], context, schema, excluded_keys, analysis, limit: int) -> dict[str, Any]:
+    sort = query.get("sort") or {}
+    column = str(sort.get("column") or "")
+    direction = str(sort.get("direction") or "")
+    columns = [key for key, _ in schema]
+    if column not in columns or direction not in {"asc", "desc"}:
+        raise ValueError("invalid_result_sort")
+    search = str(query.get("search") or "").strip().casefold()
+    filters = query.get("column_filters") or {}
+    rows = list(_iter_matching_rows(kind, context, schema, search, filters))
+    raw_populated = [row for row in rows if row[1].get(column) not in (None, "")]
+    parsed = [(row, _as_decimal(row[1].get(column))) for row in raw_populated]
+    numeric_ratio = sum(value is not None for _row, value in parsed) / max(1, len(parsed))
+    numeric_sort = (
+        column in NUMBER_RESULT_FIELDS
+        or column in PERCENT_RESULT_FIELDS
+        or column in CONDITIONAL_NUMBER_RESULT_FIELDS and numeric_ratio >= 0.8
+    )
+    if numeric_sort:
+        populated = [(row, value) for row, value in parsed if value is not None]
+        missing = [row for row, value in parsed if value is None]
+        missing.extend(row for row in rows if row[1].get(column) in (None, ""))
+    else:
+        populated = [(row, None) for row in raw_populated]
+        missing = [row for row in rows if row[1].get(column) in (None, "")]
+
+    def key(entry):
+        row, numeric_value = entry
+        return numeric_value if numeric_sort else _filter_text(row[1].get(column)).casefold()
+
+    populated.sort(key=key, reverse=direction == "desc")
+    ordered = [row for row, _value in populated] + missing
+    offset = _decode_sorted_cursor(query.get("cursor"))
+    page_rows = ordered[offset:offset + limit]
+    next_offset = offset + len(page_rows)
+    has_more = next_offset < len(ordered)
+    return {
+        "items": [
+            _result_item(safe, fields, safe["direction"], context, excluded_keys)
+            for safe, fields, _invoice_key_value in page_rows
+        ],
+        "columns": columns,
+        "column_labels": {key: title for key, title in schema},
+        "column_types": {
+            key: "percent" if key in PERCENT_RESULT_FIELDS else "number"
+            for key in columns if key in NUMBER_RESULT_FIELDS or key in PERCENT_RESULT_FIELDS
+        },
+        "total_count": analysis["matching_row_count"],
+        "aggregate": analysis,
+        "pagination": {
+            "limit": limit,
+            "has_more": has_more,
+            "next_cursor": _encode_sorted_cursor(next_offset) if has_more else None,
+        },
+    }
+
+
+def _bounded_cache(cache: OrderedDict, key: tuple[Any, ...], factory, limit: int):
+    cached = cache.get(key)
+    if cached is not None:
+        cache.move_to_end(key)
+        return cached
+    value = factory()
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > limit:
+        cache.popitem(last=False)
+    return value
+
+
+def _query_cache_key(kind: str, context, search: str, column_filters: Any) -> tuple[Any, ...]:
+    database_path = Path(context["database_path"])
+    return (
+        kind, str(database_path.resolve()), _database_revision(database_path),
+        context["base_job"].company_tax_code, context["date_from"], context["date_to"],
+        tuple(context["directions"]), tuple(context["query_types"]), search,
+        json.dumps(column_filters or {}, ensure_ascii=False, sort_keys=True, default=str),
+    )
+
+
+def _resolve_excluded_keys(backend, exclusion: Any) -> frozenset[str]:
+    if not isinstance(exclusion, dict):
+        return frozenset()
+    explicit = {
+        str(value) for value in exclusion.get("keys") or ()
+        if isinstance(value, str) and 1 <= len(value) <= 512
+    }
+    rules = exclusion.get("rules") or []
+    if not isinstance(rules, list) or not rules:
+        return frozenset(explicit)
+    key = (
+        "exclusion", json.dumps(rules, ensure_ascii=False, sort_keys=True, default=str),
+        tuple(sorted(explicit)),
+    )
+
+    def build() -> frozenset[str]:
+        output = set(explicit)
+        for rule in rules:
+            if not isinstance(rule, dict) or rule.get("kind") not in {"overview", "details"}:
+                continue
+            query = dict(rule.get("query") or {})
+            context = _result_context(backend, query)
+            if context is None:
+                continue
+            schema = _result_schema(str(rule["kind"]), context)
+            search = str(query.get("search") or "").strip().casefold()
+            except_keys = {str(value) for value in rule.get("except_keys") or ()}
+            for _safe, _fields, invoice_key in _iter_matching_rows(
+                str(rule["kind"]), context, schema, search, query.get("column_filters")
+            ):
+                if invoice_key not in except_keys:
+                    output.add(invoice_key)
+        return frozenset(output)
+
+    return _bounded_cache(_EXCLUSION_CACHE, key, build, _EXCLUSION_CACHE_LIMIT)
+
+
+def _result_analysis(backend, kind: str, context, schema, search: str, column_filters: Any, exclusion: Any):
+    excluded = _resolve_excluded_keys(backend, exclusion)
+    key = _query_cache_key(kind, context, search, column_filters) + (
+        hashlib.sha256("\n".join(sorted(excluded)).encode("utf-8")).hexdigest(),
+    )
+
+    def build() -> dict[str, Any]:
+        matching_row_count = 0
+        row_count = 0
+        invoice_keys: set[str] = set()
+        totals = {field: Decimal("0") for field in MONETARY_RESULT_FIELDS}
+        for _safe, fields, invoice_key in _iter_matching_rows(
+            kind, context, schema, search, column_filters
+        ):
+            matching_row_count += 1
+            if invoice_key in excluded:
+                continue
+            row_count += 1
+            first_invoice_row = invoice_key not in invoice_keys
+            invoice_keys.add(invoice_key)
+            for field in MONETARY_RESULT_FIELDS:
+                if kind == "details" and field in INVOICE_LEVEL_MONETARY_FIELDS and not first_invoice_row:
+                    continue
+                number = _as_decimal(fields.get(field))
+                if number is not None:
+                    totals[field] += number
+        return {
+            "matching_row_count": matching_row_count,
+            "row_count": row_count,
+            "invoice_count": len(invoice_keys),
+            "totals": {
+                field: int(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                for field, value in totals.items()
+            },
+        }
+
+    return _bounded_cache(_RESULT_ANALYSIS_CACHE, key, build, _RESULT_ANALYSIS_CACHE_LIMIT), excluded
+
+
 def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     if kind not in {"overview", "details"}:
         raise ValueError("invalid_result_kind")
@@ -371,13 +836,21 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     columns = [key for key, _ in schema]
     column_labels = {key: title for key, title in schema}
     search = str(query.get("search") or "").strip().casefold()
+    column_filters = query.get("column_filters") or {}
+    analysis, excluded_keys = _result_analysis(
+        backend, kind, context, schema, search, column_filters, query.get("exclusion")
+    )
+    if query.get("sort"):
+        return _read_sorted_results(
+            kind, query, context, schema, excluded_keys, analysis, limit
+        )
     direction_index, source_cursor = _decode_page_cursor(query.get("cursor"))
     directions = context["directions"]
 
     if direction_index >= len(directions):
         return {
             "items": [], "columns": columns, "column_labels": column_labels,
-            "total_count": _result_total_count(kind, context, search),
+            "total_count": analysis["matching_row_count"], "aggregate": analysis,
             "pagination": {"limit": limit, "has_more": False, "next_cursor": None},
         }
 
@@ -403,21 +876,10 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
         for item in page.get("items") or ():
             safe = _safe_fields(item)
             safe["direction"] = direction
-            if not _search_matches(safe, search):
+            projected = _project_fields(kind, safe, schema, context)
+            if not _search_matches(safe, search) or not _matches_column_filters(projected, column_filters):
                 continue
-            raw_id = safe.get("id")
-            if isinstance(raw_id, int):
-                row_id: int | str = raw_id
-            else:
-                fingerprint = json.dumps(
-                    safe, ensure_ascii=False, default=str, sort_keys=True
-                ).encode("utf-8")
-                row_id = hashlib.sha256(fingerprint).hexdigest()[:20]
-            output.append({
-                "row_id": row_id,
-                "direction": direction,
-                "fields": _project_fields(kind, safe, schema, context),
-            })
+            output.append(_result_item(safe, projected, direction, context, excluded_keys))
 
         pagination = page.get("pagination") or {}
         page_more = bool(pagination.get("has_more"))
@@ -447,8 +909,45 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
         },
     }
 
-    response["total_count"] = _result_total_count(kind, context, search)
+    response["total_count"] = analysis["matching_row_count"]
+    response["aggregate"] = analysis
+    response["column_types"] = {
+        key: "percent" if key in PERCENT_RESULT_FIELDS else "number"
+        for key in columns if key in NUMBER_RESULT_FIELDS or key in PERCENT_RESULT_FIELDS
+    }
     return response
+
+
+def read_result_facets(backend, query: dict[str, Any]) -> dict[str, Any]:
+    kind = str(query.get("kind") or "")
+    column = str(query.get("column") or "")
+    if kind not in {"overview", "details"} or not column:
+        raise ValueError("invalid_result_facet")
+    context = _result_context(backend, query)
+    if context is None:
+        return {"values": [], "truncated": False, "column_type": "text"}
+    schema = _result_schema(kind, context)
+    columns = {key for key, _label in schema}
+    if column not in columns:
+        raise ValueError("invalid_result_facet")
+    filters = dict(query.get("column_filters") or {})
+    filters.pop(column, None)
+    search = str(query.get("search") or "").strip().casefold()
+    limit = max(1, min(500, int(query.get("facet_limit") or 250)))
+    values: dict[str, Any] = {}
+    truncated = False
+    for _safe, fields, _invoice_key_value in _iter_matching_rows(kind, context, schema, search, filters):
+        value = fields.get(column)
+        normalized = _filter_text(value).casefold()
+        values.setdefault(normalized, value)
+        if len(values) > limit:
+            truncated = True
+            break
+    ordered = sorted(values.values(), key=lambda value: _filter_text(value).casefold())[:limit]
+    column_type = "percent" if column in PERCENT_RESULT_FIELDS else (
+        "number" if column in NUMBER_RESULT_FIELDS else "text"
+    )
+    return {"values": ordered, "truncated": truncated, "column_type": column_type}
 
 
 def _all_overview_fields(
@@ -456,8 +955,17 @@ def _all_overview_fields(
     direction: str,
     query_type: str,
     search: str,
+    column_filters: Any = None,
+    excluded_keys: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
+    from app.config.crawl_config import query_type_to_category
+
     job = _job_for(context, direction, query_types=[query_type])
+    category = query_type_to_category(query_type)
+    schema = _overview_template_schema(category, direction)
+    projection_context = {
+        **context, "query_types": [query_type], "directions": [direction]
+    }
     cursor = None
     rows: list[dict[str, Any]] = []
     while True:
@@ -465,7 +973,12 @@ def _all_overview_fields(
         for item in page.get("items") or ():
             fields = _safe_fields(item)
             fields["direction"] = direction
-            if _search_matches(fields, search):
+            projected = _project_fields("overview", fields, schema, projection_context)
+            if (
+                _search_matches(fields, search)
+                and _matches_column_filters(projected, column_filters)
+                and _invoice_key(fields, direction, query_type) not in excluded_keys
+            ):
                 fields.setdefault(
                     "tdlap", fields.get("nlap") or fields.get("nlap_date")
                 )
@@ -973,7 +1486,8 @@ def _export_results_impl(
     if context is None:
         raise ValueError("result_job_not_found")
 
-    search = str(value.get("search") or "").strip().casefold()
+    result_filters = value.get("result_filters") or {}
+    excluded_keys = _resolve_excluded_keys(backend, value.get("exclusion"))
     destination.mkdir(parents=True, exist_ok=True)
     files: list[str] = []
     combinations = [
@@ -989,10 +1503,20 @@ def _export_results_impl(
     # Discover real, non-empty workbook units before rendering so mixed scope
     # progress never resets and never counts a workbook that will not exist.
     for scope in scopes:
+        scope_filter = result_filters.get(scope) if isinstance(result_filters, dict) else None
+        scope_filter = scope_filter if isinstance(scope_filter, dict) else {}
+        scope_search = str(scope_filter.get("search", value.get("search") or "")).strip().casefold()
+        scope_columns = scope_filter.get("column_filters") or {}
         for direction, query_type in combinations:
             query_started = time.perf_counter()
             if scope == "overview":
-                payload = _all_overview_fields(context, direction, query_type, search)
+                payload = (
+                    _all_overview_fields(context, direction, query_type, scope_search)
+                    if not scope_columns and not excluded_keys
+                    else _all_overview_fields(
+                        context, direction, query_type, scope_search, scope_columns, excluded_keys
+                    )
+                )
             else:
                 payload = detail_repository.get_detail_records_for_export(
                     context["base_job"].company_tax_code,
@@ -1001,7 +1525,23 @@ def _export_results_impl(
                     context["date_from"],
                     context["date_to"],
                 )
-                payload = _filter_detail_records(payload, search)
+                if scope_search or scope_columns or excluded_keys:
+                    filtered_records = []
+                    row_builder = _FilteredExcelSafeDetailRowBuilder(
+                        search=scope_search, column_filters=scope_columns
+                    )
+                    for record in payload:
+                        record_key = _invoice_key(record, direction, query_type)
+                        if record_key in excluded_keys:
+                            continue
+                        raw_path = Path(str(record.get("raw_detail_path") or ""))
+                        try:
+                            detail_payload = json.loads(raw_path.read_text(encoding="utf-8"))
+                        except (OSError, UnicodeError, ValueError, TypeError):
+                            detail_payload = {}
+                        if row_builder.build_rows(detail_payload, record):
+                            filtered_records.append(record)
+                    payload = filtered_records
             query_seconds = time.perf_counter() - query_started
             candidate_index += 1
             reporter.planning(candidate_index, candidate_total)
@@ -1015,6 +1555,8 @@ def _export_results_impl(
                     "direction": direction,
                     "query_type": query_type,
                     "payload": payload,
+                    "search": scope_search,
+                    "column_filters": scope_columns,
                 })
 
     if not plans:
@@ -1057,10 +1599,17 @@ def _export_results_impl(
                         progress=reporter.unit,
                     )
                 else:
+                    export_row_builder = (
+                        _FilteredExcelSafeDetailRowBuilder(
+                            search=plan["search"], column_filters=plan["column_filters"]
+                        )
+                        if plan["search"] or plan["column_filters"]
+                        else _ExcelSafeDetailRowBuilder()
+                    )
                     if reporter.callback is None:
                         exporter = InvoiceDetailExcelExporter(
                             _source_template_dir() / "invoice_detail.xlsx",
-                            row_builder=_ExcelSafeDetailRowBuilder(),
+                            row_builder=export_row_builder,
                         )
                     else:
                         from mia_progressive_excel_exporter import (
@@ -1068,7 +1617,7 @@ def _export_results_impl(
                         )
                         exporter = ProgressiveInvoiceDetailExcelExporter(
                             _source_template_dir() / "invoice_detail.xlsx",
-                            row_builder=_ExcelSafeDetailRowBuilder(),
+                            row_builder=export_row_builder,
                             progress=reporter.unit,
                         )
                     exporter.export(

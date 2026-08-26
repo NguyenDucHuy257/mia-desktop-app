@@ -6,13 +6,16 @@ import previousIcon from '../../assets/figma/artifact-previous.svg';
 import nextIcon from '../../assets/figma/artifact-next.svg';
 import backIcon from '../../assets/figma/back.png';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
-import type { DetailResult, LocalResultPage, OverviewResult } from '../../lib/runtime-bridge';
+import type { ColumnFilters, DetailResult, LocalResultPage, OverviewResult, ResultExclusion, ResultFilterState, ResultQuery } from '../../lib/runtime-bridge';
 import type { InvoiceQueryType } from '../../lib/api/contracts';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from './result-export-errors';
 import { ResultExportProgressBar } from './ResultExportProgressBar';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
+import { ColumnFilterPopover } from './ColumnFilterPopover';
+import { formatResultCell, formatVietnameseNumber, MONETARY_FIELDS } from './result-presentation';
+import { emptyInvoiceSelection, exclusionFromSelection, invoiceSelected, selectionCount, toggleInvoice } from './result-selection';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
 
@@ -42,22 +45,35 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [queryType, setQueryType] = useState<InvoiceQueryType>('query');
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
-  const [search, setSearch] = useState('');
+  const [filtersByMode, setFiltersByMode] = useState<Record<ResultMode, ResultFilterState>>({
+    overview: { search: '', column_filters: {} },
+    details: { search: '', column_filters: {} },
+  });
+  const search = filtersByMode[mode].search;
+  const columnFilters = filtersByMode[mode].column_filters;
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState<ResultItem[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [columnLabels, setColumnLabels] = useState<Record<string, string>>({});
+  const [columnTypes, setColumnTypes] = useState<Record<string, 'text' | 'number' | 'percent'>>({});
   const [pagination, setPagination] = useState<LocalResultPage<ResultItem>['pagination'] | null>(null);
   const [totalCount, setTotalCount] = useState<number | null>(null);
+  const [aggregate, setAggregate] = useState<NonNullable<LocalResultPage<ResultItem>['aggregate']> | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [exportOpen, setExportOpen] = useState(false);
   const [exportScopes, setExportScopes] = useState<ResultMode[]>(['overview', 'details']);
   const [feedback, setFeedback] = useState('');
+  const [exclusion, setExclusion] = useState<ResultExclusion>({ keys: [], rules: [] });
+  const [selection, setSelection] = useState(emptyInvoiceSelection);
+  const [confirmExclusion, setConfirmExclusion] = useState(false);
   const generation = useRef(0);
   const pageCache = useRef(new Map<number, LocalResultPage<ResultItem>>());
   const cursorByPage = useRef(new Map<number, string | null>([[1, null]]));
   const exportRoot = useRef<HTMLDivElement>(null);
+  const schemaContext = `${mode}|${direction}|${queryType}|${dateFrom}|${dateTo}`;
+  const previousSchemaContext = useRef(schemaContext);
+  const hasActiveFilter = Boolean(debouncedSearch || Object.keys(columnFilters).length);
 
   const crawlJob = crawlItem?.status ?? crawlItem?.record;
   const crawlStatus = crawlJob?.status;
@@ -85,9 +101,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       crawlJob.event_sequence,
       crawlJob.message,
       crawlJob.overall_percent,
-      crawlJob.current_month?.key,
-      crawlJob.current_month?.processed,
-      crawlJob.current_month?.planned,
+      crawlJob.scope_progress?.scope,
+      crawlJob.scope_progress?.processed,
+      crawlJob.scope_progress?.total,
     ])
     : '';
 
@@ -99,6 +115,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       cursor,
       limit: PAGE_SIZE,
       search: debouncedSearch,
+      column_filters: columnFilters,
+      sort: filtersByMode[mode].sort,
+      exclusion,
       direction: direction || null,
       query_type: queryType,
       date_from: dateFrom,
@@ -125,14 +144,16 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       duration_ms: Math.round(performance.now() - started),
     });
     return result;
-  }, [connectionId, dateFrom, dateTo, debouncedSearch, direction, mode, queryType]);
+  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, filtersByMode, mode, queryType]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
     setItems(result.items);
     setColumns(result.columns ?? collectColumns(result.items));
     setColumnLabels(result.column_labels ?? {});
+    setColumnTypes(result.column_types ?? {});
     setPagination(result.pagination);
     setTotalCount(typeof result.total_count === 'number' ? result.total_count : null);
+    setAggregate(result.aggregate ?? null);
     setPageNumber(targetPage);
     setState('ready');
   }, []);
@@ -179,6 +200,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     return () => clearTimeout(timer);
   }, [search]);
 
+  useEffect(() => { setSelection(emptyInvoiceSelection()); }, [mode, debouncedSearch, columnFilters, direction, queryType, dateFrom, dateTo]);
+
   useEffect(() => {
     const token = generation.current + 1;
     generation.current = token;
@@ -186,13 +209,18 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     cursorByPage.current.clear();
     cursorByPage.current.set(1, null);
     setItems([]);
-    setColumns([]);
-    setColumnLabels({});
+    if (previousSchemaContext.current !== schemaContext) {
+      previousSchemaContext.current = schemaContext;
+      setColumns([]);
+      setColumnLabels({});
+      setColumnTypes({});
+    }
     setPagination(null);
     setTotalCount(null);
+    setAggregate(null);
     setPageNumber(1);
     void loadPage(1, token);
-  }, [loadPage]);
+  }, [loadPage, schemaContext]);
 
   // The result view is allowed while the source job is still running. Refresh
   // from persisted SQLite whenever the polled source progress changes so rows
@@ -236,6 +264,55 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     if (value === 'sco-query' && direction === '') setDirection('purchase');
   }
 
+  function setSearch(value: string) {
+    setFiltersByMode(current => ({
+      ...current,
+      [mode]: { ...current[mode], search: value },
+    }));
+  }
+
+  function setColumnFilter(column: string, rule?: ColumnFilters[string]) {
+    setFiltersByMode(current => {
+      const column_filters = { ...current[mode].column_filters };
+      if (rule && (rule.values || rule.search || rule.operator)) column_filters[column] = rule;
+      else delete column_filters[column];
+      return { ...current, [mode]: { ...current[mode], column_filters } };
+    });
+  }
+
+  function setColumnSort(column: string, sortDirection: 'asc' | 'desc') {
+    setFiltersByMode(current => ({
+      ...current,
+      [mode]: { ...current[mode], sort: { column, direction: sortDirection } },
+    }));
+  }
+
+  const currentResultQuery = useCallback((scope: ResultMode = mode): ResultQuery => ({
+    connection_id: connectionId,
+    cursor: null,
+    limit: PAGE_SIZE,
+    search: filtersByMode[scope].search.trim(),
+    column_filters: filtersByMode[scope].column_filters,
+    sort: filtersByMode[scope].sort,
+    direction: direction || null,
+    query_type: queryType,
+    date_from: dateFrom,
+    date_to: dateTo,
+  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, queryType]);
+
+  const loadFacet = useCallback(async (column: string) => {
+    const bridge = window.miaRuntime?.results;
+    if (!bridge) throw new Error('results_runtime_unavailable');
+    return bridge.facets({ ...currentResultQuery(), kind: mode, column, facet_limit: 250 });
+  }, [currentResultQuery, mode]);
+
+  function confirmSelectedExclusion() {
+    setExclusion(current => exclusionFromSelection(current, selection, mode, currentResultQuery()));
+    setSelection(emptyInvoiceSelection());
+    setConfirmExclusion(false);
+    setFeedback('Đã loại các hóa đơn đã chọn khỏi tổng và file Excel trong phiên Kết quả này.');
+  }
+
   async function exportResults() {
     if (!connectionId || exportScopes.length === 0) return;
     if (!exportFolder.trim()) {
@@ -265,7 +342,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
             connection_id: connectionId,
             cursor: null,
             limit: 1,
-            search: exportSearch,
+            search: filtersByMode[scope].search.trim(),
+            column_filters: filtersByMode[scope].column_filters,
+            exclusion,
             direction: direction || null,
             query_type: queryType,
             date_from: dateFrom,
@@ -308,6 +387,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         direction: direction || null,
         query_type: queryType,
         search: exportSearch,
+        result_filters: filtersByMode,
+        exclusion,
       }]);
       if (summary.failures.length) {
         const error = summary.failures[0].error;
@@ -336,10 +417,16 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     [displayedPageCount, pageNumber],
   );
   const gridTemplateColumns = useMemo(
-    () => columns.map((column) => columnWidth(column, columnLabels[column])).join(' '),
+    () => ['42px', ...columns.map((column) => columnWidth(column, columnLabels[column]))].join(' '),
     [columnLabels, columns],
   );
   const resultExportWorking = resultExports.active && resultExports.owner === 'results';
+  const selectedInvoiceCount = selectionCount(selection, aggregate?.invoice_count ?? 0);
+  const visibleSelectableKeys = [...new Set(items.filter(item => !item.excluded).map(item => item.invoice_key))];
+  const headerChecked = selection.allMatching || (
+    visibleSelectableKeys.length > 0 && visibleSelectableKeys.every(key => invoiceSelected(selection, key))
+  );
+  const headerIndeterminate = selectedInvoiceCount > 0 && !headerChecked;
 
   return <section className="results-page results-page--figma" aria-label="Kết quả hóa đơn">
     <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại Quản lý HDDT</button>
@@ -377,6 +464,16 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     </div>
 
     <div className="results-filters results-filters--figma">
+      <div className="results-exclusion-control">
+        <button className="stop-button results-exclude-button" type="button" disabled={selectedInvoiceCount === 0} onClick={() => setConfirmExclusion(true)}>
+          Loại khỏi tải xuống ({selectedInvoiceCount})
+        </button>
+        {confirmExclusion ? <div className="results-exclude-confirm" role="dialog" aria-label="Xác nhận loại hóa đơn">
+          <strong>Loại {selectedInvoiceCount} hóa đơn khỏi file tải xuống?</strong>
+          <span>Dữ liệu nguồn không bị xóa hoặc thay đổi.</span>
+          <div><button type="button" onClick={() => setConfirmExclusion(false)}>Hủy</button><button type="button" onClick={confirmSelectedExclusion}>Xác nhận</button></div>
+        </div> : null}
+      </div>
       <DateRangePicker className="results-date-range" dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
       <select aria-label="Loại hóa đơn" value={queryType} onChange={(event) => changeQueryType(event.target.value as InvoiceQueryType)}>
         <option value="query">Hóa đơn điện tử</option>
@@ -402,24 +499,78 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
     {feedback ? <div className="results-feedback" role="status">{feedback}</div> : null}
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
-    {state === 'loading' && items.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
-    {state === 'ready' && items.length === 0 ? <div className="results-state results-empty">{crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không tồn tại hóa đơn trong thời gian này.'}</div> : null}
-    {items.length && columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
+    {state === 'loading' && items.length === 0 && columns.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
+    {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
+    {columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
+        <span className="results-checkbox-cell"><input
+          type="checkbox"
+          aria-label="Chọn tất cả hóa đơn phù hợp bộ lọc trên mọi trang"
+          aria-checked={headerIndeterminate ? 'mixed' : headerChecked}
+          ref={node => { if (node) node.indeterminate = headerIndeterminate; }}
+          checked={headerChecked}
+          onChange={() => setSelection(headerChecked ? emptyInvoiceSelection() : { allMatching: true, selected: new Set(), deselected: new Set() })}
+        /></span>
         {columns.map((column) => {
           const label = columnLabels[column] || column;
-          return <span key={column} title={label}>{label}</span>;
+          return <span className="results-header-slot" key={column}>
+            <div className="result-header-cell">
+              <span className="result-header-title" title={label}>{label}</span>
+              <ColumnFilterPopover
+                column={column}
+                label={label}
+                active={columnFilters[column]}
+                sort={filtersByMode[mode].sort}
+                loadValues={() => loadFacet(column)}
+                onApply={rule => setColumnFilter(column, rule)}
+                onClear={() => setColumnFilter(column)}
+                onSort={sortDirection => setColumnSort(column, sortDirection)}
+              />
+            </div>
+          </span>;
         })}
       </div>
+      {items.length === 0 ? <div className="results-table-empty" role="status">
+        {state === 'loading'
+          ? 'Đang tải...'
+          : hasActiveFilter
+            ? 'Không có dữ liệu phù hợp với bộ lọc hiện tại.'
+            : crawlActive
+              ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.'
+              : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}
+      </div> : null}
       {items.map((item, rowIndex) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>
+        <span className="results-checkbox-cell"><input type="checkbox" aria-label={`Chọn hóa đơn ${item.invoice_key}`} disabled={item.excluded} checked={item.excluded || invoiceSelected(selection, item.invoice_key)} onChange={() => setSelection(current => toggleInvoice(current, item.invoice_key))} /></span>
         {columns.map((column) => {
           const rawValue = column === 'stt' && (item.fields[column] === null || item.fields[column] === undefined)
             ? (pageNumber - 1) * PAGE_SIZE + rowIndex + 1
             : item.fields[column];
-          const display = formatCell(rawValue);
+          const display = formatResultCell(column, rawValue, columnTypes[column]);
+          if (column === 'url' && typeof rawValue === 'string' && safeExternalHttpUrl(rawValue)) {
+            return <span key={column} title={rawValue}>
+              <button
+                className="results-external-link"
+                type="button"
+                title={rawValue}
+                onClick={() => void window.miaRuntime?.external.open(rawValue)}
+              >{display}</button>
+            </span>;
+          }
           return <span key={column} title={display}>{display}</span>;
         })}
       </div>)}
+      {aggregate && items.length > 0 ? <div className="results-row results-row--total" style={{ gridTemplateColumns }}>
+        <span className="results-checkbox-cell" />
+        {columns.map(column => {
+          const rawValue = column === 'stt'
+            ? 'Tổng'
+            : column === 'khmshdon'
+              ? `${formatVietnameseNumber(aggregate.invoice_count)} HĐ`
+              : MONETARY_FIELDS.has(column) ? aggregate.totals[column] : '';
+          const display = rawValue === '' ? '' : formatResultCell(column, rawValue, columnTypes[column]);
+          return <span key={column} title={display}>{display}</span>;
+        })}
+      </div> : null}
     </div> : null}
 
     {(items.length > 0 || pageNumber > 1) ? <footer className="results-pager artifact-pager">
@@ -435,7 +586,6 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     </footer> : null}
   </section>;
 }
-
 function collectColumns(items: ResultItem[]) {
   const columns: string[] = [];
   const seen = new Set<string>();
@@ -451,7 +601,22 @@ function collectColumns(items: ResultItem[]) {
 }
 
 function resultKey(item: ResultItem) {
-  return `${item.direction}-${item.row_id}`;
+  return `${item.invoice_key || item.direction}-${item.row_id}`;
+}
+
+function safeExternalHttpUrl(value: string) {
+  if (value.length < 1 || value.length > 2048) return false;
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return ['http:', 'https:'].includes(parsed.protocol)
+      && !parsed.username
+      && !parsed.password
+      && Boolean(host)
+      && !['localhost', '127.0.0.1', '::1'].includes(host);
+  } catch {
+    return false;
+  }
 }
 
 function columnWidth(column: string, label = '') {
@@ -462,11 +627,4 @@ function columnWidth(column: string, label = '') {
   if (['nbten', 'nmten', 'ten', 'nbdchi', 'nmdchi', 'url'].includes(column)) return '260px';
   if (['tgtcthue', 'tgtthue', 'ttcktmai', 'tgtphi', 'tgtttbso', 'dgia', 'thtien', 'tthue'].includes(column)) return '180px';
   return `${Math.max(150, Math.min(260, label.length * 8 + 36))}px`;
-}
-
-function formatCell(value: unknown) {
-  if (value === null || value === undefined || value === '') return '—';
-  if (typeof value === 'boolean') return value ? 'Có' : 'Không';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
 }

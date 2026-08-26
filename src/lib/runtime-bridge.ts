@@ -1,4 +1,4 @@
-import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
+import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, InvoiceSyncState, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
 
 export interface MiaDeviceIdentity {
   algorithm: 'Ed25519';
@@ -29,6 +29,7 @@ export interface MiaRuntimeBridge {
     resume(): Promise<PersistedJob | null>;
     resumeAll(): Promise<PersistedJob[]>;
     latestAll(): Promise<PersistedJob[]>;
+    syncStates(connectionIds: string[], direction: InvoiceDirection): Promise<InvoiceSyncState[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;
@@ -68,6 +69,10 @@ export interface MiaRuntimeBridge {
   results: {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
+    facets(query: ResultFacetQuery): Promise<ResultFacetResponse>;
+  };
+  external: {
+    open(url: string): Promise<boolean>;
   };
 }
 
@@ -122,6 +127,8 @@ export interface ArtifactExportRequest {
   direction?: InvoiceDirection | null;
   query_type?: InvoiceQueryType | null;
   search?: string;
+  result_filters?: Partial<Record<'overview' | 'details', ResultFilterState>>;
+  exclusion?: ResultExclusion;
 }
 export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: InvoiceDirection | null; query_type?: InvoiceQueryType | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
 export interface ArtifactItem { artifact_id: string; connection_id: string; job_id: string; filename: string; kind: 'xml' | 'html' | 'pdf'; direction: InvoiceDirection | null; size: number; updated_at: number }
@@ -135,12 +142,31 @@ export interface ResultQuery {
   query_type?: InvoiceQueryType | null;
   date_from?: string;
   date_to?: string;
+  column_filters?: ColumnFilters;
+  exclusion?: ResultExclusion;
+  sort?: ResultSort;
 }
+export type ColumnFilterRule = {
+  values?: Array<string | number | boolean | null>;
+  search?: string;
+  operator?: 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'equals' | 'not_equals' | 'gt' | 'gte' | 'lt' | 'lte' | 'number_equals' | 'between';
+  value?: string | number | boolean | null;
+  value_to?: string | number | boolean | null;
+};
+export type ColumnFilters = Record<string, ColumnFilterRule>;
+export interface ResultSort { column: string; direction: 'asc' | 'desc' }
+export interface ResultFilterState { search: string; column_filters: ColumnFilters; sort?: ResultSort }
+export interface ResultExclusionRule { kind: 'overview' | 'details'; query: ResultQuery; except_keys?: string[] }
+export interface ResultExclusion { keys: string[]; rules: ResultExclusionRule[] }
+export interface ResultFacetQuery extends ResultQuery { kind: 'overview' | 'details'; column: string; facet_limit?: number }
+export interface ResultFacetResponse { values: unknown[]; truncated: boolean; column_type: 'text' | 'number' | 'percent' }
 export interface SourceResultRow {
   row_id: number | string;
   direction: InvoiceDirection;
   /** Fields projected into the exact source Excel template schema. */
   fields: Record<string, unknown>;
+  invoice_key: string;
+  excluded?: boolean;
 }
 export type OverviewResult = SourceResultRow;
 export type DetailResult = SourceResultRow;
@@ -153,6 +179,8 @@ export interface LocalResultPage<T> {
   total_count?: number;
   row_count?: number;
   invoice_count?: number;
+  aggregate?: { matching_row_count: number; row_count: number; invoice_count: number; totals: Record<string, number> };
+  column_types?: Record<string, 'text' | 'number' | 'percent'>;
   pagination: { limit: number; has_more: boolean; next_cursor: string | null };
 }
 
@@ -180,6 +208,8 @@ export interface PersistedJob {
   artifact_progress?: JobStatusResponse['artifact_progress'];
   message?: string | null;
   current_month?: JobStatusResponse['current_month'];
+  scope_progress?: JobStatusResponse['scope_progress'];
+  progress_totals?: JobStatusResponse['progress_totals'];
   error?: JobStatusResponse['error'];
   event_sequence?: number;
 }

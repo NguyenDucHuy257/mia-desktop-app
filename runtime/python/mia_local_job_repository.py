@@ -13,9 +13,11 @@ state transitions for source-compatible jobs remain implemented upstream.
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 import sys
 from contextlib import closing
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +42,7 @@ class LocalSequentialJobRepository:
 
     def __init__(self, database_path: Path | str) -> None:
         self.delegate = SQLiteJobEngineRepository(database_path)
+        self.desktop_job_metadata: dict[str, object] | None = None
 
     def __getattr__(self, name):
         return getattr(self.delegate, name)
@@ -139,12 +142,61 @@ class LocalSequentialJobRepository:
         # source worker queue after migration.
         if not str(request.account_key).startswith(_SOURCE_CONNECTION_PREFIX):
             raise ValueError("source_connection_required")
+        metadata = dict(self.desktop_job_metadata or {})
+        enriched_request = replace(
+            request, parameters={**request.parameters, **metadata}
+        ) if metadata else request
         return self.delegate.create_job(
-            request,
+            enriched_request,
             tasks,
             stages=stages,
             now=now,
         )
+
+    def latest_invoice_job_for_direction(
+        self, account_key: str, direction: str, *, owner_id: str | None = None
+    ):
+        """Latest durable job containing one direction, including terminal jobs."""
+        where_owner = " AND owner_id = ?" if owner_id is not None else ""
+        params: tuple[object, ...] = (
+            (account_key, owner_id) if owner_id is not None else (account_key,)
+        )
+        with closing(sqlite3.connect(self.delegate.database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            rows = connection.execute(
+                f"""SELECT job_id, parameters_json FROM crawl_jobs
+                    WHERE account_key=? AND job_type='invoice_crawl' {where_owner}
+                    ORDER BY created_at DESC, job_id DESC""",
+                params,
+            ).fetchall()
+        for job_id, raw in rows:
+            try:
+                directions = json.loads(raw).get("directions") or ()
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if direction in directions:
+                return self.delegate.get_job(str(job_id))
+        return None
+
+    def merge_job_parameters(self, job_id: str, values: dict[str, object]):
+        """Durably add desktop worker metadata without changing source schema."""
+        if not values:
+            return self.delegate.get_job(job_id)
+        with closing(sqlite3.connect(self.delegate.database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            with connection:
+                row = connection.execute(
+                    "SELECT parameters_json FROM crawl_jobs WHERE job_id=?", (job_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError(job_id)
+                parameters = json.loads(row[0])
+                parameters.update(values)
+                connection.execute(
+                    "UPDATE crawl_jobs SET parameters_json=? WHERE job_id=?",
+                    (json.dumps(parameters, ensure_ascii=False, sort_keys=True), job_id),
+                )
+        return self.delegate.get_job(job_id)
 
 
 def create_local_job_repository(*, sqlite_path: Path | str, **_ignored):
