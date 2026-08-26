@@ -24,7 +24,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import closing
+from datetime import date, timedelta
 from pathlib import Path
+import sqlite3
 import sys
 
 
@@ -33,6 +35,8 @@ if str(VENDOR_ROOT) not in sys.path:
     sys.path.insert(0, str(VENDOR_ROOT))
 
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
+from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+from app.repositories.invoice_package_repository import InvoicePackageRepository
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
 
@@ -46,23 +50,137 @@ def _detail_key(company_tax_code, direction, query_type, nbmst, khhdon, shdon, k
 class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
     """One-worker source pipeline with redundant local verification/scans removed."""
 
+    def _latest_month_force_slices(self, parameters):
+        if parameters.get("sync_mode") != "supplement":
+            return super()._latest_month_force_slices(parameters)
+        request_from = date.fromisoformat(parameters["date_from"])
+        request_to = date.fromisoformat(parameters["date_to"])
+        current_begin = self.clock().date().replace(day=1)
+        previous_end = current_begin - timedelta(days=1)
+        previous_begin = previous_end.replace(day=1)
+        next_month = (current_begin.replace(day=28) + timedelta(days=4)).replace(day=1)
+        current_end = next_month - timedelta(days=1)
+        slices = set()
+        for month_begin, month_end in ((previous_begin, previous_end), (current_begin, current_end)):
+            begin, end = max(request_from, month_begin), min(request_to, month_end)
+            if begin > end:
+                continue
+            for direction in parameters["directions"]:
+                for query_type in parameters["query_types"]:
+                    slices.add((direction, query_type, begin, end))
+        return frozenset(slices)
+
     def run(self, job, worker_id: str, lease_token: str):
+        job = self._prepare_full_replacement(job)
         # The pipeline object is reused by the single local supervisor, so all
         # cached planning/presentation state is explicitly job-scoped.
         self._desktop_overview_complete = False
         self._desktop_detail_plan = None
         self._desktop_detail_plan_by_month = None
         self._desktop_current_unit = None
+        overview_commit = None
+        if job.parameters.get("sync_mode") == "new":
+            overview_commit = InvoiceOverviewRepository.commit_overview_refresh_page
+
+            def publish_refresh_page(repository, *args, **kwargs):
+                return self._publish_replacement_page(overview_commit, repository, *args, **kwargs)
+
+            InvoiceOverviewRepository.commit_overview_refresh_page = publish_refresh_page
         originals = self._install_unit_progress_wrappers()
         try:
             return super().run(job, worker_id, lease_token)
         finally:
+            if overview_commit is not None:
+                InvoiceOverviewRepository.commit_overview_refresh_page = overview_commit
             for name, original in originals.items():
                 setattr(self.core, name, original)
             self._desktop_overview_complete = False
             self._desktop_detail_plan = None
             self._desktop_detail_plan_by_month = None
             self._desktop_current_unit = None
+
+    @staticmethod
+    def _publish_replacement_page(original_commit, repository, *args, **kwargs):
+        committed = original_commit(repository, *args, **kwargs)
+        repository.upsert_items(
+            company_tax_code=kwargs["company_tax_code"], direction=kwargs["direction"],
+            query_type=kwargs["query_type"], invoice_category=kwargs["invoice_category"],
+            raw_json_path=kwargs.get("raw_json_path") or "", items=kwargs["items"],
+            timestamp=kwargs["timestamp"],
+        )
+        return committed
+
+    def _prepare_full_replacement(self, job):
+        parameters = dict(job.parameters)
+        if parameters.get("sync_mode") != "new" or parameters.get("replacement_prepared"):
+            return job
+        database_path = Path(self.planner.data_root) / job.company_tax_code / "db" / "invoices.sqlite3"
+        InvoiceOverviewRepository(database_path).init_db()
+        InvoiceDetailRepository(database_path).init_db()
+        InvoicePackageRepository(database_path).init_db()
+        date_from, date_to = str(parameters["date_from"]), str(parameters["date_to"])
+        directions = list(parameters.get("directions") or ())
+        if len(directions) != 1:
+            raise ValueError("new sync replacement requires exactly one direction")
+        direction = str(directions[0])
+        replaced = parameters.get("replaced_old_count")
+        if replaced is None:
+            with closing(sqlite3.connect(database_path, timeout=30)) as connection:
+                replaced = int(connection.execute(
+                    """SELECT COUNT(*) FROM invoice_overview_items
+                       WHERE company_tax_code=? AND direction=? AND nlap_date BETWEEN ? AND ?""",
+                    (job.company_tax_code, direction, date_from, date_to),
+                ).fetchone()[0])
+            job = self.repository.merge_job_parameters(job.job_id, {
+                "replaced_old_count": replaced, "replacement_prepared": False,
+            })
+        self._delete_replacement_range(
+            database_path=database_path, company_tax_code=job.company_tax_code,
+            direction=direction, date_from=date_from, date_to=date_to,
+        )
+        return self.repository.merge_job_parameters(job.job_id, {
+            "replaced_old_count": int(replaced), "replacement_prepared": True,
+        })
+
+    @staticmethod
+    def _delete_replacement_range(*, database_path, company_tax_code, direction, date_from, date_to):
+        with closing(sqlite3.connect(database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 30000")
+            with connection:
+                keys = (company_tax_code, direction, date_from, date_to)
+                detail_ids = [row[0] for row in connection.execute(
+                    """SELECT id FROM invoice_detail_items WHERE company_tax_code=? AND direction=?
+                       AND nlap_date BETWEEN ? AND ?""", keys
+                ).fetchall()]
+                if detail_ids:
+                    placeholders = ",".join("?" for _ in detail_ids)
+                    connection.execute(f"DELETE FROM invoice_detail_lines WHERE detail_item_id IN ({placeholders})", detail_ids)
+                    connection.execute(f"DELETE FROM invoice_detail_items WHERE id IN ({placeholders})", detail_ids)
+                connection.execute(
+                    """DELETE FROM invoice_package_items WHERE company_tax_code=? AND direction=?
+                       AND nlap_date BETWEEN ? AND ?""", keys
+                )
+                overview_ids = [row[0] for row in connection.execute(
+                    """SELECT id FROM invoice_overview_items WHERE company_tax_code=? AND direction=?
+                       AND nlap_date BETWEEN ? AND ?""", keys
+                ).fetchall()]
+                if overview_ids:
+                    placeholders = ",".join("?" for _ in overview_ids)
+                    connection.execute(f"DELETE FROM invoice_overview_attributes WHERE invoice_item_id IN ({placeholders})", overview_ids)
+                    connection.execute(f"DELETE FROM invoice_overview_items WHERE id IN ({placeholders})", overview_ids)
+                connection.execute(
+                    """UPDATE invoice_overview_checkpoints SET checkpoint_status='incomplete'
+                       WHERE company_tax_code=? AND direction=? AND NOT (to_date < ? OR from_date > ?)""",
+                    (company_tax_code, direction, date_from, date_to),
+                )
+
+    @staticmethod
+    def _overview_payload(parameters, direction, query_type, month):
+        payload = InvoiceCrawlPipeline._overview_payload(parameters, direction, query_type, month)
+        if parameters.get("sync_mode") == "supplement":
+            payload["sync_mode"] = "supplement"
+        return payload
 
     def _install_unit_progress_wrappers(self):
         originals = {}
@@ -220,9 +338,12 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         InvoiceDetailRepository.get_detail_by_invoice_key = self._cached_detail_lookup(
             original_lookup
         )
+        plan_parameters = parameters
+        if parameters.get("sync_mode") == "supplement":
+            plan_parameters = {**parameters, "force_refresh": False}
         try:
             decisions = tuple(
-                super()._iter_detail_plan(job, parameters, coverage)
+                super()._iter_detail_plan(job, plan_parameters, coverage)
             )
         finally:
             InvoiceDetailRepository.get_detail_by_invoice_key = original_lookup

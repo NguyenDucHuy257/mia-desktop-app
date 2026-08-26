@@ -25,6 +25,15 @@ describe('local source job lifecycle IPC broker', () => {
     expect(() => validateJobId('../secret')).toThrow();
   });
 
+  it('validates direction-specific sync state reads before crossing IPC', async () => {
+    const invoke = vi.fn().mockResolvedValue([]);
+    const broker = createJobLifecycleBroker(() => ({ invoke }));
+    await expect(broker.syncStates(['conn_123456'], 'purchase')).resolves.toMatchObject({ ok: true, data: [] });
+    expect(invoke).toHaveBeenCalledWith('source.sync.states', { connection_ids: ['conn_123456'], direction: 'purchase' });
+    await expect(broker.syncStates(['../bad'], 'purchase')).resolves.toMatchObject({ ok: false, error: { code: 'invalid_connection_id' } });
+    await expect(broker.syncStates(['conn_123456'], 'both')).resolves.toMatchObject({ ok: false, error: { code: 'invalid_job_input' } });
+  });
+
   it('derives the same idempotency key for equivalent normalized intents', () => {
     const reordered = { ...intent, directions: ['sold', 'purchase'], scopes: ['detail', 'overview'] };
     const canonical = validateIntent(reordered);

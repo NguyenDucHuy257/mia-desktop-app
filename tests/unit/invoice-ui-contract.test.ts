@@ -19,7 +19,7 @@ describe('invoice result control presentation', () => {
     expect(styles).toContain('background: #e8f0fc');
   });
 
-  it('uses a vector stop icon and reserves a wider company column', async () => {
+  it('uses a vector stop icon and the eight-column sync-state table', async () => {
     const [component, icons, styles] = await Promise.all([
       source('src/features/invoices/InvoiceManagementPage.tsx'),
       source('src/components/InvoiceActionIcons.tsx'),
@@ -29,7 +29,31 @@ describe('invoice result control presentation', () => {
     expect(icons).toContain('className="stop-button-icon"');
     expect(component).not.toContain("assets/figma/stop.png");
     expect(component).toContain('title={row.company}');
-    expect(styles).toContain('minmax(240px, 340px)');
+    expect(styles).toContain('minmax(170px, 1.2fr)');
+    expect(component).toContain('<span>Trạng thái đồng bộ</span><span>Số lượng hóa đơn</span><span>Tác vụ</span>');
+    expect(component).toContain('<InvoiceCountCell state={row.syncState} />');
+    expect(component).not.toContain('monthProgress');
+  });
+
+  it('uses the shared artifact toolbar language without changing invoice sync actions', async () => {
+    const [component, styles] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/styles/invoice-refresh.css'),
+    ]);
+    expect(component).toContain('invoice-sync-toolbar-card');
+    expect(component).toContain('1. Loại hóa đơn');
+    expect(component).toContain('2. Khoảng thời gian');
+    expect(component).toContain('3. Loại bảng kê');
+    expect(component).toContain('<StorageFolderPicker');
+    expect(component).toContain("startJob('new')");
+    expect(component).toContain("startJob('supplement')");
+    expect(styles).toContain('.invoice-page .invoice-sync-toolbar-card');
+    expect(styles).toContain('grid-template-columns: minmax(220px, .9fr)');
+    expect(styles).toContain('.invoice-page .invoice-sync-toolbar-card .storage-folder-picker.invoice-export-folder');
+    expect(styles).toContain('.invoice-page .invoice-sync-toolbar-card .sync-menu-wrap');
+    expect(styles).toContain('width: clamp(380px, 36vw, 520px)');
+    expect(styles).toContain('right: 0;');
+    expect(styles).toContain('overflow-wrap: break-word');
   });
 
   it('uses blue result actions and blue-to-gold scroll thumbs', async () => {
@@ -41,6 +65,24 @@ describe('invoice result control presentation', () => {
     expect(page).not.toContain('results-export-popover--gold');
     expect(luxury).toContain('#3b82f6 0%, #38a7d8 48%, #d6ad42 100%');
     expect(luxury).toContain('::-webkit-scrollbar-thumb:horizontal');
+  });
+
+  it('keeps backend-backed result filters and session-only Excel exclusions', async () => {
+    const [page, popover, selection, bridge] = await Promise.all([
+      source('src/features/results/ResultsPage.tsx'),
+      source('src/features/results/ColumnFilterPopover.tsx'),
+      source('src/features/results/result-selection.ts'),
+      source('src/lib/runtime-bridge.ts'),
+    ]);
+    expect(page).toContain('ColumnFilterPopover');
+    expect(page).toContain('Loại khỏi tải xuống');
+    expect(page).toContain('Dữ liệu nguồn không bị xóa hoặc thay đổi.');
+    expect(page).toContain('result_filters: filtersByMode');
+    expect(page).toContain('exclusion,');
+    expect(popover).toContain('Sắp xếp tăng dần');
+    expect(popover).toContain('(Chọn tất cả)');
+    expect(selection).toContain('exclusionFromSelection');
+    expect(bridge).toContain('facets(query: ResultFacetQuery)');
   });
 
   it('uses real account pages, a stable calendar control, and the HDDT back copy', async () => {

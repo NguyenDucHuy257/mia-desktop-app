@@ -8,11 +8,8 @@ describe('source job progress presentation', () => {
       stage: 'overview',
       current_direction: 'purchase',
       message: 'running:overview',
-      current_month: {
-        key: '2025-05', index: 1, total: 3,
-        processed: 45, planned: 120, percent: 37.5,
-      },
-    })).toBe('Mua vào · Tổng quan 05/2025 · tổng tháng 45/120 hóa đơn');
+      scope_progress: { scope: 'overview', processed: 145, total: 300 },
+    })).toBe('Tổng quan - Mua vào - 145/300 hóa đơn');
   });
 
   it('changes the presentation when source advances to sold data', () => {
@@ -21,11 +18,8 @@ describe('source job progress presentation', () => {
       stage: 'detail',
       current_direction: 'sold',
       message: 'running:detail',
-      current_month: {
-        key: '2025-07', index: 3, total: 3,
-        processed: 7843, planned: 9492, percent: 82.63,
-      },
-    })).toBe('Bán ra · Chi tiết 07/2025 · tổng tháng 7843/9492 hóa đơn');
+      scope_progress: { scope: 'detail', processed: 7843, total: 9492 },
+    })).toBe('Chi tiết - Bán ra - 7843/9492 hóa đơn');
   });
 
   it('translates granular source authentication milestones', () => {
@@ -52,5 +46,11 @@ describe('source job progress presentation', () => {
       stage: null,
       message: 'future_internal:step',
     })).toBe('Đang xử lý dữ liệu hóa đơn');
+  });
+
+  it('shows the final cumulative overview invoice total', () => {
+    expect(formatSourceJobProgress({
+      status: 'completed', progress_totals: { overview: { processed: 600, total: 600 } },
+    })).toBe('Đã tải xong - 600/600 hóa đơn');
   });
 });

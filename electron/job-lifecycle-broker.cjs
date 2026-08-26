@@ -88,6 +88,16 @@ function createJobLifecycleBroker(
     }),
     resumeAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.resume_all')),
     latestAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.latest')),
+    syncStates: (connectionIds, direction) => runBrokerCommand(async () => {
+      if (!Array.isArray(connectionIds) || connectionIds.length > 500 || new Set(connectionIds).size !== connectionIds.length) throw new JobInputError();
+      const validatedIds = connectionIds.map((value) => {
+        const id = validateConnectionId(value);
+        if (!id.startsWith('conn_')) throw new JobInputError('invalid_connection_id');
+        return id;
+      });
+      if (!DIRECTIONS.has(direction)) throw new JobInputError();
+      return getRuntime().invoke('source.sync.states', { connection_ids: validatedIds, direction });
+    }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);
       const baseKey = idempotencyKey(intent);

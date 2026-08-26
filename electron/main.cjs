@@ -13,6 +13,7 @@ const { createArtifactBroker } = require('./artifact-file-broker.cjs');
 const { clearDiagnosticLogs, readPreferences, readSanitizedLogEntries, readSanitizedLogs, writePreferences } = require('./local-preferences.cjs');
 const { createReleaseUpdater } = require('./release-updater.cjs');
 const { createDiagnosticLogger } = require('./app-logger.cjs');
+const { validateExternalUrl } = require('./external-url-policy.cjs');
 
 const LICENSE_FILE = 'license-token.bin';
 const RUNTIME_KEY_FILE = 'runtime-session-key.bin';
@@ -217,6 +218,11 @@ ipcMain.handle('mia:artifacts:open-directory', async (event, directory) => {
   if (error) throw new Error('artifact_directory_open_failed');
   return true;
 });
+ipcMain.handle('mia:external:open', async (event, url) => {
+  assertTrustedSender(event);
+  await shell.openExternal(validateExternalUrl(url));
+  return true;
+});
 ipcMain.handle('mia:preferences:get', (event) => { assertTrustedSender(event); return readPreferences(app.getPath('userData')); });
 ipcMain.handle('mia:preferences:set', (event, value) => { assertTrustedSender(event); return writePreferences(app.getPath('userData'), value); });
 ipcMain.handle('mia:logs:list', (event) => { assertTrustedSender(event); return readSanitizedLogs(app.getPath('userData')); });
@@ -264,7 +270,7 @@ ipcMain.handle('mia:account-connections:revoke', (event, connectionId) => {
   return localAccounts().revoke(connectionId);
 });
 for (const [channel, method] of [
-  ['mia:jobs:resume', 'resume'], ['mia:jobs:resume-all', 'resumeAll'], ['mia:jobs:latest-all', 'latestAll'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
+  ['mia:jobs:resume', 'resume'], ['mia:jobs:resume-all', 'resumeAll'], ['mia:jobs:latest-all', 'latestAll'], ['mia:jobs:sync-states', 'syncStates'], ['mia:jobs:start', 'start'], ['mia:jobs:status', 'status'],
   ['mia:jobs:summary', 'summary'], ['mia:jobs:cancel', 'cancel'], ['mia:jobs:clear', 'clear'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
@@ -272,7 +278,7 @@ for (const [channel, method] of [
     return jobs()[method](...args);
   });
 }
-for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:results:details', 'details']]) {
+for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:results:details', 'details'], ['mia:results:facets', 'facets']]) {
   ipcMain.handle(channel, (event, query) => {
     assertTrustedSender(event);
     return results()[method](query);

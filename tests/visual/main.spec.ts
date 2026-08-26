@@ -212,13 +212,26 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
     Object.defineProperty(window, 'miaRuntime', { value: { jobs: {
       resume: async () => null,
       start: async () => ({ record, accepted: { job_id: 'job-1', status: 'queued', current_stage: null, worker_slot_id: null } }),
-      status: async () => ({ job_id: 'job-1', status: ++calls === 1 ? 'running' : 'running', stage: 'overview', overall_percent: 35, current_month: { key: '2026-01', index: 1, total: 1, processed: 35, planned: 100, percent: 35 }, updated_at: 'now', error: null }),
+      status: async () => ({ job_id: 'job-1', status: ++calls === 1 ? 'running' : 'running', stage: 'overview', overall_percent: 35, scope_progress: { scope: 'overview', processed: 35, total: 100 }, current_month: { key: '2026-01', index: 1, total: 1, processed: 35, planned: 100, percent: 35 }, updated_at: 'now', error: null }),
       summary: async () => ({ job_id: 'job-1', status: 'cancelled', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
       cancel: async () => ({ job_id: 'job-1', status: 'cancelling', stage: 'overview', overall_percent: 35, current_month: null, updated_at: 'now', error: null }),
       clear: async () => undefined,
     } } });
   });
   await page.goto('/?demo=1');
+  const toolbar = page.locator('.invoice-sync-toolbar-card');
+  await expect(toolbar).toBeVisible();
+  await expect(toolbar.getByText('1. Loại hóa đơn', { exact: true })).toBeVisible();
+  await expect(toolbar.getByText('2. Khoảng thời gian', { exact: true })).toBeVisible();
+  await expect(toolbar.getByText('3. Loại bảng kê', { exact: true })).toBeVisible();
+  await expect(toolbar).toHaveCSS('border-radius', '6px');
+  const controlHeights = await toolbar.locator('.compact-select, .date-range-trigger').evaluateAll((controls) => controls.map((control) => Math.round(control.getBoundingClientRect().height)));
+  expect(controlHeights).toEqual([46, 46, 46]);
+  const folderBox = await toolbar.locator('.invoice-export-folder').boundingBox();
+  const actionBox = await toolbar.getByRole('button', { name: 'Đồng bộ dữ liệu' }).boundingBox();
+  expect(folderBox).not.toBeNull();
+  expect(actionBox).not.toBeNull();
+  expect(Math.abs((folderBox?.y ?? 0) - (actionBox?.y ?? 0))).toBeLessThanOrEqual(3);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
   await page.getByLabel('Mật khẩu').fill('portal-password');
@@ -227,7 +240,7 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await page.getByRole('button', { name: 'Đồng bộ dữ liệu' }).click();
   await page.getByRole('menuitem', { name: /Đồng bộ mới/ }).click();
-  await expect(page.locator('.table-row').last()).toContainText('Tiến trình tổng');
+  await expect(page.locator('.table-row').last()).not.toContainText('Tiến trình tổng');
   await expect(page.locator('.table-row').last()).toContainText('35%');
   await expect(page.locator('.table-row').last()).toContainText('35/100 hóa đơn');
   await page.getByRole('button', { name: 'Dừng tải' }).click();
@@ -265,7 +278,7 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   await expect(page.locator('[data-node-id="4:654"]').getByLabel('Chi tiết')).not.toBeChecked();
   await page.locator('[data-node-id="4:654"]').getByText('Tổng quan', { exact: true }).click();
   await page.locator('[data-node-id="4:654"]').getByText('Chi tiết', { exact: true }).click();
-  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.locator('.invoice-date-field .date-range-trigger').click();
   await page.getByLabel('Từ ngày đồng bộ nhập tay').fill('01/01/2026');
   await page.getByLabel('Đến ngày đồng bộ nhập tay').fill('31/01/2026');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
@@ -274,9 +287,31 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   await expect(syncMenu).toBeVisible();
   await expect(syncMenu.getByRole('menuitem', { name: /Đồng bộ mới/ })).toBeVisible();
   await expect(syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ })).toBeVisible();
+  const assertMenuInsideViewport = async () => {
+    const geometry = await syncMenu.evaluate((menu) => {
+      const bounds = menu.getBoundingClientRect();
+      const descriptions = [...menu.querySelectorAll('small')];
+      return {
+        left: bounds.left,
+        right: bounds.right,
+        viewport: window.innerWidth,
+        descriptions: descriptions.map((description) => ({
+          whiteSpace: getComputedStyle(description).whiteSpace,
+          overflowWrap: getComputedStyle(description).overflowWrap,
+          clipped: description.scrollWidth > description.clientWidth + 1,
+        })),
+      };
+    });
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+    expect(geometry.descriptions.every((description) => description.whiteSpace === 'normal' && !description.clipped)).toBe(true);
+  };
+  await assertMenuInsideViewport();
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await assertMenuInsideViewport();
   await syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ }).click();
   const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: true });
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: false });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
@@ -374,7 +409,7 @@ test('bulk export uses the selected account without a legacy row action menu', a
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
   await expect(page.getByRole('menu')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Tải kết quả tất cả' }).click();
+  await page.getByRole('button', { name: 'Tải xuống kết quả' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('Đã xuất 1 file Excel');
   const calls = await page.evaluate(() => (window as typeof window & { artifactExports: Array<{ connection_ids: string[]; kinds: string[] }> }).artifactExports);
   expect(calls[0]?.connection_ids).toHaveLength(1);
@@ -383,7 +418,7 @@ test('bulk export uses the selected account without a legacy row action menu', a
 
 test('date, company, search, status and pagination controls update the UI', async ({ page }) => {
   await page.goto('/?figma=1');
-  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.locator('.invoice-date-field .date-range-trigger').click();
   const calendarOffsets = await page.locator('.date-range-calendar-control').evaluateAll((controls) => controls.map((control) => {
     const icon = control.querySelector('img');
     if (!icon) return Number.POSITIVE_INFINITY;
@@ -459,7 +494,7 @@ test('bulk Excel progress stays determinate inside the toolbar button', async ({
     } });
   });
   await page.goto('/');
-  const exportButton = page.getByRole('button', { name: 'Tải kết quả tất cả' });
+  const exportButton = page.getByRole('button', { name: 'Tải xuống kết quả' });
   await expect(exportButton).toBeEnabled();
   await exportButton.click();
   const progressButton = page.locator('.invoice-export-all-button');

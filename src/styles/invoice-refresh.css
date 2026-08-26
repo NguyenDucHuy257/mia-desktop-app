@@ -69,14 +69,41 @@
  * specificity its 80px action column and 28px action buttons win the cascade.
  */
 .invoice-page .table-grid {
+  column-gap: 10px;
   grid-template-columns:
     40px
     112px
-    minmax(240px, 340px)
-    110px
-    minmax(160px, 1fr)
+    minmax(170px, 1.2fr)
+    100px
+    minmax(160px, .9fr)
+    minmax(150px, .9fr)
+    minmax(175px, 1fr)
     minmax(190px, 220px);
 }
+
+.invoice-page .sync-state-cell,
+.invoice-page .invoice-count-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: #475569;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.invoice-page .sync-state-cell strong { color: #166534; }
+.invoice-page .sync-state-cell[data-status='failed'] strong { color: #b91c1c; }
+.invoice-page .sync-state-cell[data-status='cancelled'] strong,
+.invoice-page .sync-state-cell[data-status='not_synced'] strong { color: #64748b; }
+.invoice-page .invoice-count-current {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 15px;
+}
+.invoice-page .invoice-count-added { color: #15803d; font-weight: 600; }
+.invoice-page .invoice-count-baseline { color: #64748b; font-weight: 500; }
 
 .invoice-page .company-name {
   position: relative;
@@ -263,7 +290,9 @@
   z-index: 120;
   left: 0;
   top: calc(100% + 7px);
-  width: 360px;
+  width: clamp(380px, 36vw, 520px);
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
   padding: 6px;
   border: 1px solid #d0d5dd;
   border-radius: var(--mia-radius-ui);
@@ -274,6 +303,7 @@
 
 .invoice-page .sync-mode-menu > button {
   width: 100%;
+  min-width: 0;
   padding: 11px;
   border: 0;
   border-radius: var(--mia-radius-ui);
@@ -283,6 +313,7 @@
   grid-template-columns: 28px 1fr;
   gap: 10px;
   text-align: left;
+  white-space: normal;
   cursor: pointer;
 }
 
@@ -290,9 +321,9 @@
 .invoice-page .sync-mode-menu > button:hover,
 .invoice-page .sync-mode-menu > button:focus-visible { background: #f0fdf4; outline: 0; }
 .invoice-page .sync-mode-menu svg { width: 24px; height: 24px; fill: none; stroke: #166534; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.invoice-page .sync-mode-menu span { display: grid; gap: 4px; }
-.invoice-page .sync-mode-menu strong { color: #14532d; font-size: 13px; }
-.invoice-page .sync-mode-menu small { color: #64748b; font-size: 11px; line-height: 15px; font-weight: 500; }
+.invoice-page .sync-mode-menu span { min-width: 0; display: grid; gap: 4px; }
+.invoice-page .sync-mode-menu strong { color: #14532d; font-size: 13px; white-space: nowrap; }
+.invoice-page .sync-mode-menu small { color: #64748b; font-size: 11px; line-height: 15px; font-weight: 500; white-space: normal; overflow-wrap: break-word; }
 
 .invoice-page .sync-button:not(:disabled):hover {
   background: #14532d;
@@ -353,55 +384,11 @@
   fill: currentColor;
 }
 
-/* Dual progress: the source overall percentage never resets, while the
- * source current_month percentage restarts from zero for every new month. */
-.invoice-page .progress-cell[data-has-month='true'] {
-  gap: 6px;
-}
-
-.invoice-page .progress-section,
-.invoice-page .month-progress {
+.invoice-page .progress-section {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 3px;
-}
-
-.invoice-page .progress-cell[data-has-month='true'] .progress-copy span:first-child {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.invoice-page .month-progress-copy {
-  overflow: hidden;
-  color: #5d6470;
-  font-size: 10px;
-  line-height: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.invoice-page .month-progress-track {
-  width: 100%;
-  height: 5px;
-  border-radius: 999px;
-  background: #dcfce7;
-  overflow: hidden;
-}
-
-.invoice-page .month-progress-track > span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #16a34a;
-  transition: width 180ms ease;
-}
-
-.invoice-page .table-row[data-status='processing']:has(.progress-cell[data-has-month='true']) {
-  height: 82px;
-  min-height: 82px;
 }
 
 /* Reuse the PDF storage selector interaction next to the sync button. */
@@ -490,4 +477,191 @@
   background: linear-gradient(180deg, #eef5ff 0%, #dce9f8 100%);
   border-color: #8da9ca;
   color: #174a82;
+}
+
+/* Match the XML/HTML/PDF setup card without changing invoice-sync behavior. */
+.invoice-page .invoice-sync-toolbar-canvas {
+  height: auto;
+  padding: 16px 24px 20px;
+  flex: 0 0 auto;
+}
+
+.invoice-page .invoice-sync-toolbar-card {
+  height: auto;
+  min-height: 146px;
+  padding: 14px 18px;
+  border-color: #e2e8f0;
+  border-radius: var(--mia-radius-ui);
+  background: #fff;
+  display: grid;
+  grid-template-columns: minmax(220px, .9fr) minmax(270px, 1fr) minmax(300px, 1.15fr);
+  grid-template-rows: auto 42px;
+  align-items: end;
+  gap: 16px 20px;
+  box-shadow: 0 5px 18px rgb(15 23 42 / 7%);
+}
+
+.invoice-page > .invoice-content {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.invoice-page .invoice-toolbar-field {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.invoice-page .invoice-toolbar-field > label {
+  color: #273142;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.invoice-page .invoice-toolbar-field .select-wrap,
+.invoice-page .invoice-toolbar-field .date-range-control,
+.invoice-page .invoice-toolbar-field .date-range-trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+.invoice-page .invoice-toolbar-field .compact-select,
+.invoice-page .invoice-toolbar-field .date-range-trigger {
+  width: 100%;
+  height: 46px;
+  border-color: #dbe2ea;
+  border-radius: var(--mia-radius-ui);
+  box-shadow: 0 2px 7px rgb(15 23 42 / 5%);
+}
+
+.invoice-page .invoice-toolbar-field .compact-select {
+  padding: 0 14px;
+  gap: 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.invoice-page .invoice-toolbar-field .compact-select > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invoice-page .invoice-toolbar-field .compact-select .chevron {
+  margin-left: auto;
+}
+
+.invoice-page .invoice-toolbar-control-icon {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+  fill: none;
+  stroke: #16a34a;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.invoice-page .invoice-date-field .date-range-trigger > span small {
+  display: none;
+}
+
+.invoice-page .invoice-date-field .date-range-trigger > span strong {
+  font-size: 13px;
+}
+
+.invoice-page .invoice-direction-field .figma-direction-menu,
+.invoice-page .invoice-scope-field .figma-scope-menu {
+  top: calc(100% + 6px);
+  width: 100%;
+}
+
+.invoice-page .invoice-toolbar-storage {
+  min-width: 0;
+  grid-column: 1 / 3;
+}
+
+.invoice-page .invoice-sync-toolbar-card .storage-folder-picker.invoice-export-folder {
+  position: static;
+  inset: auto;
+  width: 100%;
+  height: 42px;
+}
+
+.invoice-page .invoice-sync-toolbar-card .storage-folder-picker.invoice-export-folder > div,
+.invoice-page .invoice-sync-toolbar-card .storage-folder-picker.invoice-export-folder input,
+.invoice-page .invoice-sync-toolbar-card .storage-folder-picker.invoice-export-folder button {
+  height: 42px;
+}
+
+.invoice-page .invoice-sync-toolbar-card .storage-folder-picker.invoice-export-folder input {
+  font-size: 12px;
+}
+
+.invoice-page .invoice-toolbar-actions {
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.invoice-page .invoice-sync-toolbar-card .sync-menu-wrap {
+  position: relative;
+  inset: auto;
+  width: 165px;
+  height: 38px;
+}
+
+.invoice-page .invoice-sync-toolbar-card .sync-menu-wrap .sync-button {
+  position: static;
+  width: 100%;
+  height: 38px;
+  margin: 0;
+  padding: 0 16px;
+  border-radius: var(--mia-radius-ui);
+  white-space: nowrap;
+}
+
+.invoice-page .invoice-sync-toolbar-card .sync-mode-menu {
+  right: 0;
+  left: auto;
+}
+
+@media (max-width: 1180px) {
+  .invoice-page .invoice-sync-toolbar-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .invoice-page .invoice-scope-field {
+    grid-column: 1 / -1;
+  }
+
+  .invoice-page .invoice-toolbar-storage {
+    grid-column: 1;
+  }
+
+  .invoice-page .invoice-toolbar-actions {
+    grid-column: 2;
+  }
+}
+
+@media (max-width: 760px) {
+  .invoice-page .invoice-sync-toolbar-card {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-page .invoice-scope-field,
+  .invoice-page .invoice-toolbar-storage,
+  .invoice-page .invoice-toolbar-actions {
+    grid-column: 1;
+  }
+
+  .invoice-page .invoice-toolbar-actions {
+    justify-content: flex-start;
+  }
+
 }

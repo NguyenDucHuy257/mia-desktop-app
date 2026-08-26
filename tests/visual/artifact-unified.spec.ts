@@ -92,6 +92,23 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   expect(Math.max(...quantityHeaderLayout.centers.map((center) => center.x))).toBeLessThanOrEqual(1);
   expect(Math.max(...quantityHeaderLayout.centers.map((center) => center.y))).toBeLessThanOrEqual(1);
   await expect(page.locator('.artifact-coverage-badge')).toContainText('Đã đồng bộ');
+  const verticalLayout = await page.locator('.artifact-account-content').evaluate((content) => {
+    const table = content.querySelector<HTMLElement>('.artifact-account-table');
+    const footer = content.querySelector<HTMLElement>('.pagination');
+    const contentBox = content.getBoundingClientRect();
+    const tableBox = table?.getBoundingClientRect();
+    const footerBox = footer?.getBoundingClientRect();
+    return {
+      contentBottom: contentBox.bottom,
+      tableHeight: tableBox?.height ?? 0,
+      tableBottom: tableBox?.bottom ?? 0,
+      footerTop: footerBox?.top ?? 0,
+      footerBottom: footerBox?.bottom ?? 0,
+    };
+  });
+  expect(verticalLayout.tableHeight).toBeGreaterThan(200);
+  expect(verticalLayout.tableBottom).toBeLessThanOrEqual(verticalLayout.footerTop);
+  expect(Math.abs(verticalLayout.contentBottom - verticalLayout.footerBottom)).toBeLessThanOrEqual(1);
   await page.evaluate(() => document.fonts.ready);
   await expect(page).toHaveScreenshot('unified-artifact-account-1500x1024.png', {
     animations: 'disabled', maxDiffPixelRatio: 0.02, threshold: 0.25,
@@ -242,7 +259,7 @@ test('artifact date range and account selection transfer back to invoice managem
   await page.getByLabel('Đến ngày nhập tay').fill('23/08/2026');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
   await page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).click();
-  await page.getByRole('button', { name: /KHOẢNG THỜI GIAN/ }).click();
+  await page.locator('.invoice-date-field .date-range-trigger').click();
   await expect(page.getByLabel('Từ ngày đồng bộ nhập tay')).toHaveValue('01/08/2026');
   await expect(page.getByLabel('Đến ngày đồng bộ nhập tay')).toHaveValue('23/08/2026');
   await expect(page.getByRole('button', { name: 'Chọn 0100000000' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
