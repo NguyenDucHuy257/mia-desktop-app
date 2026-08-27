@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -8,19 +9,58 @@ const { PythonRuntimeClient } = require('../electron/python-runtime-client.cjs')
 const executable = path.resolve(process.env.MIA_PACKAGED_RUNTIME_PATH || 'runtime/dist/mia-runtime/mia-runtime.exe');
 const dataDirectory = await mkdtemp(path.join(os.tmpdir(), 'mia-packaged-runtime-'));
 const browserDirectory = path.resolve(process.env.MIA_PACKAGED_BROWSER_PATH || 'runtime/browsers');
+const packagedTemplateDirectory = path.join(
+  path.dirname(executable),
+  '_internal',
+  'vendor',
+  'mia_crawl_service',
+  'resources',
+  'templates',
+);
+const requiredResultTemplates = [
+  'electronic.xlsx',
+  'cash_register.xlsx',
+  'cash_register_purchase.xlsx',
+  'invoice_detail.xlsx',
+];
 const client = new PythonRuntimeClient({
   runtimeExecutable: executable,
   defaultTimeoutMs: 10000,
-  env: { PLAYWRIGHT_BROWSERS_PATH: browserDirectory },
+  env: {
+    PLAYWRIGHT_BROWSERS_PATH: browserDirectory,
+    MIA_SESSION_ENCRYPTION_KEY: randomBytes(32).toString('base64url'),
+    MIA_SESSION_ENCRYPTION_KEY_ID: 'packaged-smoke',
+  },
 });
 
+async function removeGeneratedBrowserLogs(directory) {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+  await Promise.all(entries.map(async (entry) => {
+    const target = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      await removeGeneratedBrowserLogs(target);
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.log')) {
+      await rm(target, { force: true });
+    }
+  }));
+}
+
 try {
+  await Promise.all(requiredResultTemplates.map((name) => access(path.join(packagedTemplateDirectory, name))));
+  await removeGeneratedBrowserLogs(browserDirectory);
   await client.start();
   const health = await client.call('system.health');
   const storage = await client.call('storage.initialize', { data_dir: dataDirectory });
-  const crawler = await client.call('crawler.health', {}, { timeoutMs: 30000 });
+  const sourceAccounts = await client.call('source.accounts.list', {}, { timeoutMs: 30000 });
   const pdf = await client.call('artifacts.pdf_health', {}, { timeoutMs: 30000 });
-  if (health.runtime_version !== '0.4.1' || storage.schema_version !== 4 || storage.integrity !== 'ok' || crawler.ready !== true || pdf.ready !== true) {
+  if (
+    health.runtime_version !== '0.5.0'
+    || storage.schema_version !== 4
+    || storage.integrity !== 'ok'
+    || !Array.isArray(sourceAccounts)
+    || sourceAccounts.length !== 0
+    || pdf.ready !== true
+  ) {
     throw new Error('Packaged runtime returned an unexpected response.');
   }
   const account = await client.call('accounts.create', {
@@ -53,5 +93,6 @@ try {
   throw error;
 } finally {
   await client.stop();
+  await removeGeneratedBrowserLogs(browserDirectory);
   await rm(dataDirectory, { recursive: true, force: true });
 }

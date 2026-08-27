@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
@@ -83,6 +83,12 @@ function productionEntryUrl() {
   return pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).toString();
 }
 
+function appIconPath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.ico')
+    : path.join(__dirname, '..', 'icon.ico');
+}
+
 function assertTrustedSender(event) {
   const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
   if (!isTrustedAppUrl(senderUrl, {
@@ -101,6 +107,8 @@ function createWindow() {
     minHeight: 720,
     useContentSize: true,
     show: false,
+    icon: appIconPath(),
+    autoHideMenuBar: true,
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -110,6 +118,9 @@ function createWindow() {
       webSecurity: true,
     },
   });
+
+  window.setMenu(null);
+  window.setMenuBarVisibility(false);
 
   window.once('ready-to-show', () => {
     electronLog().info('window_ready');
@@ -286,6 +297,7 @@ for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:res
 }
 
 void app.whenReady().then(async () => {
+  Menu.setApplicationMenu(null);
   electronLog().info('app_ready', {
     app_version: app.getVersion(),
     electron_version: process.versions.electron,

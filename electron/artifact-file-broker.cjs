@@ -134,7 +134,9 @@ async function invokeArtifactExport(getRuntime, value) {
     { timeoutMs: 30 * 60 * 1000 },
   );
   if (result && typeof result === 'object' && typeof result.error_code === 'string' && result.error_code) {
-    throw new Error(result.error_code);
+    const error = new Error(result.error_code);
+    error.code = result.error_code;
+    throw error;
   }
   return result;
 }

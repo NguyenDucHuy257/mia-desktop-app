@@ -1,6 +1,6 @@
 {
   "name": "mia-desktop-app",
-  "version": "0.1.0",
+  "version": "4.0.2",
   "private": true,
   "author": "Nguyễn Đức Huy",
   "description": "MIA WT local desktop client for mia-crawl-service",
@@ -64,6 +64,10 @@
     ],
     "extraResources": [
       {
+        "from": "icon.ico",
+        "to": "icon.ico"
+      },
+      {
         "from": "runtime/dist/mia-runtime",
         "to": "runtime"
       },
@@ -76,6 +80,7 @@
       "output": "release"
     },
     "win": {
+      "icon": "icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -90,7 +95,11 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "installerHeaderIcon": "icon.ico",
+      "artifactName": "MIA-WT-Setup-${version}.${ext}"
     }
   }
 }
