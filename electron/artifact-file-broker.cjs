@@ -127,18 +127,22 @@ function validateArtifactBatchRequest(value) {
   return { ...snapshot, destination: path.resolve(value.destination), kinds: [...value.kinds], pdf_concurrency: value.pdf_concurrency };
 }
 
-async function invokeArtifactExport(getRuntime, value) {
-  const result = await getRuntime().invoke(
-    'artifacts.export',
-    validateExportRequest(value),
-    { timeoutMs: 30 * 60 * 1000 },
-  );
+function checkedExportResult(result) {
   if (result && typeof result === 'object' && typeof result.error_code === 'string' && result.error_code) {
     const error = new Error(result.error_code);
     error.code = result.error_code;
     throw error;
   }
   return result;
+}
+
+async function invokeArtifactExport(getRuntime, value) {
+  const result = await getRuntime().invoke(
+    'artifacts.export',
+    validateExportRequest(value),
+    { timeoutMs: 30 * 60 * 1000 },
+  );
+  return checkedExportResult(result);
 }
 
 function waitForTaskPoll(delayMs = 100) {
@@ -182,7 +186,7 @@ function createArtifactBroker(getRuntime) {
     export: (value) => runBrokerCommand(async () => {
       const request = validateExportRequest(value);
       const kinds = new Set(request.kinds);
-      if (request.result_scopes || ![...kinds].every((kind) => kind === 'xml' || kind === 'html')) {
+      if (!request.result_scopes && ![...kinds].every((kind) => kind === 'xml' || kind === 'html')) {
         return invokeArtifactExport(getRuntime, request);
       }
       const runtime = getRuntime();
@@ -191,7 +195,7 @@ function createArtifactBroker(getRuntime) {
       try {
         while (true) {
           const task = await runtime.invoke('artifacts.export.status', { task_id: activeTaskId });
-          if (task.status === 'completed') return task.result;
+          if (task.status === 'completed') return checkedExportResult(task.result);
           if (task.status === 'cancelled') throw new Error('artifact_cancelled');
           if (task.status === 'failed') throw new Error(task.error || 'artifact_write_failed');
           await waitForTaskPoll();

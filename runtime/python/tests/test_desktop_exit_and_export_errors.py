@@ -179,6 +179,59 @@ class ArtifactExportTaskTests(unittest.TestCase):
         finally:
             mia_runtime.storage, mia_runtime.data_directory, mia_runtime._artifact_task = previous
 
+    def test_excel_export_task_does_not_block_source_job_cancel(self):
+        previous = (
+            mia_runtime.storage,
+            mia_runtime.data_directory,
+            mia_runtime._artifact_task,
+        )
+        entered = threading.Event()
+        release = threading.Event()
+        backend = Mock()
+
+        def export_results(_value, *, progress_callback=None):
+            entered.set()
+            self.assertTrue(release.wait(1))
+            return {"count": 1, "files": ["result.xlsx"]}
+
+        backend.export_results.side_effect = export_results
+        backend.cancel.return_value = {"job_id": "job-running", "status": "cancelling"}
+        try:
+            mia_runtime.storage = Mock()
+            mia_runtime.data_directory = Path(tempfile.gettempdir())
+            mia_runtime._artifact_task = None
+            with patch.object(mia_runtime, "_production_backend", return_value=backend):
+                started, should_stop = mia_runtime.dispatch(
+                    "artifacts.export.start",
+                    {
+                        "destination": str(Path(tempfile.gettempdir())),
+                        "connection_ids": ["conn_1"], "kinds": ["excel"],
+                        "result_scopes": ["overview"],
+                    },
+                )
+                self.assertFalse(should_stop)
+                self.assertTrue(entered.wait(1))
+
+                cancelled, _ = mia_runtime.dispatch(
+                    "source.jobs.cancel", {"job_id": "job-running"}
+                )
+                self.assertEqual(cancelled["status"], "cancelling")
+                backend.cancel.assert_called_once_with("job-running")
+
+                release.set()
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    task, _ = mia_runtime.dispatch(
+                        "artifacts.export.status", {"task_id": started["task_id"]}
+                    )
+                    if task["status"] == "completed":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(task["status"], "completed")
+        finally:
+            release.set()
+            mia_runtime.storage, mia_runtime.data_directory, mia_runtime._artifact_task = previous
+
 
 if __name__ == "__main__":
     unittest.main()

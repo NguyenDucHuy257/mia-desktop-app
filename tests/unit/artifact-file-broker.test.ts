@@ -106,7 +106,12 @@ describe('artifact filesystem boundary', () => {
   it('returns the broker envelope expected by preload for successful exports', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-results');
     const runtime = {
-      invoke: vi.fn().mockResolvedValue({ count: 1, files: [path.join(destination, 'result.xlsx')] }),
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'excel_1', status: 'running' })
+        .mockResolvedValueOnce({
+          task_id: 'excel_1', status: 'completed',
+          result: { count: 1, files: [path.join(destination, 'result.xlsx')] },
+        }),
     };
     const broker = createArtifactBroker(() => runtime);
 
@@ -121,12 +126,20 @@ describe('artifact filesystem boundary', () => {
       ok: true,
       data: { count: 1 },
     });
+    expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
+      'artifacts.export.start', 'artifacts.export.status',
+    ]);
   });
 
   it('preserves a safe no-data reason for the renderer', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-results');
     const runtime = {
-      invoke: vi.fn().mockResolvedValue({ count: 0, files: [], error_code: 'result_export_empty' }),
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'excel_2', status: 'running' })
+        .mockResolvedValueOnce({
+          task_id: 'excel_2', status: 'completed',
+          result: { count: 0, files: [], error_code: 'result_export_empty' },
+        }),
     };
     const broker = createArtifactBroker(() => runtime);
 

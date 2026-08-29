@@ -225,7 +225,20 @@ def _copy_artifacts(
 def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: threading.Event) -> None:
     global _artifact_task
     try:
-        result = _copy_artifacts(value, cancel_event)
+        if value.get("result_scopes"):
+            def export_progress(event: dict[str, Any]) -> None:
+                write_message({
+                    "jsonrpc": "2.0",
+                    "method": "export.progress",
+                    "params": event,
+                })
+
+            result = _production_backend().export_results(
+                value,
+                progress_callback=export_progress,
+            )
+        else:
+            result = _copy_artifacts(value, cancel_event)
         status, error = "completed", None
     except ValueError as exc:
         if str(exc) == "artifact_cancelled":
@@ -632,7 +645,11 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32011, "storage_not_initialized")
         value = dict(params)
         kinds = set(value.get("kinds") or ())
-        if value.get("result_scopes") or not kinds or not kinds.issubset({"xml", "html"}):
+        result_export = bool(value.get("result_scopes"))
+        if (
+            (result_export and kinds != {"excel"})
+            or (not result_export and (not kinds or not kinds.issubset({"xml", "html"})))
+        ):
             raise RpcError(-32602, "invalid_params")
         with _artifact_task_lock:
             if _artifact_task and _artifact_task.get("status") in {"running", "cancelling"}:
@@ -752,8 +769,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     raise RpcError(-32601, "method_not_found")
 
 
-def _serve_parallel_read(request_id: str | int, method: str, params: Any) -> None:
-    """Serve read-only artifact RPCs without starving the RAM status lane."""
+def _serve_parallel_control(request_id: str | int, method: str, params: Any) -> None:
+    """Keep bounded status/cancel RPCs responsive during expensive work."""
     started = time.perf_counter()
     try:
         if logger is not None:
@@ -813,12 +830,14 @@ def serve() -> int:
             if method in {
                 "artifacts.coverage", "artifacts.snapshot",
                 "artifacts.batch.status", "artifacts.batch.failures",
+                "artifacts.export.status", "artifacts.export.cancel",
                 "results.reconciliation",
+                "source.jobs.status", "source.jobs.cancel", "source.sync.states",
             }:
                 threading.Thread(
-                    target=_serve_parallel_read,
+                    target=_serve_parallel_control,
                     args=(request_id, method, params),
-                    name="mia-artifact-read-rpc", daemon=True,
+                    name="mia-control-rpc", daemon=True,
                 ).start()
                 continue
             if logger is not None:
