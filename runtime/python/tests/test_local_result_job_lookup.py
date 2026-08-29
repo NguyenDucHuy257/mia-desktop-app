@@ -51,6 +51,18 @@ class LocalResultJobLookupTests(unittest.TestCase):
             self.assertIsNone(repository.latest_invoice_job_for_account(
                 "conn_result_test", owner_id="other-owner"
             ))
+            self.assertEqual(
+                [value.job_id for value in repository.invoice_jobs_for_account(
+                    "conn_result_test", owner_id="mia-desktop-local"
+                )],
+                [job.job_id],
+            )
+            self.assertEqual(
+                repository.invoice_jobs_for_account(
+                    "conn_result_test", owner_id="other-owner"
+                ),
+                [],
+            )
 
 
 if __name__ == "__main__":

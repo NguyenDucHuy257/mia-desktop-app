@@ -44,6 +44,7 @@ function localErrorMessage(code) {
   if (code === 'result_export_no_overview_data') return 'Không có dữ liệu Tổng quan để tạo Excel.';
   if (code === 'result_export_no_detail_data') return 'Không có dữ liệu Chi tiết để tạo Excel.';
   if (code === 'result_export_empty') return 'Không có dữ liệu phù hợp để tạo Excel.';
+  if (code === 'result_reconciliation_coverage_missing') return 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu.';
   if (code === 'result_job_not_found') return 'Chưa có dữ liệu đồng bộ để tạo Excel.';
   if (code === 'result_export_template_missing') return 'Thiếu mẫu Excel nguồn.';
   if (code === 'artifact_write_denied') return 'Không có quyền ghi vào thư mục lưu trữ.';
@@ -66,7 +67,7 @@ function serializeError(error) {
     'source_token_missing', 'source_rate_limited', 'idempotency_conflict',
     'connection_not_found', 'resource_not_found', 'source_account_failed',
     'source_job_failed', 'result_export_no_overview_data',
-    'result_export_no_detail_data', 'result_export_empty', 'result_job_not_found',
+    'result_export_no_detail_data', 'result_reconciliation_coverage_missing', 'result_export_empty', 'result_job_not_found',
     'result_export_template_missing', 'result_export_failed', 'artifact_write_denied',
     'artifact_write_failed', 'invalid_artifact_directory',
     'invalid_result_export_range', 'artifact_cancelled', 'artifact_task_active',

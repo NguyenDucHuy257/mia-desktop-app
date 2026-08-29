@@ -20,7 +20,7 @@ import time
 from collections import OrderedDict
 from contextlib import closing
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
 from pathlib import Path
@@ -35,6 +35,8 @@ _RESULT_COUNT_CACHE: OrderedDict[tuple[Any, ...], int] = OrderedDict()
 _RESULT_COUNT_CACHE_LIMIT = 64
 _RESULT_ANALYSIS_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _RESULT_ANALYSIS_CACHE_LIMIT = 32
+_RECONCILIATION_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
+_RECONCILIATION_CACHE_LIMIT = 16
 _EXCLUSION_CACHE: OrderedDict[tuple[Any, ...], frozenset[str]] = OrderedDict()
 _EXCLUSION_CACHE_LIMIT = 16
 _LOOKUP_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str]] = OrderedDict()
@@ -47,6 +49,13 @@ MONETARY_RESULT_FIELDS = frozenset({
 INVOICE_LEVEL_MONETARY_FIELDS = frozenset({
     "tgtcthue", "tgtthue", "ttcktmai", "tgtphi", "tgtttbso",
 })
+RECONCILIATION_MONEY_FIELDS = (
+    ("tgtcthue", "thtien", "Tổng tiền trước thuế"),
+    ("tgtthue", "tthue", "Tiền thuế"),
+    ("ttcktmai", "ttcktmai", "Chiết khấu"),
+    ("tgtphi", "tgtphi", "Phí"),
+    ("tgtttbso", "tgtttbso", "Tổng thanh toán"),
+)
 PERCENT_RESULT_FIELDS = frozenset({"tsuat"})
 NUMBER_RESULT_FIELDS = MONETARY_RESULT_FIELDS | frozenset({"tgia", "dgia", "sluong"})
 CONDITIONAL_NUMBER_RESULT_FIELDS = frozenset({"stt", "shdon"})
@@ -257,13 +266,25 @@ def _search_matches(fields: dict[str, Any], search: str) -> bool:
     ).casefold()
 
 
+def _identity_component(value: Any, *, numeric: bool = False) -> str:
+    text = str(value if value is not None else "").strip()
+    if not numeric or not re.fullmatch(r"[+-]?\d+(?:\.0+)?", text):
+        return text
+    try:
+        return format(Decimal(text).quantize(Decimal("1")), "f")
+    except (InvalidOperation, ValueError):
+        return text
+
+
 def _invoice_key(fields: dict[str, Any], direction: str, query_type: str | None = None) -> str:
     """Stable business identity shared by Overview and every Detail line."""
-    return "|".join(str(value or "") for value in (
-        direction,
-        query_type or fields.get("query_type") or "query",
-        fields.get("nbmst"), fields.get("khhdon"), fields.get("shdon"),
-        fields.get("khmshdon"),
+    return "|".join((
+        _identity_component(direction),
+        _identity_component(query_type or fields.get("query_type") or "query"),
+        _identity_component(fields.get("nbmst")),
+        _identity_component(fields.get("khhdon")),
+        _identity_component(fields.get("shdon"), numeric=True),
+        _identity_component(fields.get("khmshdon"), numeric=True),
     ))
 
 
@@ -918,11 +939,438 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     return response
 
 
+_RECONCILIATION_COLUMNS = (
+    "stt", "reconciliation_status", "khmshdon", "khhdon", "shdon", "tdlap",
+    "nbmst", "nbten", "nmmst", "nmten", "mismatch_fields",
+    "overview_tgtcthue", "detail_thtien", "difference_tgtcthue",
+    "overview_tgtthue", "detail_tthue", "difference_tgtthue",
+    "overview_ttcktmai", "detail_ttcktmai", "difference_ttcktmai",
+    "overview_tgtphi", "detail_tgtphi", "difference_tgtphi",
+    "overview_tgtttbso", "detail_tgtttbso", "difference_tgtttbso",
+)
+_RECONCILIATION_LABELS = {
+    "stt": "STT",
+    "reconciliation_status": "Trạng thái đối chiếu",
+    "khmshdon": "Ký hiệu mẫu số",
+    "khhdon": "Ký hiệu hóa đơn",
+    "shdon": "Số hóa đơn",
+    "tdlap": "Ngày lập",
+    "nbmst": "MST người bán/người xuất hàng",
+    "nbten": "Tên người bán/người xuất hàng",
+    "nmmst": "MST người mua",
+    "nmten": "Tên người mua",
+    "mismatch_fields": "Chỉ tiêu chênh lệch",
+}
+for _overview_field, _detail_field, _label in RECONCILIATION_MONEY_FIELDS:
+    _RECONCILIATION_LABELS[f"overview_{_overview_field}"] = f"{_label} - Tổng quan"
+    _RECONCILIATION_LABELS[f"detail_{_detail_field}"] = f"{_label} - Chi tiết"
+    _RECONCILIATION_LABELS[f"difference_{_overview_field}"] = f"{_label} - Chênh lệch"
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    return _as_decimal(value) or Decimal("0")
+
+
+def _decimal_result(value: Decimal) -> int | str:
+    integral = value.to_integral_value()
+    return int(integral) if value == integral else format(value.normalize(), "f")
+
+
+def _merge_date_ranges(ranges: list[tuple[date, date]]) -> list[tuple[date, date]]:
+    merged: list[tuple[date, date]] = []
+    for begin, end in sorted(ranges):
+        if begin > end:
+            continue
+        if merged and begin <= merged[-1][1] + timedelta(days=1):
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((begin, end))
+    return merged
+
+
+def _intersect_date_ranges(
+    left: list[tuple[date, date]], right: list[tuple[date, date]]
+) -> list[tuple[date, date]]:
+    output: list[tuple[date, date]] = []
+    left = _merge_date_ranges(left)
+    right = _merge_date_ranges(right)
+    left_index = right_index = 0
+    while left_index < len(left) and right_index < len(right):
+        begin = max(left[left_index][0], right[right_index][0])
+        end = min(left[left_index][1], right[right_index][1])
+        if begin <= end:
+            output.append((begin, end))
+        if left[left_index][1] <= right[right_index][1]:
+            left_index += 1
+        else:
+            right_index += 1
+    return output
+
+
+def _subtract_date_ranges(
+    ranges: list[tuple[date, date]], blocked: list[tuple[date, date]]
+) -> list[tuple[date, date]]:
+    output = _merge_date_ranges(ranges)
+    for blocked_from, blocked_to in _merge_date_ranges(blocked):
+        next_output: list[tuple[date, date]] = []
+        for begin, end in output:
+            if blocked_to < begin or blocked_from > end:
+                next_output.append((begin, end))
+                continue
+            if begin < blocked_from:
+                next_output.append((begin, blocked_from - timedelta(days=1)))
+            if blocked_to < end:
+                next_output.append((blocked_to + timedelta(days=1), end))
+        output = next_output
+    return output
+
+
+def _job_module_ranges(job, module_name: str) -> list[tuple[date, date]]:
+    state = dict(getattr(job, "progress_state", None) or {})
+    module = (state.get("modules") or {}).get(module_name) or {}
+    if module.get("status") != "completed":
+        return []
+    output: list[tuple[date, date]] = []
+    for month in module.get("months") or ():
+        if not isinstance(month, dict) or month.get("status") != "completed":
+            continue
+        try:
+            output.append((
+                date.fromisoformat(str(month["from_date"])),
+                date.fromisoformat(str(month["to_date"])),
+            ))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return output
+
+
+def _job_requested_ranges(job) -> list[tuple[date, date]]:
+    parameters = dict(getattr(job, "parameters", None) or {})
+    try:
+        return [(
+            date.fromisoformat(str(parameters["date_from"])),
+            date.fromisoformat(str(parameters["date_to"])),
+        )]
+    except (KeyError, TypeError, ValueError):
+        return []
+
+
+def _reconciliation_coverage(backend, context) -> list[tuple[date, date]]:
+    """Source-confirmed 2/2 coverage, excluding any active refresh range."""
+    requested = (
+        date.fromisoformat(context["date_from"]),
+        date.fromisoformat(context["date_to"]),
+    )
+    account_key = str(context["base_job"].account_key)
+    selected_directions = set(context["directions"])
+    selected_query_types = set(context["query_types"])
+    overview: list[tuple[date, date]] = []
+    details: list[tuple[date, date]] = []
+    active: list[tuple[date, date]] = []
+    jobs = (
+        backend.repository.invoice_jobs_for_account(
+            account_key, owner_id=getattr(context["base_job"], "owner_id", None)
+        )
+        if hasattr(backend.repository, "invoice_jobs_for_account")
+        else backend.repository.list_jobs_for_reconciliation()
+    )
+    for job in jobs:
+        if str(getattr(job, "account_key", "")) != account_key:
+            continue
+        parameters = dict(getattr(job, "parameters", None) or {})
+        if not selected_directions.intersection(parameters.get("directions") or ()):
+            continue
+        if not selected_query_types.intersection(parameters.get("query_types") or ()):
+            continue
+        status = str(getattr(job, "status", ""))
+        if status in {"queued", "waiting_account", "running", "cancelling"}:
+            active.extend(_job_requested_ranges(job))
+            continue
+        if status != "completed":
+            continue
+        overview.extend(_job_module_ranges(job, "overview"))
+        details.extend(_job_module_ranges(job, "detail"))
+    coverage = _intersect_date_ranges(overview, details)
+    coverage = _intersect_date_ranges(coverage, [requested])
+    return _subtract_date_ranges(coverage, active)
+
+
+def _invoice_business_date(fields: dict[str, Any]) -> date | None:
+    from app.utils.date_utils import normalize_business_date
+
+    for field in ("nlap_date", "tdlap", "ntao", "nlap"):
+        normalized = normalize_business_date(fields.get(field))
+        if normalized:
+            return date.fromisoformat(normalized)
+    return None
+
+
+def _inside_coverage(value: date | None, coverage: list[tuple[date, date]]) -> bool:
+    return value is not None and any(begin <= value <= end for begin, end in coverage)
+
+
+def _reconciliation_cache_key(backend, context) -> tuple[Any, ...]:
+    database_path = Path(context["database_path"])
+    control_value = getattr(backend, "control_db", None)
+    control_revision = _database_revision(Path(control_value)) if control_value else ()
+    return (
+        "reconciliation", str(database_path.resolve()), _database_revision(database_path),
+        control_revision,
+        context["base_job"].company_tax_code, context["date_from"], context["date_to"],
+        tuple(context["directions"]), tuple(context["query_types"]),
+    )
+
+
+def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
+    context = _result_context(backend, query)
+    if context is None:
+        return {
+            "items": [],
+            "summary": {
+                "overview_invoice_count": 0, "detail_invoice_count": 0,
+                "difference": 0, "missing_detail_count": 0,
+                "missing_overview_count": 0, "money_mismatch_count": 0,
+                "issue_count": 0, "coverage_ranges": [],
+            },
+        }
+    key = _reconciliation_cache_key(backend, context)
+
+    def build() -> dict[str, Any]:
+        # Reconciliation needs persisted invoice/result fields only. Bypass the
+        # lookup enrichment wrapper so a full-scope comparison never opens raw
+        # detail JSON merely to resolve URL/code presentation fields.
+        from app.external_api.results import JobResultReader
+
+        coverage = _reconciliation_coverage(backend, context)
+        source_context = {
+            **context,
+            "reader": JobResultReader(context["database_path"]),
+        }
+        overview_by_key: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        detail_by_key: dict[str, dict[str, Any]] = {}
+        query_types = list(source_context["query_types"])
+        for query_type in query_types:
+            scoped = {**source_context, "query_types": [query_type]}
+            overview_schema = _result_schema("overview", scoped)
+            detail_schema = _result_schema("details", scoped)
+            for safe, projected, invoice_key in _iter_matching_rows(
+                "overview", scoped, overview_schema, "", {}
+            ):
+                if not _inside_coverage(_invoice_business_date(safe), coverage):
+                    continue
+                safe["query_type"] = query_type
+                invoice_key = _invoice_key(safe, safe["direction"], query_type)
+                overview_by_key.setdefault(invoice_key, (safe, projected))
+            for safe, projected, invoice_key in _iter_matching_rows(
+                "details", scoped, detail_schema, "", {}
+            ):
+                if not _inside_coverage(_invoice_business_date(safe), coverage):
+                    continue
+                safe["query_type"] = query_type
+                invoice_key = _invoice_key(safe, safe["direction"], query_type)
+                group = detail_by_key.setdefault(invoice_key, {
+                    "safe": safe, "projected": projected,
+                    "line_totals": {"thtien": Decimal("0"), "tthue": Decimal("0")},
+                    "invoice_totals": {},
+                })
+                for field in ("thtien", "tthue"):
+                    group["line_totals"][field] += _decimal_or_zero(projected.get(field))
+                for field in ("ttcktmai", "tgtphi", "tgtttbso"):
+                    if field not in group["invoice_totals"] and projected.get(field) not in (None, ""):
+                        group["invoice_totals"][field] = _decimal_or_zero(projected.get(field))
+
+        items: list[dict[str, Any]] = []
+        missing_detail_count = 0
+        missing_overview_count = 0
+        money_mismatch_count = 0
+        for invoice_key in sorted(set(overview_by_key) | set(detail_by_key)):
+            overview_entry = overview_by_key.get(invoice_key)
+            detail_entry = detail_by_key.get(invoice_key)
+            if overview_entry is None:
+                status = "Thiếu tổng quan"
+                missing_overview_count += 1
+            elif detail_entry is None:
+                status = "Thiếu chi tiết"
+                missing_detail_count += 1
+            else:
+                status = ""
+
+            overview_safe, overview_fields = overview_entry or ({}, {})
+            detail_safe = detail_entry["safe"] if detail_entry else {}
+            detail_fields = detail_entry["projected"] if detail_entry else {}
+            fields = {
+                key_name: overview_fields.get(key_name) or detail_fields.get(key_name)
+                for key_name in (
+                    "khmshdon", "khhdon", "shdon", "nbmst", "nbten", "nmmst", "nmten"
+                )
+            }
+            fields["tdlap"] = (
+                overview_fields.get("tdlap") or detail_fields.get("ntao")
+                or overview_safe.get("nlap") or detail_safe.get("nlap")
+            )
+            mismatches: list[str] = []
+            for overview_field, detail_field, label in RECONCILIATION_MONEY_FIELDS:
+                overview_value = (
+                    _decimal_or_zero(overview_fields.get(overview_field))
+                    if overview_entry is not None else None
+                )
+                if detail_entry is None:
+                    detail_value = None
+                elif detail_field in {"thtien", "tthue"}:
+                    detail_value = detail_entry["line_totals"][detail_field]
+                else:
+                    detail_value = detail_entry["invoice_totals"].get(detail_field, Decimal("0"))
+                difference = (
+                    overview_value - detail_value
+                    if overview_value is not None and detail_value is not None else None
+                )
+                fields[f"overview_{overview_field}"] = (
+                    _decimal_result(overview_value) if overview_value is not None else None
+                )
+                fields[f"detail_{detail_field}"] = (
+                    _decimal_result(detail_value) if detail_value is not None else None
+                )
+                fields[f"difference_{overview_field}"] = (
+                    _decimal_result(difference) if difference is not None else None
+                )
+                # Some source Overview templates intentionally omit a field
+                # (for example ``tgtphi`` on cash-register invoices). Compare
+                # only values represented by both source schemas; absence is
+                # not equivalent to a financial zero supplied by the portal.
+                if (
+                    overview_entry is not None
+                    and detail_entry is not None
+                    and overview_field in overview_fields
+                    and difference is not None
+                    and difference != 0
+                ):
+                    mismatches.append(label)
+            if not status and mismatches:
+                status = f"Chênh lệch tiền ({', '.join(mismatches)})"
+                money_mismatch_count += 1
+            if not status:
+                continue
+            fields["reconciliation_status"] = status
+            fields["mismatch_fields"] = ", ".join(mismatches) or "—"
+            items.append({
+                "row_id": hashlib.sha256(invoice_key.encode("utf-8")).hexdigest()[:20],
+                "direction": overview_safe.get("direction") or detail_safe.get("direction") or "purchase",
+                "invoice_key": invoice_key,
+                "excluded": False,
+                "fields": fields,
+            })
+
+        overview_count = len(overview_by_key)
+        detail_count = len(detail_by_key)
+        return {
+            "items": items,
+            "summary": {
+                "overview_invoice_count": overview_count,
+                "detail_invoice_count": detail_count,
+                "difference": overview_count - detail_count,
+                "missing_detail_count": missing_detail_count,
+                "missing_overview_count": missing_overview_count,
+                "money_mismatch_count": money_mismatch_count,
+                "issue_count": len(items),
+                "coverage_ranges": [
+                    {"date_from": begin.isoformat(), "date_to": end.isoformat()}
+                    for begin, end in coverage
+                ],
+            },
+        }
+
+    return _bounded_cache(_RECONCILIATION_CACHE, key, build, _RECONCILIATION_CACHE_LIMIT)
+
+
+def _filtered_reconciliation_items(dataset: dict[str, Any], query: dict[str, Any]) -> list[dict[str, Any]]:
+    search = str(query.get("search") or "").strip().casefold()
+    filters = query.get("column_filters") or {}
+    items = [
+        item for item in dataset["items"]
+        if _search_matches(item["fields"], search)
+        and _matches_column_filters(item["fields"], filters)
+    ]
+    sort = query.get("sort") or {}
+    column = str(sort.get("column") or "")
+    direction = str(sort.get("direction") or "")
+    if column in _RECONCILIATION_COLUMNS and direction in {"asc", "desc"}:
+        def sort_key(item):
+            value = item["fields"].get(column)
+            numeric = _as_decimal(value)
+            return (value in (None, ""), numeric is None, numeric if numeric is not None else _filter_text(value).casefold())
+        items.sort(key=sort_key, reverse=direction == "desc")
+    return items
+
+
+def read_reconciliation(backend, query: dict[str, Any]) -> dict[str, Any]:
+    limit = int(query.get("limit", 50))
+    if not 1 <= limit <= 50:
+        raise ValueError("invalid_result_limit")
+    dataset = _reconciliation_dataset(backend, query)
+    items = _filtered_reconciliation_items(dataset, query)
+    offset = _decode_sorted_cursor(query.get("cursor"))
+    page_items = items[offset:offset + limit]
+    for index, item in enumerate(page_items, start=offset + 1):
+        item = {**item, "fields": {**item["fields"], "stt": index}}
+        page_items[index - offset - 1] = item
+    next_offset = offset + len(page_items)
+    has_more = next_offset < len(items)
+    money_columns = {
+        column for column in _RECONCILIATION_COLUMNS
+        if column.startswith(("overview_", "detail_", "difference_"))
+    }
+    totals = {
+        column: _decimal_result(sum(
+            (_decimal_or_zero(item["fields"].get(column)) for item in items),
+            Decimal("0"),
+        ))
+        for column in money_columns
+    }
+    return {
+        "items": page_items,
+        "columns": list(_RECONCILIATION_COLUMNS),
+        "column_labels": dict(_RECONCILIATION_LABELS),
+        "column_types": {column: "number" for column in money_columns},
+        "total_count": len(items),
+        "aggregate": {
+            "matching_row_count": len(items), "row_count": len(items),
+            "invoice_count": len(items), "totals": totals,
+        },
+        "reconciliation": dataset["summary"],
+        "pagination": {
+            "limit": limit, "has_more": has_more,
+            "next_cursor": _encode_sorted_cursor(next_offset) if has_more else None,
+        },
+    }
+
+
 def read_result_facets(backend, query: dict[str, Any]) -> dict[str, Any]:
     kind = str(query.get("kind") or "")
     column = str(query.get("column") or "")
-    if kind not in {"overview", "details"} or not column:
+    if kind not in {"overview", "details", "reconciliation"} or not column:
         raise ValueError("invalid_result_facet")
+    if kind == "reconciliation":
+        if column not in _RECONCILIATION_COLUMNS:
+            raise ValueError("invalid_result_facet")
+        dataset = _reconciliation_dataset(backend, query)
+        filters = dict(query.get("column_filters") or {})
+        filters.pop(column, None)
+        values: dict[str, Any] = {}
+        limit = max(1, min(500, int(query.get("facet_limit") or 250)))
+        for item in dataset["items"]:
+            fields = item["fields"]
+            if not _search_matches(fields, str(query.get("search") or "").strip().casefold()):
+                continue
+            if not _matches_column_filters(fields, filters):
+                continue
+            value = fields.get(column)
+            values.setdefault(_filter_text(value).casefold(), value)
+        ordered = sorted(values.values(), key=lambda value: _filter_text(value).casefold())
+        numeric = column.startswith(("overview_", "detail_", "difference_"))
+        return {
+            "values": ordered[:limit], "truncated": len(ordered) > limit,
+            "column_type": "number" if numeric else "text",
+        }
     context = _result_context(backend, query)
     if context is None:
         return {"values": [], "truncated": False, "column_type": "text"}
@@ -1044,8 +1492,14 @@ def _grouped_result_filename(
     safe_tax_code = re.sub(r"[^0-9A-Za-z._-]+", "_", company_tax_code).strip("._-")
     if not safe_tax_code:
         safe_tax_code = "MIA"
-    direction_label = "Mua vào" if direction == "purchase" else "Bán ra"
-    scope_label = "Tổng quan" if scope == "overview" else "Chi tiết"
+    direction_label = (
+        "Mua vào" if direction == "purchase" else
+        "Bán ra" if direction == "sold" else "Mua vào và Bán ra"
+    )
+    scope_label = {
+        "overview": "Tổng quan", "details": "Chi tiết",
+        "reconciliation": "Đối chiếu Tổng quan và Chi tiết",
+    }[scope]
     return (
         f"{safe_tax_code} - {direction_label} - {scope_label} - "
         f"{date_from}_{date_to}.xlsx"
@@ -1059,7 +1513,10 @@ def _result_output_directory(
     safe_tax_code = re.sub(
         r"[^0-9A-Za-z._-]+", "_", company_tax_code
     ).strip("._-") or "MIA"
-    scope_label = "Tổng quan" if scope == "overview" else "Chi tiết"
+    scope_label = {
+        "overview": "Tổng quan", "details": "Chi tiết",
+        "reconciliation": "Đối chiếu Tổng quan và Chi tiết",
+    }[scope]
     return (
         destination / safe_tax_code
         / f"{scope_label} {date_from}_{date_to}"
@@ -1445,6 +1902,69 @@ def _filter_detail_records(
     return result
 
 
+def _write_reconciliation_excel(
+    rows: list[dict[str, Any]], target: Path,
+    *, progress: Callable[[str, int, int], None] | None = None,
+) -> None:
+    """Write one fixed-schema mismatch workbook with an atomic final replace."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    if progress:
+        progress("load_template", 0, 1)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Đối chiếu"
+    headers = [_RECONCILIATION_LABELS[column] for column in _RECONCILIATION_COLUMNS]
+    worksheet.append(headers)
+    header_fill = PatternFill("solid", fgColor="EAF4EE")
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True, color="155D36")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    if progress:
+        progress("load_template", 1, 1)
+        progress("write_rows", 0, len(rows))
+    for index, item in enumerate(rows, start=1):
+        fields = item.get("fields") or {}
+        worksheet.append([
+            _excel_safe_value(index if column == "stt" else fields.get(column))
+            for column in _RECONCILIATION_COLUMNS
+        ])
+        if progress and (index == len(rows) or index % max(1, len(rows) // 200) == 0):
+            progress("write_rows", index, len(rows))
+    for column_index, column in enumerate(_RECONCILIATION_COLUMNS, start=1):
+        label = _RECONCILIATION_LABELS[column]
+        width = 22
+        if column == "stt":
+            width = 8
+        elif column in {"reconciliation_status", "mismatch_fields"}:
+            width = 42
+        elif column in {"nbten", "nmten"}:
+            width = 34
+        worksheet.column_dimensions[get_column_letter(column_index)].width = width
+    if progress:
+        progress("format", len(_RECONCILIATION_COLUMNS), len(_RECONCILIATION_COLUMNS))
+        progress("save", 0, 1)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.stem}-", suffix=".tmp", dir=target.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        workbook.save(temporary)
+        os.replace(temporary, target)
+    finally:
+        workbook.close()
+        temporary.unlink(missing_ok=True)
+    if progress:
+        progress("save", 1, 1)
+
+
 def _export_results_impl(
     backend,
     value: dict[str, Any],
@@ -1463,7 +1983,8 @@ def _export_results_impl(
     if (
         not isinstance(scopes, list)
         or not scopes
-        or set(scopes) - {"overview", "details"}
+        or set(scopes) - {"overview", "details", "reconciliation"}
+        or "reconciliation" in scopes and len(scopes) != 1
     ):
         raise ValueError("invalid_result_export_scope")
     connection_ids = value.get("connection_ids") or []
@@ -1490,6 +2011,53 @@ def _export_results_impl(
     excluded_keys = _resolve_excluded_keys(backend, value.get("exclusion"))
     destination.mkdir(parents=True, exist_ok=True)
     files: list[str] = []
+    if scopes == ["reconciliation"]:
+        scope_filter = (
+            result_filters.get("reconciliation")
+            if isinstance(result_filters, dict) else None
+        )
+        scope_filter = scope_filter if isinstance(scope_filter, dict) else {}
+        reconciliation_query = {
+            **query,
+            "search": str(scope_filter.get("search", value.get("search") or "")),
+            "column_filters": scope_filter.get("column_filters") or {},
+            "sort": scope_filter.get("sort"),
+        }
+        dataset = _reconciliation_dataset(backend, reconciliation_query)
+        if not dataset["summary"].get("coverage_ranges"):
+            raise ValueError("result_reconciliation_coverage_missing")
+        rows = _filtered_reconciliation_items(dataset, reconciliation_query)
+        if not rows:
+            raise ValueError("result_export_empty")
+        logger.info(
+            "reconciliation_export_dataset rows=%s columns=%s missing_detail=%s "
+            "missing_overview=%s money_mismatch=%s coverage_ranges=%s",
+            len(rows), len(_RECONCILIATION_COLUMNS),
+            dataset["summary"]["missing_detail_count"],
+            dataset["summary"]["missing_overview_count"],
+            dataset["summary"]["money_mismatch_count"],
+            len(dataset["summary"]["coverage_ranges"]),
+        )
+        reporter.planning(1, 1)
+        reporter.set_units(1)
+        reporter.start_unit("reconciliation")
+        output_directory = _result_output_directory(
+            destination, context["base_job"].company_tax_code,
+            "reconciliation", context["date_from"], context["date_to"],
+        )
+        target = _available_path(
+            output_directory,
+            _grouped_result_filename(
+                context["base_job"].company_tax_code,
+                str(value.get("direction") or "all"), "reconciliation",
+                context["date_from"], context["date_to"],
+            ),
+        )
+        _write_reconciliation_excel(rows, target, progress=reporter.unit)
+        reporter.complete_unit()
+        reporter.complete()
+        return {"count": 1, "files": [str(target)]}
+
     combinations = [
         (direction, query_type)
         for direction in context["directions"]

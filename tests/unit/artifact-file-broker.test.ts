@@ -84,6 +84,25 @@ describe('artifact filesystem boundary', () => {
     expect(request.exclusion.keys).toHaveLength(1);
   });
 
+  it('allows the fixed reconciliation export scope and its own filters', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-reconciliation');
+    const request = validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'],
+      result_scopes: ['reconciliation'],
+      date_from: '2026-08-01', date_to: '2026-08-31',
+      result_filters: {
+        reconciliation: {
+          search: 'Thiếu chi tiết',
+          column_filters: { reconciliation_status: { values: ['Thiếu chi tiết'] } },
+        },
+      },
+    });
+    expect(request.result_scopes).toEqual(['reconciliation']);
+    expect(request.result_filters.reconciliation.column_filters).toEqual({
+      reconciliation_status: { values: ['Thiếu chi tiết'] },
+    });
+  });
+
   it('returns the broker envelope expected by preload for successful exports', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-results');
     const runtime = {

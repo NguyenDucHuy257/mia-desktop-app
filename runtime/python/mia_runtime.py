@@ -732,6 +732,8 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                         bool((result.get("pagination") or {}).get("has_more")),
                     )
                 return result, False
+            if method == "results.reconciliation":
+                return _production_backend().reconciliation(dict(params)), False
             if method == "results.facets":
                 return _production_backend().result_facets(dict(params)), False
             if storage is None:
@@ -811,6 +813,7 @@ def serve() -> int:
             if method in {
                 "artifacts.coverage", "artifacts.snapshot",
                 "artifacts.batch.status", "artifacts.batch.failures",
+                "results.reconciliation",
             }:
                 threading.Thread(
                     target=_serve_parallel_read,

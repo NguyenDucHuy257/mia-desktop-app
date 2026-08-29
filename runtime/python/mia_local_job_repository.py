@@ -178,6 +178,24 @@ class LocalSequentialJobRepository:
                 return self.delegate.get_job(str(job_id))
         return None
 
+    def invoice_jobs_for_account(
+        self, account_key: str, *, owner_id: str | None = None
+    ):
+        """Return all durable invoice jobs for read-only coverage analysis."""
+        where_owner = " AND owner_id = ?" if owner_id is not None else ""
+        params: tuple[object, ...] = (
+            (account_key, owner_id) if owner_id is not None else (account_key,)
+        )
+        with closing(sqlite3.connect(self.delegate.database_path, timeout=30)) as connection:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            rows = connection.execute(
+                f"""SELECT job_id FROM crawl_jobs
+                    WHERE account_key=? AND job_type='invoice_crawl' {where_owner}
+                    ORDER BY created_at, job_id""",
+                params,
+            ).fetchall()
+        return [self.delegate.get_job(str(row[0])) for row in rows]
+
     def merge_job_parameters(self, job_id: str, values: dict[str, object]):
         """Durably add desktop worker metadata without changing source schema."""
         if not values:

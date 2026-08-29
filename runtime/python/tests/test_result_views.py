@@ -121,6 +121,20 @@ class ResultViewTests(unittest.TestCase):
             last_error_message=None,
             owner_id="mia-desktop-local",
             pipeline_version=2,
+            progress_state={
+                "version": 3,
+                "modules": {
+                    name: {
+                        "status": "completed",
+                        "months": [{
+                            "from_date": "2025-01-01",
+                            "to_date": "2026-12-31",
+                            "status": "completed",
+                        }],
+                    }
+                    for name in ("overview", "detail")
+                },
+            },
         )
 
     def backend_with_job(self, *, data_root: Path | None = None):
@@ -241,6 +255,37 @@ class ResultViewTests(unittest.TestCase):
                 self.assertEqual(result["items"][0]["overview_id"], 1)
                 constructor.assert_called_once_with(Path(directory), None)
                 backend.results.assert_called_once_with("overview", query)
+        finally:
+            (
+                mia_runtime.data_directory,
+                mia_runtime.logger,
+                mia_runtime.production_backend,
+            ) = previous
+
+    def test_reconciliation_dispatch_uses_read_only_source_backend_adapter(self):
+        previous = (
+            mia_runtime.data_directory,
+            mia_runtime.logger,
+            mia_runtime.production_backend,
+        )
+        backend = Mock()
+        backend.reconciliation.return_value = {
+            "items": [],
+            "reconciliation": {"issue_count": 0},
+            "pagination": {"limit": 50, "has_more": False, "next_cursor": None},
+        }
+        try:
+            with tempfile.TemporaryDirectory() as directory, patch(
+                "mia_runtime.ProductionBackend", return_value=backend
+            ):
+                mia_runtime.data_directory = Path(directory)
+                mia_runtime.logger = None
+                mia_runtime.production_backend = None
+                query = {"connection_id": "conn_account_1", "limit": 50}
+                result, should_stop = mia_runtime.dispatch("results.reconciliation", query)
+                self.assertFalse(should_stop)
+                self.assertEqual(result["reconciliation"]["issue_count"], 0)
+                backend.reconciliation.assert_called_once_with(query)
         finally:
             (
                 mia_runtime.data_directory,
@@ -528,6 +573,22 @@ class ResultViewTests(unittest.TestCase):
                     http_status=200,
                     fetched_at=timestamp,
                 )
+
+            reconciliation = backend.reconciliation({
+                "connection_id": "conn_account_1",
+                "date_from": "2025-05-01",
+                "date_to": "2025-05-02",
+                "direction": "purchase",
+                "query_type": "query",
+                "limit": 50,
+            })
+            self.assertEqual(
+                reconciliation["reconciliation"]["overview_invoice_count"], 1
+            )
+            self.assertEqual(
+                reconciliation["reconciliation"]["detail_invoice_count"], 1
+            )
+            self.assertEqual(reconciliation["reconciliation"]["issue_count"], 0)
 
             export_dir = root / "export"
             result = backend.export_results({

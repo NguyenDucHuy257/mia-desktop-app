@@ -51,7 +51,7 @@ export function formatResultCell(column: string, value: unknown, declaredType?: 
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Có' : 'Không';
   if (PERCENT_FIELDS.has(column) || declaredType === 'percent') return formatTaxRate(value);
-  if (MONETARY_FIELDS.has(column)) return formatMoney(value);
+  if (MONETARY_FIELDS.has(column) || /^(overview|detail|difference)_(tgtcthue|tgtthue|thtien|tthue|ttcktmai|tgtphi|tgtttbso)$/.test(column)) return formatMoney(value);
   if (NUMBER_FIELDS.has(column) || declaredType === 'number') return formatVietnameseNumber(value);
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);

@@ -87,7 +87,7 @@ function validateQuery(value) {
 function validateFacetQuery(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_result_facet');
   const { kind, column, facet_limit: facetLimit } = value;
-  if (!['overview', 'details'].includes(kind) || typeof column !== 'string' || !/^[A-Za-z0-9_]{1,80}$/.test(column)) throw new TypeError('invalid_result_facet');
+  if (!['overview', 'details', 'reconciliation'].includes(kind) || typeof column !== 'string' || !/^[A-Za-z0-9_]{1,80}$/.test(column)) throw new TypeError('invalid_result_facet');
   if (facetLimit !== undefined && (!Number.isInteger(facetLimit) || facetLimit < 1 || facetLimit > 500)) throw new TypeError('invalid_result_facet');
   const { kind: _kind, column: _column, facet_limit: _facetLimit, ...base } = value;
   const query = validateQuery({ ...base, cursor: null, limit: 1 });
@@ -98,6 +98,7 @@ function createResultBroker(getRuntime) {
   return Object.freeze({
     overview: (query) => runBrokerCommand(() => getRuntime().invoke('results.overview', validateQuery(query))),
     details: (query) => runBrokerCommand(() => getRuntime().invoke('results.details', validateQuery(query))),
+    reconciliation: (query) => runBrokerCommand(() => getRuntime().invoke('results.reconciliation', validateQuery(query))),
     facets: (query) => runBrokerCommand(() => getRuntime().invoke('results.facets', validateFacetQuery(query))),
   });
 }

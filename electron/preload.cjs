@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   results: Object.freeze({
     overview: (query) => invokeResult('mia:results:overview', query),
     details: (query) => invokeResult('mia:results:details', query),
+    reconciliation: (query) => invokeResult('mia:results:reconciliation', query),
     facets: (query) => invokeResult('mia:results:facets', query),
   }),
   external: Object.freeze({

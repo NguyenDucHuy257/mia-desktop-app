@@ -77,8 +77,8 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('ColumnFilterPopover');
     expect(page).toContain('Loại khỏi tải xuống');
     expect(page).toContain('Dữ liệu nguồn không bị xóa hoặc thay đổi.');
-    expect(page).toContain('result_filters: filtersByMode');
-    expect(page).toContain('exclusion,');
+    expect(page).toContain('requestedScopes.map(scope => [scope, filtersByMode[scope]])');
+    expect(page).toContain("mode === 'reconciliation' ? { keys: [], rules: [] } : exclusion");
     expect(popover).toContain('Sắp xếp tăng dần');
     expect(popover).toContain('(Chọn tất cả)');
     expect(selection).toContain('exclusionFromSelection');

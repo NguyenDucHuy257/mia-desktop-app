@@ -38,7 +38,7 @@ describe('result IPC broker', () => {
     expect(() => validateQuery({ connection_id: 'account-1', date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
   });
 
-  it.each(['overview', 'details'])('routes %s only to its allowlisted runtime method', async (method) => {
+  it.each(['overview', 'details', 'reconciliation'])('routes %s only to its allowlisted runtime method', async (method) => {
     const invoke = vi.fn().mockResolvedValue({ items: [], pagination: { limit: 50, has_more: false, next_cursor: null } });
     const result = await createResultBroker(() => ({ invoke }))[method]({ connection_id: 'account-1' });
     expect(result.ok).toBe(true);
@@ -53,6 +53,9 @@ describe('result IPC broker', () => {
       column_filters: { ten: { values: ['Dịch vụ'], search: 'dịch' } },
     })).resolves.toMatchObject({ ok: true });
     expect(invoke).toHaveBeenCalledWith('results.facets', expect.objectContaining({ kind: 'details', column: 'ten' }));
+    await expect(broker.facets({
+      connection_id: 'account-1', kind: 'reconciliation', column: 'reconciliation_status',
+    })).resolves.toMatchObject({ ok: true });
     expect(() => validateQuery({ connection_id: 'account-1', column_filters: { ten: { operator: 'drop table' } } })).toThrow();
   });
 

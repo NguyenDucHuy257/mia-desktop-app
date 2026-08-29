@@ -27,6 +27,8 @@ describe('Vietnamese result presentation', () => {
     expect(formatMoney(null)).toBe('\u2014');
     expect(formatResultCell('tgtcthue', 130483745, 'number')).toBe('130.483.745');
     expect(formatResultCell('dgia', 579982.5, 'number')).toBe('579.983');
+    expect(formatResultCell('overview_tgtttbso', 5500000, 'number')).toBe('5.500.000');
+    expect(formatResultCell('difference_tgtttbso', 50000, 'number')).toBe('50.000');
   });
 });
 

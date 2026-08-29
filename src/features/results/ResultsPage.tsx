@@ -6,7 +6,7 @@ import previousIcon from '../../assets/figma/artifact-previous.svg';
 import nextIcon from '../../assets/figma/artifact-next.svg';
 import backIcon from '../../assets/figma/back.png';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
-import type { ColumnFilters, DetailResult, LocalResultPage, OverviewResult, ResultExclusion, ResultFilterState, ResultQuery } from '../../lib/runtime-bridge';
+import type { ColumnFilters, DetailResult, LocalResultPage, OverviewResult, ReconciliationResult, ReconciliationSummary, ResultExclusion, ResultFilterState, ResultQuery } from '../../lib/runtime-bridge';
 import type { InvoiceQueryType } from '../../lib/api/contracts';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
@@ -14,13 +14,14 @@ import { resultExportErrorMessage } from './result-export-errors';
 import { ResultExportProgressBar } from './ResultExportProgressBar';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
 import { ColumnFilterPopover } from './ColumnFilterPopover';
-import { formatResultCell, formatVietnameseNumber, MONETARY_FIELDS } from './result-presentation';
+import { formatResultCell, formatVietnameseNumber } from './result-presentation';
 import { emptyInvoiceSelection, exclusionFromSelection, invoiceSelected, selectionCount, toggleInvoice } from './result-selection';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
 
-type ResultMode = 'overview' | 'details';
-type ResultItem = OverviewResult | DetailResult;
+type ResultMode = 'overview' | 'details' | 'reconciliation';
+type ResultExportScope = 'overview' | 'details' | 'reconciliation';
+type ResultItem = OverviewResult | DetailResult | ReconciliationResult;
 
 const DEFAULT_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const PAGE_SIZE = 50;
@@ -48,6 +49,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [filtersByMode, setFiltersByMode] = useState<Record<ResultMode, ResultFilterState>>({
     overview: { search: '', column_filters: {} },
     details: { search: '', column_filters: {} },
+    reconciliation: { search: '', column_filters: {} },
   });
   const search = filtersByMode[mode].search;
   const columnFilters = filtersByMode[mode].column_filters;
@@ -59,10 +61,11 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [pagination, setPagination] = useState<LocalResultPage<ResultItem>['pagination'] | null>(null);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [aggregate, setAggregate] = useState<NonNullable<LocalResultPage<ResultItem>['aggregate']> | null>(null);
+  const [reconciliation, setReconciliation] = useState<ReconciliationSummary | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [exportOpen, setExportOpen] = useState(false);
-  const [exportScopes, setExportScopes] = useState<ResultMode[]>(['overview', 'details']);
+  const [exportScopes, setExportScopes] = useState<ResultExportScope[]>(['overview', 'details']);
   const [feedback, setFeedback] = useState('');
   const [exclusion, setExclusion] = useState<ResultExclusion>({ keys: [], rules: [] });
   const [selection, setSelection] = useState(emptyInvoiceSelection);
@@ -154,6 +157,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     setPagination(result.pagination);
     setTotalCount(typeof result.total_count === 'number' ? result.total_count : null);
     setAggregate(result.aggregate ?? null);
+    if (result.reconciliation) setReconciliation(result.reconciliation);
     setPageNumber(targetPage);
     setState('ready');
   }, []);
@@ -222,6 +226,28 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     void loadPage(1, token);
   }, [loadPage, schemaContext]);
 
+  useEffect(() => {
+    const bridge = window.miaRuntime?.results;
+    if (!bridge || typeof bridge.reconciliation !== 'function' || !connectionId) return;
+    let active = true;
+    void bridge.reconciliation({
+      connection_id: connectionId,
+      cursor: null,
+      limit: 1,
+      search: '',
+      column_filters: {},
+      direction: direction || null,
+      query_type: queryType,
+      date_from: dateFrom,
+      date_to: dateTo,
+    }).then(result => {
+      if (active) setReconciliation(result.reconciliation ?? null);
+    }).catch(() => {
+      if (active) setReconciliation(null);
+    });
+    return () => { active = false; };
+  }, [connectionId, crawlFingerprint, dateFrom, dateTo, direction, queryType]);
+
   // The result view is allowed while the source job is still running. Refresh
   // from persisted SQLite whenever the polled source progress changes so rows
   // committed after the user opened this tab become visible without remounting.
@@ -253,7 +279,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     };
   }, [exportOpen]);
 
-  function toggleExportScope(scope: ResultMode) {
+  function toggleExportScope(scope: ResultExportScope) {
     setExportScopes((current) => current.includes(scope)
       ? current.filter((item) => item !== scope)
       : [...current, scope]);
@@ -307,6 +333,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   }, [currentResultQuery, mode]);
 
   function confirmSelectedExclusion() {
+    if (mode === 'reconciliation') return;
     setExclusion(current => exclusionFromSelection(current, selection, mode, currentResultQuery()));
     setSelection(emptyInvoiceSelection());
     setConfirmExclusion(false);
@@ -314,7 +341,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   }
 
   async function exportResults() {
-    if (!connectionId || exportScopes.length === 0) return;
+    const requestedScopes: ResultExportScope[] = mode === 'reconciliation'
+      ? ['reconciliation'] : exportScopes;
+    if (!connectionId || requestedScopes.length === 0) return;
     if (!exportFolder.trim()) {
       setFeedback('Vui lòng chọn thư mục lưu trữ ở tab Hóa đơn trước khi tải kết quả.');
       setExportOpen(false);
@@ -330,7 +359,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     const exportSearch = search.trim();
     const bridge = window.miaRuntime?.results;
     if (bridge) {
-      const availability = await Promise.all(exportScopes.map(async (scope) => {
+      const availability = await Promise.all(requestedScopes.map(async (scope) => {
         if (
           scope === mode
           && state === 'ready'
@@ -369,7 +398,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     setFeedback('');
     diagnosticLog('results_export_requested', {
       connection_id: connectionId,
-      scopes: exportScopes,
+      scopes: requestedScopes,
       date_from: dateFrom,
       date_to: dateTo,
       direction: direction || null,
@@ -381,27 +410,29 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         destination: exportFolder,
         connection_ids: [connectionId],
         kinds: ['excel'],
-        result_scopes: exportScopes,
+        result_scopes: requestedScopes,
         date_from: dateFrom,
         date_to: dateTo,
         direction: direction || null,
         query_type: queryType,
         search: exportSearch,
-        result_filters: filtersByMode,
-        exclusion,
+        result_filters: Object.fromEntries(
+          requestedScopes.map(scope => [scope, filtersByMode[scope]])
+        ),
+        exclusion: mode === 'reconciliation' ? { keys: [], rules: [] } : exclusion,
       }]);
       if (summary.failures.length) {
         const error = summary.failures[0].error;
-        diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
-        setFeedback(resultExportErrorMessage(error, dateFrom, dateTo, exportScopes, exportSearch));
+        diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: requestedScopes, code: (error as { code?: string })?.code }, 'error');
+        setFeedback(resultExportErrorMessage(error, dateFrom, dateTo, requestedScopes, exportSearch));
         return;
       }
-      diagnosticLog('results_export_completed', { connection_id: connectionId, scopes: exportScopes, file_count: summary.count });
+      diagnosticLog('results_export_completed', { connection_id: connectionId, scopes: requestedScopes, file_count: summary.count });
       setFeedback(`Đã tạo ${summary.count} file Excel trong thư mục lưu trữ.`);
       setExportOpen(false);
     } catch (error) {
-      diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: exportScopes, code: (error as { code?: string })?.code }, 'error');
-      setFeedback(resultExportErrorMessage(error, dateFrom, dateTo, exportScopes, exportSearch));
+      diagnosticLog('results_export_failed', { connection_id: connectionId, scopes: requestedScopes, code: (error as { code?: string })?.code }, 'error');
+      setFeedback(resultExportErrorMessage(error, dateFrom, dateTo, requestedScopes, exportSearch));
     }
   }
 
@@ -416,9 +447,10 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     () => paginationTokens(displayedPageCount, pageNumber),
     [displayedPageCount, pageNumber],
   );
+  const selectable = mode !== 'reconciliation';
   const gridTemplateColumns = useMemo(
-    () => ['42px', ...columns.map((column) => columnWidth(column, columnLabels[column]))].join(' '),
-    [columnLabels, columns],
+    () => [...(selectable ? ['42px'] : []), ...columns.map((column) => columnWidth(column, columnLabels[column]))].join(' '),
+    [columnLabels, columns, selectable],
   );
   const resultExportWorking = resultExports.active && resultExports.owner === 'results';
   const selectedInvoiceCount = selectionCount(selection, aggregate?.invoice_count ?? 0);
@@ -440,14 +472,16 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           className="results-export-trigger primary-download-button"
           type="button"
           aria-expanded={exportOpen}
-          disabled={resultExports.active}
+          disabled={resultExports.active || (mode === 'reconciliation' && (!reconciliation?.coverage_ranges.length || !reconciliation.issue_count))}
           title={resultExports.active && resultExports.owner === 'bulk' ? 'Đang tải kết quả tất cả ở màn Hóa đơn.' : undefined}
-          onClick={() => setExportOpen((value) => !value)}
+          onClick={() => mode === 'reconciliation' ? void exportResults() : setExportOpen((value) => !value)}
         >
           <svg className="results-export-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
-          <span>{resultExportWorking ? `Đang tạo Excel… ${Math.round(resultExports.percent)}%` : 'Tải xuống kết quả'}</span>
+          <span>{resultExportWorking
+            ? `Đang tạo Excel… ${Math.round(resultExports.percent)}%`
+            : mode === 'reconciliation' ? 'Tải xuống kết quả chênh lệch' : 'Tải xuống kết quả'}</span>
         </button>
-        {exportOpen ? <div className="results-export-popover" role="dialog" aria-label="Chọn nội dung tải xuống">
+        {exportOpen && mode !== 'reconciliation' ? <div className="results-export-popover" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
           <label><input type="checkbox" checked={exportScopes.includes('overview')} disabled={resultExports.active} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
           <label><input type="checkbox" checked={exportScopes.includes('details')} disabled={resultExports.active} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
@@ -461,10 +495,14 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     <div className="results-tabs results-tabs--figma" role="tablist" aria-label="Loại kết quả">
       <button role="tab" aria-selected={mode === 'overview'} data-active={mode === 'overview'} onClick={() => setMode('overview')}>Tổng quan</button>
       <button role="tab" aria-selected={mode === 'details'} data-active={mode === 'details'} onClick={() => setMode('details')}>Chi tiết</button>
+      <button className="results-reconciliation-tab" role="tab" aria-selected={mode === 'reconciliation'} data-active={mode === 'reconciliation'} onClick={() => setMode('reconciliation')}>
+        Đối chiếu Tổng quan &amp; Chi tiết
+        {reconciliation?.issue_count ? <span className="results-reconciliation-indicator" title="Phát hiện chênh lệch dữ liệu Tổng quan và Chi tiết" aria-label="Phát hiện chênh lệch dữ liệu Tổng quan và Chi tiết" /> : null}
+      </button>
     </div>
 
     <div className="results-filters results-filters--figma">
-      <div className="results-exclusion-control">
+      {selectable ? <div className="results-exclusion-control">
         <button className="stop-button results-exclude-button" type="button" disabled={selectedInvoiceCount === 0} onClick={() => setConfirmExclusion(true)}>
           Loại khỏi tải xuống ({selectedInvoiceCount})
         </button>
@@ -473,7 +511,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           <span>Dữ liệu nguồn không bị xóa hoặc thay đổi.</span>
           <div><button type="button" onClick={() => setConfirmExclusion(false)}>Hủy</button><button type="button" onClick={confirmSelectedExclusion}>Xác nhận</button></div>
         </div> : null}
-      </div>
+      </div> : null}
       <DateRangePicker className="results-date-range" dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
       <select aria-label="Loại hóa đơn" value={queryType} onChange={(event) => changeQueryType(event.target.value as InvoiceQueryType)}>
         <option value="query">Hóa đơn điện tử</option>
@@ -497,20 +535,28 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       <em>{Math.round(crawlPercent)}%</em>
     </div> : null}
 
+    {mode === 'reconciliation' && reconciliation ? <div className="results-reconciliation-summary" aria-label="Tổng hợp đối chiếu">
+      <span><small>Tổng quan</small><strong>{formatVietnameseNumber(reconciliation.overview_invoice_count)} hóa đơn</strong></span>
+      <span><small>Chi tiết</small><strong>{formatVietnameseNumber(reconciliation.detail_invoice_count)} hóa đơn</strong></span>
+      <span data-warning={reconciliation.issue_count > 0}><small>Chênh lệch</small><strong>{formatVietnameseNumber(reconciliation.difference)} hóa đơn</strong></span>
+      {reconciliation.issue_count > 0 ? <em>{formatVietnameseNumber(reconciliation.issue_count)} hóa đơn có vấn đề</em> : null}
+      {reconciliation.coverage_ranges.length ? <p>Đối chiếu trên phạm vi: {reconciliation.coverage_ranges.map(range => `${formatDisplayDate(range.date_from)} - ${formatDisplayDate(range.date_to)}`).join('; ')}</p> : null}
+    </div> : null}
+
     {feedback ? <div className="results-feedback" role="status">{feedback}</div> : null}
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
     {state === 'loading' && items.length === 0 && columns.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
-    {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
+    {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{mode === 'reconciliation' && !reconciliation?.coverage_ranges.length ? 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu trong khoảng thời gian này.' : mode === 'reconciliation' && reconciliation?.issue_count === 0 ? 'Không phát hiện chênh lệch giữa Tổng quan và Chi tiết.' : crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
     {columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
-        <span className="results-checkbox-cell"><input
+        {selectable ? <span className="results-checkbox-cell"><input
           type="checkbox"
           aria-label="Chọn tất cả hóa đơn phù hợp bộ lọc trên mọi trang"
           aria-checked={headerIndeterminate ? 'mixed' : headerChecked}
           ref={node => { if (node) node.indeterminate = headerIndeterminate; }}
           checked={headerChecked}
           onChange={() => setSelection(headerChecked ? emptyInvoiceSelection() : { allMatching: true, selected: new Set(), deselected: new Set() })}
-        /></span>
+        /></span> : null}
         {columns.map((column) => {
           const label = columnLabels[column] || column;
           return <span className="results-header-slot" key={column}>
@@ -533,6 +579,10 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       {items.length === 0 ? <div className="results-table-empty" role="status">
         {state === 'loading'
           ? 'Đang tải...'
+          : mode === 'reconciliation' && !reconciliation?.coverage_ranges.length
+            ? 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu trong khoảng thời gian này.'
+          : mode === 'reconciliation' && reconciliation?.issue_count === 0
+            ? 'Không phát hiện chênh lệch giữa Tổng quan và Chi tiết.'
           : hasActiveFilter
             ? 'Không có dữ liệu phù hợp với bộ lọc hiện tại.'
             : crawlActive
@@ -540,7 +590,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
               : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}
       </div> : null}
       {items.map((item, rowIndex) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>
-        <span className="results-checkbox-cell"><input type="checkbox" aria-label={`Chọn hóa đơn ${item.invoice_key}`} disabled={item.excluded} checked={item.excluded || invoiceSelected(selection, item.invoice_key)} onChange={() => setSelection(current => toggleInvoice(current, item.invoice_key))} /></span>
+        {selectable ? <span className="results-checkbox-cell"><input type="checkbox" aria-label={`Chọn hóa đơn ${item.invoice_key}`} disabled={item.excluded} checked={item.excluded || invoiceSelected(selection, item.invoice_key)} onChange={() => setSelection(current => toggleInvoice(current, item.invoice_key))} /></span> : null}
         {columns.map((column) => {
           const rawValue = column === 'stt' && (item.fields[column] === null || item.fields[column] === undefined)
             ? (pageNumber - 1) * PAGE_SIZE + rowIndex + 1
@@ -556,17 +606,21 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
               >{display}</button>
             </span>;
           }
-          return <span key={column} title={display}>{display}</span>;
+          if (column === 'reconciliation_status') {
+            return <span key={column}><b className={`results-reconciliation-status ${reconciliationStatusClass(display)}`}>{display}</b></span>;
+          }
+          const difference = column.startsWith('difference_') && Number(rawValue) !== 0;
+          return <span className={difference ? 'results-reconciliation-difference' : undefined} key={column} title={display}>{display}</span>;
         })}
       </div>)}
       {aggregate && items.length > 0 ? <div className="results-row results-row--total" style={{ gridTemplateColumns }}>
-        <span className="results-checkbox-cell" />
+        {selectable ? <span className="results-checkbox-cell" /> : null}
         {columns.map(column => {
           const rawValue = column === 'stt'
             ? 'Tổng'
             : column === 'khmshdon'
               ? `${formatVietnameseNumber(aggregate.invoice_count)} HĐ`
-              : MONETARY_FIELDS.has(column) ? aggregate.totals[column] : '';
+              : Object.prototype.hasOwnProperty.call(aggregate.totals, column) ? aggregate.totals[column] : '';
           const display = rawValue === '' ? '' : formatResultCell(column, rawValue, columnTypes[column]);
           return <span key={column} title={display}>{display}</span>;
         })}
@@ -619,8 +673,22 @@ function safeExternalHttpUrl(value: string) {
   }
 }
 
+function reconciliationStatusClass(value: string) {
+  if (value === 'Thiếu chi tiết') return 'is-missing-detail';
+  if (value === 'Thiếu tổng quan') return 'is-missing-overview';
+  return 'is-money-mismatch';
+}
+
+function formatDisplayDate(value: string) {
+  const [year, month, day] = value.split('-');
+  return year && month && day ? `${day}/${month}/${year}` : value;
+}
+
 function columnWidth(column: string, label = '') {
   if (column === 'stt') return '66px';
+  if (column === 'reconciliation_status') return '170px';
+  if (column === 'mismatch_fields') return '220px';
+  if (column.startsWith('overview_') || column.startsWith('detail_') || column.startsWith('difference_')) return '185px';
   if (['khmshdon', 'khhdon', 'shdon', 'dvtte', 'tgia', 'tthai'].includes(column)) return '150px';
   if (['tdlap', 'ntao', 'nky'].includes(column)) return '170px';
   if (column.includes('mst') || column === 'nmcmnd' || column === 'mhdon') return '180px';

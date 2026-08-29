@@ -183,6 +183,7 @@ _RESULT_EXPORT_VALUE_ERRORS = {
     "result_export_empty",
     "result_export_no_overview_data",
     "result_export_no_detail_data",
+    "result_reconciliation_coverage_missing",
     "result_job_not_found",
     "invalid_artifact_directory",
     "invalid_result_export_range",
@@ -642,6 +643,10 @@ class ProductionBackend(SourceBackend):
         # dependency cost. All paging is delegated to source JobResultReader.
         from mia_source_results import read_results
         return read_results(self, kind, query)
+
+    def reconciliation(self, query):
+        from mia_source_results import read_reconciliation
+        return read_reconciliation(self, query)
 
     def result_facets(self, query):
         from mia_source_results import read_result_facets

@@ -1,4 +1,4 @@
-type ResultExportScope = 'overview' | 'details';
+type ResultExportScope = 'overview' | 'details' | 'reconciliation';
 
 export function resultExportErrorMessage(
   error: unknown,
@@ -29,6 +29,9 @@ export function resultExportErrorMessage(
     return search.trim()
       ? 'Không tồn tại hóa đơn phù hợp với lựa chọn hiện tại.'
       : 'Không tồn tại hóa đơn trong thời gian này.';
+  }
+  if (code === 'result_reconciliation_coverage_missing') {
+    return 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu trong khoảng thời gian này.';
   }
   if (code === 'result_job_not_found') {
     return 'Chưa có dữ liệu đồng bộ của tài khoản này để xuất Excel.';

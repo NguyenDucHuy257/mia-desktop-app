@@ -9,7 +9,7 @@ const { validateColumnFilters, validateExclusion, validateSort } = require('./re
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const EXTENSIONS = new Set(['.xml', '.html', '.pdf', '.xlsx']);
 const KINDS = new Set(['xml', 'html', 'pdf', 'excel']);
-const RESULT_SCOPES = new Set(['overview', 'details']);
+const RESULT_SCOPES = new Set(['overview', 'details', 'reconciliation']);
 const CONNECTION_ID = /^[A-Za-z0-9_-]{1,160}$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -70,7 +70,7 @@ function validateExportRequest(value) {
     return { ...base, direction, query_type: queryType, search: search.trim(), date_from: value.date_from ?? null, date_to: value.date_to ?? null };
   }
 
-  if (!Array.isArray(value.result_scopes) || value.result_scopes.length < 1 || value.result_scopes.length > 2 || new Set(value.result_scopes).size !== value.result_scopes.length || value.result_scopes.some((scope) => !RESULT_SCOPES.has(scope))) throw new TypeError('invalid_result_export_scope');
+  if (!Array.isArray(value.result_scopes) || value.result_scopes.length < 1 || value.result_scopes.length > 3 || new Set(value.result_scopes).size !== value.result_scopes.length || value.result_scopes.some((scope) => !RESULT_SCOPES.has(scope))) throw new TypeError('invalid_result_export_scope');
   if (value.connection_ids.length !== 1 || value.kinds.length !== 1 || value.kinds[0] !== 'excel') throw new TypeError('invalid_result_export_request');
   if (typeof value.date_from !== 'string' || !DATE_PATTERN.test(value.date_from) || typeof value.date_to !== 'string' || !DATE_PATTERN.test(value.date_to) || value.date_from > value.date_to) throw new TypeError('invalid_result_export_range');
   const direction = value.direction ?? null;

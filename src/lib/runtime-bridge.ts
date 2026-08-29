@@ -69,6 +69,7 @@ export interface MiaRuntimeBridge {
   results: {
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
+    reconciliation(query: ResultQuery): Promise<LocalResultPage<ReconciliationResult>>;
     facets(query: ResultFacetQuery): Promise<ResultFacetResponse>;
   };
   external: {
@@ -88,7 +89,7 @@ export interface DiagnosticLogEntry {
 export type ExcelExportPhase = 'prepare' | 'query' | 'load_template' | 'build_rows' | 'write_rows' | 'format' | 'save' | 'completed';
 export interface RuntimeExportProgress {
   status: 'running' | 'completed' | 'failed';
-  scope: 'overview' | 'details' | null;
+  scope: 'overview' | 'details' | 'reconciliation' | null;
   phase: ExcelExportPhase;
   processed: number;
   total: number;
@@ -121,13 +122,13 @@ export interface ArtifactExportRequest {
   destination: string;
   connection_ids: string[];
   kinds: Array<'xml' | 'html' | 'pdf' | 'excel'>;
-  result_scopes?: Array<'overview' | 'details'>;
+  result_scopes?: Array<'overview' | 'details' | 'reconciliation'>;
   date_from?: string;
   date_to?: string;
   direction?: InvoiceDirection | null;
   query_type?: InvoiceQueryType | null;
   search?: string;
-  result_filters?: Partial<Record<'overview' | 'details', ResultFilterState>>;
+  result_filters?: Partial<Record<'overview' | 'details' | 'reconciliation', ResultFilterState>>;
   exclusion?: ResultExclusion;
 }
 export interface ArtifactListRequest { connection_ids: string[]; kind: 'xml' | 'html' | 'pdf'; direction?: InvoiceDirection | null; query_type?: InvoiceQueryType | null; search?: string; cursor?: string | null; limit?: number; date_from?: string; date_to?: string }
@@ -158,7 +159,7 @@ export interface ResultSort { column: string; direction: 'asc' | 'desc' }
 export interface ResultFilterState { search: string; column_filters: ColumnFilters; sort?: ResultSort }
 export interface ResultExclusionRule { kind: 'overview' | 'details'; query: ResultQuery; except_keys?: string[] }
 export interface ResultExclusion { keys: string[]; rules: ResultExclusionRule[] }
-export interface ResultFacetQuery extends ResultQuery { kind: 'overview' | 'details'; column: string; facet_limit?: number }
+export interface ResultFacetQuery extends ResultQuery { kind: 'overview' | 'details' | 'reconciliation'; column: string; facet_limit?: number }
 export interface ResultFacetResponse { values: unknown[]; truncated: boolean; column_type: 'text' | 'number' | 'percent' }
 export interface SourceResultRow {
   row_id: number | string;
@@ -170,6 +171,17 @@ export interface SourceResultRow {
 }
 export type OverviewResult = SourceResultRow;
 export type DetailResult = SourceResultRow;
+export type ReconciliationResult = SourceResultRow;
+export interface ReconciliationSummary {
+  overview_invoice_count: number;
+  detail_invoice_count: number;
+  difference: number;
+  missing_detail_count: number;
+  missing_overview_count: number;
+  money_mismatch_count: number;
+  issue_count: number;
+  coverage_ranges: Array<{ date_from: string; date_to: string }>;
+}
 export interface LocalResultPage<T> {
   items: T[];
   /** Exact column key order read from the source Excel template. */
@@ -179,8 +191,9 @@ export interface LocalResultPage<T> {
   total_count?: number;
   row_count?: number;
   invoice_count?: number;
-  aggregate?: { matching_row_count: number; row_count: number; invoice_count: number; totals: Record<string, number> };
+  aggregate?: { matching_row_count: number; row_count: number; invoice_count: number; totals: Record<string, number | string> };
   column_types?: Record<string, 'text' | 'number' | 'percent'>;
+  reconciliation?: ReconciliationSummary;
   pagination: { limit: number; has_more: boolean; next_cursor: string | null };
 }
 
