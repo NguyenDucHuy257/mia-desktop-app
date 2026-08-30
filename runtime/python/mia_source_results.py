@@ -37,7 +37,7 @@ _RESULT_ANALYSIS_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDi
 _RESULT_ANALYSIS_CACHE_LIMIT = 32
 _RECONCILIATION_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _RECONCILIATION_CACHE_LIMIT = 16
-_RECONCILIATION_ALGORITHM_VERSION = 2
+_RECONCILIATION_ALGORITHM_VERSION = 3
 _EXCLUSION_CACHE: OrderedDict[tuple[Any, ...], frozenset[str]] = OrderedDict()
 _EXCLUSION_CACHE_LIMIT = 16
 _LOOKUP_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str]] = OrderedDict()
@@ -1203,10 +1203,13 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
         return {
             "items": [],
             "summary": {
+                "selected_overview_invoice_count": 0,
+                "selected_detail_invoice_count": 0,
+                "selected_difference": 0,
                 "overview_invoice_count": 0, "detail_invoice_count": 0,
                 "difference": 0, "missing_detail_count": 0,
                 "missing_overview_count": 0, "money_mismatch_count": 0,
-                "issue_count": 0, "coverage_ranges": [],
+                "issue_count": 0, "coverage_ranges": [], "uncovered_ranges": [],
             },
         }
     key = _reconciliation_cache_key(backend, context)
@@ -1218,12 +1221,19 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
         from app.external_api.results import JobResultReader
 
         coverage = _reconciliation_coverage(backend, context)
+        requested_range = [(
+            date.fromisoformat(context["date_from"]),
+            date.fromisoformat(context["date_to"]),
+        )]
+        uncovered = _subtract_date_ranges(requested_range, coverage)
         source_context = {
             **context,
             "reader": JobResultReader(context["database_path"]),
         }
         overview_by_key: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         detail_by_key: dict[str, dict[str, Any]] = {}
+        selected_overview_keys: set[str] = set()
+        selected_detail_keys: set[str] = set()
         query_types = list(source_context["query_types"])
         for query_type in query_types:
             scoped = {**source_context, "query_types": [query_type]}
@@ -1232,18 +1242,20 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
             for safe, projected, invoice_key in _iter_matching_rows(
                 "overview", scoped, overview_schema, "", {}
             ):
-                if not _inside_coverage(_invoice_business_date(safe), coverage):
-                    continue
                 safe["query_type"] = query_type
                 invoice_key = _invoice_key(safe, safe["direction"], query_type)
+                selected_overview_keys.add(invoice_key)
+                if not _inside_coverage(_invoice_business_date(safe), coverage):
+                    continue
                 overview_by_key.setdefault(invoice_key, (safe, projected))
             for safe, projected, invoice_key in _iter_matching_rows(
                 "details", scoped, detail_schema, "", {}
             ):
-                if not _inside_coverage(_invoice_business_date(safe), coverage):
-                    continue
                 safe["query_type"] = query_type
                 invoice_key = _invoice_key(safe, safe["direction"], query_type)
+                selected_detail_keys.add(invoice_key)
+                if not _inside_coverage(_invoice_business_date(safe), coverage):
+                    continue
                 group = detail_by_key.setdefault(invoice_key, {
                     "safe": safe, "projected": projected,
                     "line_totals": {"thtien": Decimal("0"), "tthue": Decimal("0")},
@@ -1358,6 +1370,11 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
         return {
             "items": items,
             "summary": {
+                "selected_overview_invoice_count": len(selected_overview_keys),
+                "selected_detail_invoice_count": len(selected_detail_keys),
+                "selected_difference": (
+                    len(selected_overview_keys) - len(selected_detail_keys)
+                ),
                 "overview_invoice_count": overview_count,
                 "detail_invoice_count": detail_count,
                 "difference": overview_count - detail_count,
@@ -1368,6 +1385,10 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
                 "coverage_ranges": [
                     {"date_from": begin.isoformat(), "date_to": end.isoformat()}
                     for begin, end in coverage
+                ],
+                "uncovered_ranges": [
+                    {"date_from": begin.isoformat(), "date_to": end.isoformat()}
+                    for begin, end in uncovered
                 ],
             },
         }
@@ -2081,6 +2102,8 @@ def _write_reconciliation_excel(
         worksheet.column_dimensions[get_column_letter(column_index)].width = width
 
     summary_rows = [
+        ("Dữ liệu hiện có - Tổng quan", summary.get("selected_overview_invoice_count", 0)),
+        ("Dữ liệu hiện có - Chi tiết", summary.get("selected_detail_invoice_count", 0)),
         ("Khoảng đối chiếu", "; ".join(
             f"{value['date_from']} - {value['date_to']}"
             for value in summary.get("coverage_ranges") or ()
@@ -2091,6 +2114,10 @@ def _write_reconciliation_excel(
         ("Thiếu Chi tiết", summary.get("missing_detail_count", 0)),
         ("Thiếu Tổng quan", summary.get("missing_overview_count", 0)),
         ("Hóa đơn lệch tiền", summary.get("money_mismatch_count", 0)),
+        ("Khoảng chưa đủ dữ liệu 2/2", "; ".join(
+            f"{value['date_from']} - {value['date_to']}"
+            for value in summary.get("uncovered_ranges") or ()
+        )),
     ]
     summary_rows.extend(
         (f"Tổng chênh lệch - {label}", value)

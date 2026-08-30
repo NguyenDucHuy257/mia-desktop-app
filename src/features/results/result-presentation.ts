@@ -46,6 +46,14 @@ export function isNonZeroMoneyDifference(value: unknown) {
   return normalized !== null && normalized !== 0;
 }
 
+export function getDifferenceClass(column: string, value: unknown, total = false) {
+  if (!column.startsWith('difference_')) return undefined;
+  const normalized = normalizeMoneyDifference(value);
+  if (normalized === null || normalized === 0) return undefined;
+  if (total) return normalized < 0 ? 'results-reconciliation-total-difference-negative' : undefined;
+  return 'results-reconciliation-difference';
+}
+
 export function formatVietnameseNumber(value: unknown) {
   const number = numericValue(value);
   if (number === null) return value === null || value === undefined || value === '' ? '—' : String(value);

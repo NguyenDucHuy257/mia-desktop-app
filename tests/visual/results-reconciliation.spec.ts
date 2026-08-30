@@ -27,8 +27,8 @@ test('reconciliation tab shows full-scope warning data in the compact native res
         },
         column_types: { overview_tgtthue: 'number', detail_tthue: 'number', difference_tgtthue: 'number', overview_tgtttbso: 'number', detail_tgtttbso: 'number', difference_tgtttbso: 'number' },
         total_count: 1,
-        aggregate: { matching_row_count: 1, row_count: 1, invoice_count: 1, totals: { overview_tgtttbso: 5500000, detail_tgtttbso: 5450000, difference_tgtttbso: 50000 } },
-        reconciliation: { overview_invoice_count: 1723, detail_invoice_count: 1767, difference: -44, missing_detail_count: 1, missing_overview_count: 0, money_mismatch_count: 1, issue_count: 2, coverage_ranges: [{ date_from: '2026-08-01', date_to: '2026-08-31' }] },
+        aggregate: { matching_row_count: 1, row_count: 1, invoice_count: 1, totals: { overview_tgtttbso: 5500000, detail_tgtttbso: 12000000, difference_tgtttbso: -6500000 } },
+        reconciliation: { selected_overview_invoice_count: 1960, selected_detail_invoice_count: 1767, selected_difference: 193, overview_invoice_count: 1767, detail_invoice_count: 1767, difference: 0, missing_detail_count: 0, missing_overview_count: 0, money_mismatch_count: 1, issue_count: 1, coverage_ranges: [{ date_from: '2026-01-01', date_to: '2026-06-30' }], uncovered_ranges: [{ date_from: '2026-07-01', date_to: '2026-07-31' }] },
         pagination: { limit: 50, has_more: false, next_cursor: null },
       };
       if (query.date_from === '2026-08-02') {
@@ -36,7 +36,7 @@ test('reconciliation tab shows full-scope warning data in the compact native res
           ...payload,
           items: [], total_count: 0,
           aggregate: { matching_row_count: 0, row_count: 0, invoice_count: 0, totals: {} },
-          reconciliation: { overview_invoice_count: 150, detail_invoice_count: 150, difference: 0, missing_detail_count: 0, missing_overview_count: 0, money_mismatch_count: 0, issue_count: 0, coverage_ranges: [{ date_from: '2026-08-02', date_to: '2026-08-31' }] },
+          reconciliation: { selected_overview_invoice_count: 150, selected_detail_invoice_count: 150, selected_difference: 0, overview_invoice_count: 150, detail_invoice_count: 150, difference: 0, missing_detail_count: 0, missing_overview_count: 0, money_mismatch_count: 0, issue_count: 0, coverage_ranges: [{ date_from: '2026-08-02', date_to: '2026-08-31' }], uncovered_ranges: [] },
         };
       }
       return payload;
@@ -62,8 +62,12 @@ test('reconciliation tab shows full-scope warning data in the compact native res
   await expect(tab).toBeVisible();
   await expect(tab.locator('.results-reconciliation-indicator')).toHaveCount(1);
   await tab.click();
-  await expect(page.locator('.results-reconciliation-summary')).toContainText('Chênh lệch -44 hóa đơn');
-  await expect(page.locator('.results-reconciliation-summary')).toContainText('(Tổng quan: 1.723; Chi tiết: 1.767)');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Dữ liệu hiện có:');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Tổng quan: 1.960 hóa đơn · Chi tiết: 1.767 hóa đơn');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Chênh lệch dữ liệu hiện có: +193 hóa đơn');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Kết quả trong phạm vi đã đối chiếu: Không chênh lệch số lượng');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('(Tổng quan: 1.767; Chi tiết: 1.767)');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Chưa đủ dữ liệu để đối chiếu: 01/07/2026 - 31/07/2026');
   await expect(page.locator('.results-reconciliation-summary')).toContainText('Hóa đơn lệch tiền: 1 hóa đơn');
   await expect(page.locator('.results-reconciliation-status')).toHaveText('Chênh lệch tiền');
   await expect(page.locator('.results-reconciliation-mismatch-fields')).toHaveText('Tổng tiền thanh toán');
@@ -72,6 +76,7 @@ test('reconciliation tab shows full-scope warning data in the compact native res
   const zeroDifference = page.locator('.results-row:not(.results-row--header):not(.results-row--total) > span').filter({ hasText: /^0$/ });
   await expect(zeroDifference).toHaveCount(1);
   await expect(zeroDifference).not.toHaveClass(/results-reconciliation-difference/);
+  await expect(page.locator('.results-reconciliation-total-difference-negative')).toHaveText('-6.500.000');
   await expect(page.locator('.results-checkbox-cell')).toHaveCount(0);
 
   const headerHeight = await page.locator('.results-row--header').evaluate(node => node.getBoundingClientRect().height);

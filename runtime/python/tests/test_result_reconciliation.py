@@ -274,6 +274,65 @@ class ResultReconciliationTests(unittest.TestCase):
             "date_from": "2026-01-01", "date_to": "2026-06-30",
         }])
 
+    def test_selected_counts_are_separate_from_partial_comparable_counts(self):
+        comparable_overview = [
+            {**self.overview(index), "tdlap": "2026-06-15", "tgtcthue": 100, "tgtthue": 10}
+            for index in range(1, 1768)
+        ]
+        uncovered_overview = [
+            {**self.overview(index), "tdlap": "2026-07-15", "tgtcthue": 100, "tgtthue": 10}
+            for index in range(1768, 1961)
+        ]
+        details = [
+            {**self.detail_lines(index, count=1)[0], "ntao": "2026-06-15"}
+            for index in range(1, 1768)
+        ]
+        result = self.reconcile(
+            comparable_overview + uncovered_overview, details,
+            jobs=[self.job(
+                coverage_from="2026-01-01",
+                overview_to="2026-07-31", detail_to="2026-06-30",
+            )],
+            date_from="2026-01-01", date_to="2026-07-31",
+        )
+        summary = result["reconciliation"]
+        self.assertEqual(summary["selected_overview_invoice_count"], 1960)
+        self.assertEqual(summary["selected_detail_invoice_count"], 1767)
+        self.assertEqual(summary["selected_difference"], 193)
+        self.assertEqual(summary["overview_invoice_count"], 1767)
+        self.assertEqual(summary["detail_invoice_count"], 1767)
+        self.assertEqual(summary["difference"], 0)
+        self.assertEqual(summary["missing_detail_count"], 0)
+        self.assertEqual(summary["uncovered_ranges"], [{
+            "date_from": "2026-07-01", "date_to": "2026-07-31",
+        }])
+
+    def test_full_coverage_reports_all_missing_detail_invoice_keys(self):
+        overview = [
+            {**self.overview(index), "tdlap": "2026-06-15", "tgtcthue": 100, "tgtthue": 10}
+            for index in range(1, 1961)
+        ]
+        details = [
+            {**self.detail_lines(index, count=1)[0], "ntao": "2026-06-15"}
+            for index in range(1, 1768)
+        ]
+        result = self.reconcile(
+            overview, details,
+            jobs=[self.job(
+                coverage_from="2026-01-01",
+                overview_to="2026-07-31", detail_to="2026-07-31",
+            )],
+            date_from="2026-01-01", date_to="2026-07-31",
+        )
+        summary = result["reconciliation"]
+        self.assertEqual(summary["selected_overview_invoice_count"], 1960)
+        self.assertEqual(summary["selected_detail_invoice_count"], 1767)
+        self.assertEqual(summary["overview_invoice_count"], 1960)
+        self.assertEqual(summary["detail_invoice_count"], 1767)
+        self.assertEqual(summary["difference"], 193)
+        self.assertEqual(summary["missing_detail_count"], 193)
+        self.assertEqual(summary["uncovered_ranges"], [])
+
     def test_active_job_range_is_not_reconciled(self):
         completed = self.job()
         active = self.job(status="running")

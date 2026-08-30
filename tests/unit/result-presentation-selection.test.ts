@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMoney, formatResultCell, formatTaxRate, formatVietnameseNumber, isNonZeroMoneyDifference, normalizeMoneyDifference } from '../../src/features/results/result-presentation';
+import { formatMoney, formatResultCell, formatTaxRate, formatVietnameseNumber, getDifferenceClass, isNonZeroMoneyDifference, normalizeMoneyDifference } from '../../src/features/results/result-presentation';
 import { emptyInvoiceSelection, exclusionFromSelection, invoiceSelected, selectionCount, toggleInvoice } from '../../src/features/results/result-selection';
 
 describe('Vietnamese result presentation', () => {
@@ -37,6 +37,10 @@ describe('Vietnamese result presentation', () => {
     expect(normalizeMoneyDifference(-0.000000003)).toBe(0);
     expect(isNonZeroMoneyDifference(-0.000000003)).toBe(false);
     expect(isNonZeroMoneyDifference(6500000)).toBe(true);
+    expect(getDifferenceClass('difference_tgtcthue', -6500000, true)).toBe('results-reconciliation-total-difference-negative');
+    expect(getDifferenceClass('difference_tgtcthue', -0, true)).toBeUndefined();
+    expect(getDifferenceClass('difference_tgtcthue', 0, true)).toBeUndefined();
+    expect(getDifferenceClass('difference_tgtcthue', 6500000, true)).toBeUndefined();
   });
 });
 

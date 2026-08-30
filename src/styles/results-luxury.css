@@ -187,9 +187,11 @@
 .results-reconciliation-summary strong[data-warning='true'] { color: #b91c1c; font-weight: 800; }
 .results-reconciliation-summary small { color: #64748b; font-size: 10px; font-weight: 600; }
 .results-reconciliation-summary footer { width: 100%; color: #475467; font-size: 10px; font-weight: 650; }
+.results-reconciliation-summary footer[data-warning='true'] { color: #b45309; }
 .results-reconciliation-status { max-width: 100%; padding: 3px 7px; overflow: hidden; border-radius: 999px; display: inline-block; font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .results-reconciliation-status.is-missing-detail { background: #fff1f2; color: #be123c; }
 .results-reconciliation-status.is-missing-overview { background: #fff7ed; color: #c2410c; }
 .results-reconciliation-status.is-money-mismatch { background: #fef2f2; color: #b91c1c; }
 .results-reconciliation-difference { color: #b91c1c; font-weight: 750; }
+.results-reconciliation-total-difference-negative { color: #b91c1c; font-weight: 800; }
 .results-reconciliation-mismatch-fields { color: #b91c1c; font-weight: 750; white-space: normal; overflow-wrap: anywhere; }

@@ -15,7 +15,7 @@ import { ResultExportProgressBar } from './ResultExportProgressBar';
 import { coalesceResultRequest, requestResultWithRetry } from './result-request-policy';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
 import { ColumnFilterPopover } from './ColumnFilterPopover';
-import { formatResultCell, formatVietnameseNumber, isNonZeroMoneyDifference } from './result-presentation';
+import { formatResultCell, formatVietnameseNumber, getDifferenceClass } from './result-presentation';
 import { emptyInvoiceSelection, exclusionFromSelection, invoiceSelected, selectionCount, toggleInvoice } from './result-selection';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
@@ -556,12 +556,20 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     </div> : null}
 
     {mode === 'reconciliation' && reconciliation ? <div className="results-reconciliation-summary" aria-label="Tổng hợp đối chiếu">
+      {reconciliation.uncovered_ranges?.length ? <div>
+        <p><span>Dữ liệu hiện có:</span></p>
+        <small>Tổng quan: {formatVietnameseNumber(reconciliation.selected_overview_invoice_count ?? reconciliation.overview_invoice_count)} hóa đơn · Chi tiết: {formatVietnameseNumber(reconciliation.selected_detail_invoice_count ?? reconciliation.detail_invoice_count)} hóa đơn</small>
+        <small>Chênh lệch dữ liệu hiện có: {(reconciliation.selected_difference ?? 0) > 0 ? '+' : ''}{formatVietnameseNumber(reconciliation.selected_difference ?? 0)} hóa đơn (chưa dùng để kết luận thiếu ngoài phạm vi 2/2)</small>
+      </div> : null}
       <div>
-        <p><span>Tổng số lượng hóa đơn:</span> <strong data-warning={reconciliation.difference !== 0}>{reconciliation.difference === 0 ? 'Không chênh lệch' : `Chênh lệch ${reconciliation.difference > 0 ? '+' : ''}${formatVietnameseNumber(reconciliation.difference)} hóa đơn`}</strong></p>
+        <p><span>{reconciliation.uncovered_ranges?.length ? 'Kết quả trong phạm vi đã đối chiếu:' : 'Tổng số lượng hóa đơn:'}</span> <strong data-warning={reconciliation.difference !== 0}>{reconciliation.difference === 0 ? 'Không chênh lệch số lượng' : `Chênh lệch ${reconciliation.difference > 0 ? '+' : ''}${formatVietnameseNumber(reconciliation.difference)} hóa đơn`}</strong></p>
         <small>(Tổng quan: {formatVietnameseNumber(reconciliation.overview_invoice_count)}; Chi tiết: {formatVietnameseNumber(reconciliation.detail_invoice_count)})</small>
       </div>
+      <p><span>Thiếu Chi tiết:</span> <strong data-warning={reconciliation.missing_detail_count > 0}>{formatVietnameseNumber(reconciliation.missing_detail_count)} hóa đơn</strong></p>
+      <p><span>Thiếu Tổng quan:</span> <strong data-warning={reconciliation.missing_overview_count > 0}>{formatVietnameseNumber(reconciliation.missing_overview_count)} hóa đơn</strong></p>
       <p><span>Hóa đơn lệch tiền:</span> <strong data-warning={reconciliation.money_mismatch_count > 0}>{formatVietnameseNumber(reconciliation.money_mismatch_count)} hóa đơn</strong></p>
-      {reconciliation.coverage_ranges.length ? <footer>Đối chiếu trên phạm vi: {reconciliation.coverage_ranges.map(range => `${formatDisplayDate(range.date_from)} - ${formatDisplayDate(range.date_to)}`).join('; ')}</footer> : null}
+      {reconciliation.coverage_ranges.length ? <footer>Phạm vi đủ điều kiện đối chiếu: {reconciliation.coverage_ranges.map(range => `${formatDisplayDate(range.date_from)} - ${formatDisplayDate(range.date_to)}`).join('; ')}</footer> : null}
+      {reconciliation.uncovered_ranges?.length ? <footer data-warning="true">Chưa đủ dữ liệu để đối chiếu: {reconciliation.uncovered_ranges.map(range => `${formatDisplayDate(range.date_from)} - ${formatDisplayDate(range.date_to)}`).join('; ')}</footer> : null}
     </div> : null}
 
     {feedback ? <div className="results-feedback" role="status">{feedback}</div> : null}
@@ -633,8 +641,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           if (column === 'mismatch_fields') {
             return <span className="results-reconciliation-mismatch-fields" key={column} title={display}>{display}</span>;
           }
-          const difference = column.startsWith('difference_') && isNonZeroMoneyDifference(rawValue);
-          return <span className={difference ? 'results-reconciliation-difference' : undefined} key={column} title={display}>{display}</span>;
+          return <span className={getDifferenceClass(column, rawValue)} key={column} title={display}>{display}</span>;
         })}
       </div>)}
       {aggregate && items.length > 0 ? <div className="results-row results-row--total" style={{ gridTemplateColumns }}>
@@ -646,7 +653,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
               ? `${formatVietnameseNumber(aggregate.invoice_count)} HĐ`
               : Object.prototype.hasOwnProperty.call(aggregate.totals, column) ? aggregate.totals[column] : '';
           const display = rawValue === '' ? '' : formatResultCell(column, rawValue, columnTypes[column]);
-          return <span key={column} title={display}>{display}</span>;
+          return <span className={mode === 'reconciliation' ? getDifferenceClass(column, rawValue, true) : undefined} key={column} title={display}>{display}</span>;
         })}
       </div> : null}
     </div> : null}

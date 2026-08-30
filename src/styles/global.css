@@ -82,6 +82,7 @@ button { color: inherit; }
 .company-name { font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .status-badge { width: max-content; padding: 3px 9px; border-radius: 12px; border: 1px solid #cbd5e1; background: #e2e8f0; color: #4b5563; font-size: 11px; line-height: 18px; }
 .status-badge[data-status="completed"] { color: var(--mia-green-700); border-color: rgb(16 185 129 / 20%); background: rgb(16 185 129 / 10%); }
+.status-badge[data-status="ready"] { color: #166534; border-color: transparent; background: #dcfce7; }
 .status-badge[data-status="failed"] { color: var(--mia-danger); border-color: #fecaca; background: #fee2e2; }
 .status-badge[data-status="processing"] { color: #2563eb; border-color: #bfdbfe; background: #eff6ff; }
 .progress-cell { width: 238px; display: flex; flex-direction: column; gap: 4px; color: var(--mia-text-soft); font-size: 11px; }

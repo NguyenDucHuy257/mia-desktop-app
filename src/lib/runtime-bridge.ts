@@ -173,6 +173,9 @@ export type OverviewResult = SourceResultRow;
 export type DetailResult = SourceResultRow;
 export type ReconciliationResult = SourceResultRow;
 export interface ReconciliationSummary {
+  selected_overview_invoice_count: number;
+  selected_detail_invoice_count: number;
+  selected_difference: number;
   overview_invoice_count: number;
   detail_invoice_count: number;
   difference: number;
@@ -181,6 +184,7 @@ export interface ReconciliationSummary {
   money_mismatch_count: number;
   issue_count: number;
   coverage_ranges: Array<{ date_from: string; date_to: string }>;
+  uncovered_ranges: Array<{ date_from: string; date_to: string }>;
 }
 export interface LocalResultPage<T> {
   items: T[];
