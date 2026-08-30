@@ -12,9 +12,9 @@ Request:
 ```json
 {
   "tool": "MIA",
-  "key": "MIAV2-<32 lowercase hex>",
+  "key": "KEYV2-<32 lowercase hex>-<phone>",
   "device_id": "<stable local UUID/id>",
-  "phone": "0981234567 hoặc chuỗi rỗng khi thử legacy V1",
+  "phone": "0981234567",
   "hardware": {
     "system_uuid": "<sha256>",
     "bios_serial": "<sha256>",
@@ -23,22 +23,23 @@ Request:
     "cpu_id": "<sha256>",
     "disk_serial": "<sha256>"
   },
-  "legacy_keys": ["key<29hex>"]
+  "legacy_keys": ["key<29hex>", "KEY<29hex><phone>"]
 }
 ```
 
-`key = "MIAV2-" + sha256("MIA|" + device_id)[:32]`. Phone không tham gia
-công thức nên update phone hoặc recovery không rotate canonical key.
+`key = "KEYV2-" + sha256("MIA|" + device_id)[:32] + "-" + phone`.
+Client không gọi V2 khi chưa có phone. Phone mới không tự được coi là license
+đã active; shared server vẫn quyết định activation/recovery.
 
 Response:
 
 ```json
 {
   "valid": true,
-  "key": "MIAV2-...",
+  "key": "KEYV2-...-0981234567",
   "device_id": "<canonical device_id>",
-  "phone": "0981234567 hoặc chuỗi rỗng",
-  "phone_status": "verified|pending",
+  "phone": "0981234567",
+  "phone_status": "verified",
   "hardware_profile": {"system_uuid": "<sha256>"},
   "expires_at": "31/12/2027",
   "expired": false,

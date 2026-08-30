@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 TOOL = "MIA"
-NEW_KEY_PREFIX = "MIAV2-"
+NEW_KEY_PREFIX = "KEYV2-"
 HARDWARE_FIELDS = {
     "system_uuid", "bios_serial", "baseboard_serial",
     "machine_guid", "cpu_id", "disk_serial",
@@ -139,9 +139,10 @@ def _hardware_match(saved: Dict[str, str], current: Dict[str, str]) -> tuple[boo
     return matches >= MIN_HARDWARE_FIELDS and ratio >= MIN_MATCH_RATIO, ratio, matches
 
 
-def _key(device_id: str) -> str:
+def _key(device_id: str, phone: str) -> str:
+    clean_phone = _phone(phone, required=True)
     digest = hashlib.sha256(f"{TOOL}|{device_id}".encode("utf-8")).hexdigest()
-    return f"{NEW_KEY_PREFIX}{digest[:32]}"
+    return f"{NEW_KEY_PREFIX}{digest[:32]}-{clean_phone}"
 
 
 def _ensure_legacy_seed(paths: dict[str, Path]) -> None:
@@ -216,8 +217,8 @@ def verify_mia_key_v2(
     if not device_id or len(device_id) > 128:
         raise ValueError("Missing or invalid device_id")
     current_hardware = _hardware(hardware)
-    clean_phone = _phone(phone)
-    expected_key = _key(device_id)
+    clean_phone = _phone(phone, required=True)
+    expected_key = _key(device_id, clean_phone)
     if str(key or "").strip() != expected_key:
         raise ValueError("Invalid MIA v2 key for device_id")
     paths = _paths(base_dir)
@@ -228,13 +229,11 @@ def verify_mia_key_v2(
         bindings = _load_json(paths["bindings"])
         migrations = _load_json(paths["migrations"])
 
-        # Normal verification; a manually-added MIAV2 key binds on first use.
+        # Normal verification; a manually-added KEYV2 key binds on first use.
         active_line = _find_key_line(vip_lines, expected_key)
         if active_line:
             saved = dict(bindings.get(expected_key) or {})
             if not saved:
-                if not clean_phone:
-                    return {"valid": False, "key": expected_key, "device_id": device_id, "phone": "", "expired": False, "migrated": False, "reason": "phone_required"}
                 saved = _binding(device_id, clean_phone, current_hardware, "manual_activation", now)
                 bindings[expected_key] = saved
                 _atomic_json(paths["bindings"], bindings)
@@ -304,8 +303,6 @@ def verify_mia_key_v2(
             _atomic_json(paths["migrations"], migrations)
             return _response(expected_key, new_line, saved, current_hardware, now, migrated=True, reason="legacy_migrated")
 
-        if not clean_phone:
-            return {"valid": False, "key": expected_key, "device_id": device_id, "phone": "", "phone_status": "pending", "expired": False, "migrated": False, "reason": "phone_required"}
         return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "phone_status": "verified", "expired": False, "migrated": False, "reason": "key_not_activated"}
 
 

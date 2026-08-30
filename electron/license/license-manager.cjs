@@ -21,10 +21,10 @@ function maskKey(key) {
   return value.length > 12 ? `${value.slice(0, 8)}****${value.slice(-4)}` : value || null;
 }
 
-function newProfile(evidence, phone = null) {
+function newProfile(evidence, phone = null, deviceId = crypto.randomUUID()) {
   return {
     version: 3,
-    device_id: crypto.randomUUID(),
+    device_id: deviceId,
     phone: normalizePhone(phone),
     hardware: { ...evidence.hardware },
   };
@@ -35,7 +35,7 @@ function safeState(state, details = {}) {
 }
 
 class LicenseManager {
-  constructor({ enabled, store, api, securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [] }) {
+  constructor({ enabled, store, api, securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID() }) {
     this.enabled = Boolean(enabled);
     this.store = store;
     this.api = api;
@@ -45,6 +45,7 @@ class LicenseManager {
     this.logger = logger;
     this.now = now;
     this.legacyPhonePaths = legacyPhonePaths;
+    this.createDeviceId = createDeviceId;
     this.current = this.enabled ? safeState('checking') : safeState('active', { mode: 'disabled' });
     this.inFlight = null;
     this.profile = null;
@@ -79,12 +80,13 @@ class LicenseManager {
     let profile = null;
     try { profile = this.store.loadProfile(); } catch (error) {
       this.log('license_profile_corrupt', { code: error.code });
+      throw error;
     }
     const userDataDirectory = this.securityDirectory.replace(/[\\/]security$/, '');
     const legacyPhones = readLegacyPhones(userDataDirectory, this.legacyPhonePaths);
     this.profile = profile && typeof profile.device_id === 'string'
       ? { ...profile, version: 3, hardware: profile.hardware || this.evidence.hardware }
-      : newProfile(this.evidence, legacyPhones[0]);
+      : newProfile(this.evidence, legacyPhones[0], this.createDeviceId());
     this.store.saveProfile(this.profile);
     this.detection = buildLegacyDetection(this.evidence, [this.profile.phone, ...legacyPhones]);
     return this.detection;

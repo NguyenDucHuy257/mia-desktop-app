@@ -44,7 +44,7 @@ Sau khi bốn smoke checks PASS, cấu hình desktop rollout:
 
 ```text
 MIA_LICENSE_V2_ENABLED=true
-MIA_KEY_SERVER_URL=https://gotax.vn
+MIA_LICENSE_API_URL=https://gotax.vn
 ```
 
 Client tự append `/verify-key-v2`; không cấu hình URL `/license/v2` cũ.

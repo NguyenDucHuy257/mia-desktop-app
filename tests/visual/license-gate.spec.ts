@@ -48,6 +48,7 @@ test('asks a detected legacy customer for phone without asking for a new key', a
   await expect(page.getByText('Bạn không cần cấp lại key.')).toBeVisible();
   await expect(page.getByLabel('Số điện thoại')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toHaveCount(0);
+  await page.screenshot({ path: 'test-results/license/legacy-phone-required.png', fullPage: true });
 });
 
 test('rejects dummy phone before calling activation', async ({ page }) => {
@@ -58,3 +59,16 @@ test('rejects dummy phone before calling activation', async ({ page }) => {
   await expect(page.getByText(/Vui lòng nhập số điện thoại hợp lệ/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toHaveCount(0);
 });
+
+for (const scenario of [
+  { state: 'checking', heading: 'Đang kiểm tra bản quyền' },
+  { state: 'expired', heading: 'Bản quyền đã hết hạn' },
+  { state: 'verification_required', heading: 'Cần xác minh thêm' },
+  { state: 'error', reason: 'license_network_error', heading: 'Không thể kết nối máy chủ bản quyền' },
+]) {
+  test(`renders the ${scenario.state} license state`, async ({ page }) => {
+    await installLicenseBridge(page, { state: scenario.state, active: false, reason: scenario.reason });
+    await page.goto('/');
+    await expect(page.getByRole('heading', { name: scenario.heading })).toBeVisible();
+  });
+}

@@ -152,16 +152,18 @@ test('detail results retain total rows on page two and empty export is stopped b
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Xem kết quả' })).toBeVisible();
   await page.getByRole('button', { name: 'Xem kết quả' }).click();
-  await page.getByRole('tab', { name: 'Chi tiết' }).click();
+  await page.getByRole('tab', { name: /^Chi tiết$/ }).click();
   await expect(page.getByText('Tổng 73 hàng · tối đa 50 hàng/trang')).toBeVisible();
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.locator('.results-row:not(.results-row--header)')).toHaveCount(23);
   await expect(page.getByText('Tổng 73 hàng · tối đa 50 hàng/trang')).toBeVisible();
 
   await page.getByLabel('Tìm kiếm kết quả').fill('không-có');
-  await expect(page.getByText('Không tồn tại hóa đơn trong thời gian này.')).toBeVisible();
+  await expect(page.getByText('Không có dữ liệu phù hợp với bộ lọc hiện tại.')).toBeVisible();
   await page.getByRole('button', { name: 'Tải xuống kết quả' }).click();
-  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  const exportDialog = page.getByRole('dialog', { name: 'Chọn nội dung tải xuống' });
+  await exportDialog.getByLabel('Tổng quan').uncheck();
+  await exportDialog.getByRole('button', { name: 'Tải xuống', exact: true }).click();
   await expect(page.getByText('Không tồn tại hóa đơn phù hợp với lựa chọn hiện tại.')).toBeVisible();
   expect(await page.evaluate(() => (window as typeof window & { resultExportCalls: number }).resultExportCalls)).toBe(0);
 });
@@ -388,7 +390,7 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await expect(page.getByText('overview-first')).toBeVisible();
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.getByText('overview-djE6MQ')).toBeVisible();
-  await page.getByRole('tab', { name: 'Chi tiết' }).click();
+  await page.getByRole('tab', { name: /^Chi tiết$/ }).click();
   await expect(page.getByText('detail-first')).toBeVisible();
 });
 
