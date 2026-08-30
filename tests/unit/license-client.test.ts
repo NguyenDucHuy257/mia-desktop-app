@@ -132,6 +132,48 @@ describe('MIA shared-key-server client', () => {
     expect(JSON.parse(call[1].body)).toEqual(payload);
   });
 
+  it('preserves FastAPI string details and identifies a shared server without MIA V2', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      detail: 'verify-key-v2 currently supports GSOFT only',
+    }), { status: 400, headers: { 'content-type': 'application/json' } }));
+    const client = createLicenseApi({ baseUrl: 'https://gotax.vn', fetchImpl });
+    await expect(client.verifyKeyV2({ tool: 'MIA' })).rejects.toMatchObject({
+      code: 'mia_v2_not_deployed',
+      status: 400,
+      transient: false,
+      message: 'Shared key server does not support tool=MIA yet',
+    });
+  });
+
+  it('preserves structured error codes returned by the shared server', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      detail: { code: 'invalid_license_payload', message: 'Invalid payload' },
+    }), { status: 422, headers: { 'content-type': 'application/json' } }));
+    const client = createLicenseApi({ baseUrl: 'https://gotax.vn', fetchImpl });
+    await expect(client.verifyKeyV2({ tool: 'MIA' })).rejects.toMatchObject({
+      code: 'invalid_license_payload',
+      status: 422,
+      message: 'Invalid payload',
+    });
+  });
+
+  it('logs a sanitized terminal event when license initialization fails', async () => {
+    const logger = { info: vi.fn() };
+    const setup = manager({
+      api: api({ verifyKeyV2: vi.fn(async () => {
+        throw Object.assign(new Error('sensitive upstream detail'), {
+          name: 'LicenseApiError', code: 'mia_v2_not_deployed', status: 400, transient: false,
+        });
+      }) }),
+    });
+    (setup.instance as any).logger = logger;
+    expect((await setup.instance.initialize()).reason).toBe('mia_v2_not_deployed');
+    expect(logger.info).toHaveBeenCalledWith('license_init_failed', {
+      code: 'mia_v2_not_deployed', error_type: 'LicenseApiError', status: 400, transient: false,
+    });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain('sensitive upstream detail');
+  });
+
   it('stores profile and verification state encrypted and fails closed on corruption', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mia-license-store-'));
     directories.push(directory);

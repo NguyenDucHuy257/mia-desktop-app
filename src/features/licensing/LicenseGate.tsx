@@ -12,8 +12,23 @@ const copy: Record<string, { title: string; description: string }> = {
   error: { title: 'Không thể kiểm tra bản quyền', description: 'Vui lòng kiểm tra kết nối và thử lại. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.' },
 };
 
+const reasonCopy: Record<string, { title: string; description: string }> = {
+  mia_v2_not_deployed: {
+    title: 'Máy chủ chưa hỗ trợ MIA V2',
+    description: 'Bản mở rộng tool=MIA chưa được triển khai trên máy chủ bản quyền dùng chung. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.',
+  },
+  license_network_error: {
+    title: 'Không thể kết nối máy chủ bản quyền',
+    description: 'Vui lòng kiểm tra kết nối mạng và thử lại. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.',
+  },
+  license_timeout: {
+    title: 'Máy chủ bản quyền phản hồi quá chậm',
+    description: 'Vui lòng thử lại sau. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.',
+  },
+};
+
 function LicenseFrame({ state, onRetry }: { state: LicenseStateResponse; onRetry(): Promise<void> }) {
-  const content = copy[state.state] || copy.error;
+  const content = reasonCopy[state.reason || ''] || copy[state.state] || copy.error;
   const retryable = ['error', 'expired', 'revoked', 'verification_required'].includes(state.state);
   return <main className="license-gate-page">
     <section className="license-gate-card" role="status" aria-live="polite">

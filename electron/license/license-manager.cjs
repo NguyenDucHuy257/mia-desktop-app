@@ -214,7 +214,14 @@ class LicenseManager {
       this.current = safeState('phone_required');
       return this.current;
     } catch (error) {
-      this.current = safeState('error', { reason: error.code || 'license_initialize_failed' });
+      const reason = error.code || 'license_initialize_failed';
+      this.log('license_init_failed', {
+        code: reason,
+        error_type: error?.name || 'Error',
+        status: Number.isInteger(error?.status) ? error.status : null,
+        transient: Boolean(error?.transient),
+      });
+      this.current = safeState('error', { reason });
       return this.current;
     }
   }

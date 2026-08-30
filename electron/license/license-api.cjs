@@ -8,6 +8,27 @@ class LicenseApiError extends Error {
   }
 }
 
+function parseErrorResponse(data) {
+  const rawDetail = data?.detail ?? data;
+  const detail = rawDetail && typeof rawDetail === 'object' && !Array.isArray(rawDetail)
+    ? rawDetail
+    : null;
+  const rawMessage = typeof rawDetail === 'string'
+    ? rawDetail
+    : detail?.message || data?.message || 'Key verification failed';
+  const message = String(rawMessage);
+  if (/verify-key-v2 currently supports GSOFT only|unsupported tool|invalid tool/i.test(message)) {
+    return {
+      code: 'mia_v2_not_deployed',
+      message: 'Shared key server does not support tool=MIA yet',
+    };
+  }
+  return {
+    code: String(detail?.code || data?.code || 'license_request_failed'),
+    message,
+  };
+}
+
 function validateServerUrl(value, allowInsecureLocalhost = false) {
   let url;
   try { url = new URL(value); } catch { throw new TypeError('invalid MIA key server URL'); }
@@ -41,8 +62,8 @@ function createLicenseApi({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = 1
       let data;
       try { data = text ? JSON.parse(text) : {}; } catch { throw new LicenseApiError('invalid_response', 'Key server returned invalid JSON'); }
       if (!response.ok) {
-        const detail = data?.detail && typeof data.detail === 'object' ? data.detail : data;
-        throw new LicenseApiError(String(detail?.code || 'license_request_failed'), String(detail?.message || detail || 'Key verification failed'), {
+        const errorResponse = parseErrorResponse(data);
+        throw new LicenseApiError(errorResponse.code, errorResponse.message, {
           status: response.status,
           transient: response.status === 408 || response.status === 429 || response.status >= 500,
         });
@@ -61,4 +82,4 @@ function createLicenseApi({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = 1
   return Object.freeze({ verifyKeyV2 });
 }
 
-module.exports = { LicenseApiError, createLicenseApi, validateServerUrl };
+module.exports = { LicenseApiError, createLicenseApi, parseErrorResponse, validateServerUrl };
