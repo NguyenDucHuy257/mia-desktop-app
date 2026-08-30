@@ -28,8 +28,11 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await expect(page.locator('.topbar-company h1')).toHaveText('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
   await expect(page.locator('.topbar-company h1')).toHaveCSS('color', 'rgb(22, 101, 52)');
   await expect(page.locator('.topbar')).toHaveCSS('height', '52px');
-  await expect(page.locator('.topbar-company-description svg')).toHaveCount(1);
-  await expect(page.locator('.topbar-company-description circle')).toHaveCSS('fill', 'rgb(37, 99, 235)');
+  const verifiedIcon = page.locator('.topbar-company-description img');
+  await expect(verifiedIcon).toHaveCount(1);
+  await expect(verifiedIcon).toHaveAttribute('alt', 'Đã xác minh');
+  await expect(verifiedIcon).toHaveCSS('width', '12px');
+  await expect(verifiedIcon).toHaveCSS('height', '12px');
   await expect(page.locator('.support-hotline')).toContainText('0383.466.992 - 0865.219.286');
 
   await page.getByRole('button', { name: 'Liên hệ ngay' }).click();

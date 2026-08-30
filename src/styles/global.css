@@ -39,9 +39,7 @@ button { color: inherit; }
 .topbar-company h1 { max-width: min(520px, 42vw); margin: 0; overflow: hidden; color: var(--mia-green-700); font-size: 15px; line-height: 20px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-company span { color: var(--mia-text-muted); font-size: 10px; line-height: 14px; }
 .topbar-company-description { display: flex; align-items: center; gap: 4px; }
-.topbar-company-description svg { width: 12px; height: 12px; flex: 0 0 12px; }
-.topbar-company-description circle { fill: #2563eb; }
-.topbar-company-description path { fill: none; stroke: #fff; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.topbar-company-description img { width: 12px; height: 12px; flex: 0 0 12px; object-fit: contain; }
 .topbar-actions { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .support-hotline { padding-right: 14px; border-right: 1px solid var(--mia-border-warm); display: flex; align-items: center; gap: 8px; text-align: left; white-space: nowrap; }
 .support-hotline-icon { width: 30px; height: 30px; border-radius: 50%; color: var(--mia-green-700); background: var(--mia-green-50); display: grid; place-items: center; }
