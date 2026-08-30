@@ -51,6 +51,14 @@ Các file desktop đã audit:
 - `tests/unit/device-identity.test.ts`
 - package/renderer secret scan scripts
 
+Source snapshot bổ sung ngày 2026-08-30:
+
+- `D:\Downloads\app.py`, SHA-256 `6d0ea73b9a65a8d922869b5abb0114d0b27471146eb5e1d80925617e48500be6`;
+- `D:\Downloads\auth.py`, SHA-256 `6bd145ca4cc2f9b47e9c4e65e1f432b814df4a96038c78e062150fc644bed8ac`;
+- `D:\Downloads\vip.txt`, được cung cấp như snapshot kho MIA, SHA-256 `a23680826c65f7738c224ed4bc1a907e671defea24100d7d28535c0f32173839`.
+
+Các file này không nằm trong một server repository có history/dependency/deployment tests, nên audit có thể xác nhận code snapshot nhưng chưa xác nhận đây là revision đang chạy production.
+
 ## 3. Kiến trúc hiện tại
 
 ### 3.1 Electron security boundary
@@ -158,15 +166,38 @@ Không implement full-hash hoặc MAK adapter từ pattern. Những schema này 
 
 ### 4.3 Tỷ lệ schema và silent migration
 
-Không thể báo tỷ lệ thật vì `MIA/vip.txt` không có trong workspace. Cần analyzer read-only chạy tại server hoặc trên bản sao đã kiểm soát, chỉ output aggregate:
+Analyzer read-only `scripts/analyze-mia-legacy-licenses.mjs` đã chạy trên snapshot có SHA nêu trên, với ngày đánh giá expiry `2026-08-30`. Analyzer không output raw key, phone, legacy row hoặc hardware ID.
 
-- tổng raw rows, valid/invalid/duplicate/expired;
-- count và percent theo V1/V2/full-hash/MAK/custom;
-- unique/ambiguous `hash29` mappings;
-- valid phone metadata rate;
-- estimated exact-match silent migration rate.
+| Phân loại | Records | Tỷ lệ |
+|---|---:|---:|
+| V1 `key<29hex>` | 589 | 33,07% |
+| V2 observed `KEY<29hex><phone>` | 1.164 | 65,36% |
+| Full hash `key<64hex>` | 7 | 0,39% |
+| MAK | 3 | 0,17% |
+| Custom/unsupported | 18 | 1,01% |
+| Tổng non-empty | 1.781 | 100% |
 
-Analyzer không được in full key, phone, raw line hoặc hardware ID. Chỉ sau output này mới đánh giá mục tiêu 97–98%.
+Hai schema V1/V2 observed chiếm 1.753/1.781, tương đương 98,43%. Snapshot có 1.777 unique key, bốn duplicate-key groups/rows nhưng không có raw line trùng hoàn toàn. Expiry gồm 1.745 current, 25 expired và 11 malformed.
+
+Trong 1.745 record còn hạn:
+
+- 1.720 thuộc hai schema V1/V2 observed, tương đương 98,57% schema-addressable;
+- có 1.681 distinct `hash29`;
+- 1.661 hash chỉ ánh xạ một current record;
+- 20 hash ambiguous chứa tổng cộng 59 current records;
+- conservative unique-hash coverage là 1.661/1.745, tương đương 95,19%.
+
+98,57% **không phải** tỷ lệ migration thực tế. Đây là trần schema-addressable có điều kiện; actual rate còn phụ thuộc legacy disk vẫn reconstruct được, local phone/evidence, duplicate resolution và server proof. 95,19% là estimate bảo thủ cho unique current hash mapping, cũng chỉ áp dụng khi client reconstruct đúng hash máy.
+
+Metadata có field trông đúng VN phone regex ở 574/589 V1 rows và 1.142/1.164 V2 rows. Đây chỉ là shape evidence, không tự chứng minh field provenance. Không attach phone cho đến khi parser xác nhận đúng column semantics.
+
+Chạy lại phép đo:
+
+```powershell
+node scripts/analyze-mia-legacy-licenses.mjs D:\Downloads\vip.txt --as-of 2026-08-30
+```
+
+Trước rollout phải chạy lại trên canonical server file và đối chiếu SHA/count; snapshot local có thể stale.
 
 ## 5. Startup state machine bắt buộc
 
@@ -285,7 +316,29 @@ src/features/licensing/
 
 ## 7. Server V2 design dự kiến
 
-Server source chưa có nên phần này là contract proposal, chưa phải implementation audit.
+### 7.0 Audit source snapshot hiện có
+
+`app.py` giữ `POST /verify-key` và thêm một `POST /verify-key-v2`. `auth.py` map sáu namespace riêng và `check_key()` vẫn trả nguyên nội dung `vip.txt` theo tool.
+
+V2 snapshot hiện tại là code dành riêng cho **GSOFT**, không phải MIA: `verify_key_v2()` reject mọi `tool != "GSOFT"`, dùng paths dưới `GSOFT/` và tạo `KEYV2-...-phone`. Nó không chứng minh generator của MIA schema `KEY<29hex><phone>`.
+
+Không reuse nguyên implementation này cho MIA vì:
+
+- không có server challenge, Ed25519 signature hoặc signed license token;
+- tin các hardware hash do client gửi sau khi chỉ kiểm tra shape 64-hex;
+- canonical/display key phụ thuộc phone và chứa full phone, nên phone update có thể rotate key;
+- recovery chọn candidate điểm cao nhất, không reject tie/ambiguity;
+- baseline ba signal có thể pass với 2/3 matches vì chỉ kiểm ratio 50%;
+- corrupt JSON được `_load_json()` biến thành `{}`, làm mất phân biệt corrupt với empty;
+- migration ghi `vip.txt`, bindings JSON và migrations JSON qua nhiều atomic files nhưng không có một transaction chung; crash có thể để partial state;
+- malformed expiry được legacy `_is_expired()` coi như chưa hết hạn;
+- response trả full phone và full hardware profile;
+- request list/string chưa có bounds ở application contract và snapshot không cho thấy rate limit/authentication;
+- legacy `/verify-key` trả toàn key store, nên legacy key không thể là strong proof duy nhất.
+
+Điểm có thể reuse về ý tưởng, sau khi viết lại trong MIA namespace: tool allowlist, process lock, atomic single-file replace, preserving old row trong grace period, hardware field allowlist và exact legacy candidate lookup.
+
+Phần dưới đây vẫn là contract proposal. Không sửa trực tiếp hai file trong `Downloads`; cần authoritative server repository, deployment owner và regression environment.
 
 ### 7.1 Namespace/API
 
@@ -435,8 +488,8 @@ Rollout:
 
 Không bắt đầu server/migration production implementation cho đến khi có:
 
-1. source key-server chính xác (`app.py`, `auth.py`, dependency/config và tests);
-2. read-only access hoặc controlled copy của full `MIA/vip.txt` để chạy aggregate analyzer;
+1. authoritative key-server repository/revision, dependency/config, deployment procedure và tests; hai source snapshot đã có nhưng không kèm provenance/version history;
+2. canonical server `MIA/vip.txt` được đối chiếu SHA/count ngay trước rollout; controlled snapshot hiện tại đã được phân tích;
 3. source path/golden fixtures cho V2 phone, full-hash và MAK generation;
 4. sanitized samples cho malformed/custom rows;
 5. production/staging HTTPS base URL và certificate/deployment ownership;
@@ -447,8 +500,8 @@ Không bắt đầu server/migration production implementation cho đến khi c�
 ## 14. Kết quả Stage 1
 
 - Legacy schemas đã phân loại. Pure V1 formula và ordered candidate builder đã được triển khai tại `electron/license/legacy-formulas.cjs` với golden/regression tests; module chưa được nối vào startup hoặc server.
-- Exact source path của generator/server chưa thể báo vì source không có trong workspace.
-- Tỷ lệ từng schema và silent migration chưa đo được; không dùng con số phỏng đoán.
+- Source snapshot/server functions đã được audit, nhưng exact production revision và generator path của MIA V2/V3/MAK vẫn chưa được chứng minh.
+- Snapshot schema distribution đã đo: V1/V2 observed 98,43%; conservative unique-hash estimate 95,19%; không trình bày estimate này như actual migration rate.
 - Trường hợp manual bắt buộc: ambiguous hash mapping, unsupported/unproven schema, insufficient device proof, revoked/expired policy, malformed record và recovery dưới threshold.
 - Client files/modules, server APIs, database schema, UI flow, data path, test gates và rollback đã được thiết kế.
 - Production behavior giữ nguyên trong Stage 1.
