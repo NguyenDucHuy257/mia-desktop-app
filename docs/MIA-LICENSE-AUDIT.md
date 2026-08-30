@@ -446,7 +446,7 @@ Không bắt đầu server/migration production implementation cho đến khi c�
 
 ## 14. Kết quả Stage 1
 
-- Legacy schemas đã phân loại; chỉ V1 formula đủ cơ sở để chuẩn bị golden test.
+- Legacy schemas đã phân loại. Pure V1 formula và ordered candidate builder đã được triển khai tại `electron/license/legacy-formulas.cjs` với golden/regression tests; module chưa được nối vào startup hoặc server.
 - Exact source path của generator/server chưa thể báo vì source không có trong workspace.
 - Tỷ lệ từng schema và silent migration chưa đo được; không dùng con số phỏng đoán.
 - Trường hợp manual bắt buộc: ambiguous hash mapping, unsupported/unproven schema, insufficient device proof, revoked/expired policy, malformed record và recovery dưới threshold.
