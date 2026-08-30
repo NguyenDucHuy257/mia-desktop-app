@@ -10,7 +10,7 @@ async function installLicenseBridge(page: import('@playwright/test').Page, initi
           status: async () => current,
           initialize: async () => current,
           submitPhone: async () => {
-            current = { state: 'activation_required', active: false, reason: 'key_not_activated', activation_key: 'MIAV2-STABLE-TEST-KEY' };
+            current = { state: 'activation_required', active: false, reason: 'key_not_activated', activation_key: 'KEYV2-STABLE-TEST-KEY-0981234567' };
             return current;
           },
           retry: async () => current,
@@ -38,7 +38,16 @@ test('opens Phone Form only for no-match and keeps the activation action in the 
   await phone.fill('0981234567');
   await page.getByRole('button', { name: 'Tiếp tục' }).click();
   await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toBeVisible();
-  await expect(page.getByText('MIAV2-STABLE-TEST-KEY')).toBeVisible();
+  await expect(page.getByText('KEYV2-STABLE-TEST-KEY-0981234567')).toBeVisible();
+});
+
+test('asks a detected legacy customer for phone without asking for a new key', async ({ page }) => {
+  await installLicenseBridge(page, { state: 'legacy_phone_required', active: false });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Bổ sung số điện thoại' })).toBeVisible();
+  await expect(page.getByText('Bạn không cần cấp lại key.')).toBeVisible();
+  await expect(page.getByLabel('Số điện thoại')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toHaveCount(0);
 });
 
 test('rejects dummy phone before calling activation', async ({ page }) => {

@@ -79,7 +79,7 @@ function licenses() {
   const protector = secureProtector();
   let api = null;
   if (enabled) {
-    const baseUrl = process.env.MIA_KEY_SERVER_URL;
+    const baseUrl = process.env.MIA_LICENSE_API_URL || process.env.MIA_KEY_SERVER_URL;
     if (!baseUrl) throw Object.assign(new Error('MIA license API URL is not configured'), { code: 'license_api_not_configured' });
     api = createLicenseApi({
       baseUrl,

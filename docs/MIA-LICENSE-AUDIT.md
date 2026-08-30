@@ -319,7 +319,7 @@ MIA và Taxsoft dùng cùng production service tại `/opt/keys_app` và cùng e
 
 Taxsoft giữ nguyên `tool=GSOFT` và toàn bộ nhánh GSOFT hiện hữu. `auth.py` chỉ thêm dispatch `tool=MIA` sang module `mia_v2.py`; module này chỉ đọc/ghi dưới `BASE_DIR/MIA`. `app.py` giữ nguyên DTO gồm `tool`, `key`, `device_id`, `phone`, `hardware`, `legacy_keys`.
 
-Client MIA dùng HTTPS và key ổn định `MIAV2-SHA256("MIA|device_id")[:32]`. Phone là activation/recovery metadata, không làm rotate canonical key. Shared response có `valid`, canonical `key`, canonical `device_id`, `phone`, `phone_status`, `hardware_profile`, `expires_at`, `expired`, `migrated`, `recovered`, `hardware_match` và `reason`.
+Client MIA dùng HTTPS và contract production `KEYV2-SHA256("MIA|device_id")[:32]-phone`. Client không gọi `/verify-key-v2` khi chưa có phone; với legacy evidence, UI yêu cầu bổ sung phone trước rồi gửi exact legacy candidates để server migrate. Shared response có `valid`, canonical `key`, canonical `device_id`, `phone`, `phone_status`, `hardware_profile`, `expires_at`, `expired`, `migrated`, `recovered`, `hardware_match` và `reason`.
 
 Deployment artifact nằm tại `shared_key_server_mia/`. Nó là patch cho service hiện hữu, không phải application server độc lập.
 

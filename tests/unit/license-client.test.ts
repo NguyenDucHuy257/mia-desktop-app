@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -83,12 +84,13 @@ function manager(options: Record<string, any> = {}) {
 }
 
 function activeResponse(deviceId: string, overrides: Record<string, any> = {}) {
+  const phone = overrides.phone || '0981234567';
   return {
     valid: true,
-    key: miaV2Key(deviceId),
+    key: miaV2Key(deviceId, phone),
     device_id: deviceId,
-    phone: '',
-    phone_status: 'pending',
+    phone,
+    phone_status: 'verified',
     expires_at: '31/12/2027',
     expired: false,
     migrated: true,
@@ -100,6 +102,14 @@ function activeResponse(deviceId: string, overrides: Record<string, any> = {}) {
 }
 
 describe('MIA shared-key-server client', () => {
+  it('builds the exact shared-server KEYV2 formula and requires a real phone', () => {
+    const deviceId = '8a6414d6-9298-437e-a568-04e546f134d4';
+    const digest = crypto.createHash('sha256').update(`MIA|${deviceId}`, 'utf8').digest('hex').slice(0, 32);
+    expect(miaV2Key(deviceId, '098 123 4567')).toBe(`KEYV2-${digest}-0981234567`);
+    expect(miaV2Key(deviceId, '')).toBeNull();
+    expect(miaV2Key(deviceId, '0000000000')).toBeNull();
+  });
+
   it('hashes six normalized signals and reconstructs exact MIA V1 candidates', () => {
     const result = buildDeviceEvidence({
       system_uuid: ' uuid ', bios_serial: 'bios', baseboard_serial: 'board',
@@ -125,7 +135,7 @@ describe('MIA shared-key-server client', () => {
     expect(validateServerUrl('https://gotax.vn').protocol).toBe('https:');
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ valid: false, reason: 'phone_required' }), { status: 200 }));
     const client = createLicenseApi({ baseUrl: 'https://gotax.vn', fetchImpl });
-    const payload = { tool: 'MIA', key: 'MIAV2-X', device_id: 'device', phone: '', hardware: {}, legacy_keys: [] };
+    const payload = { tool: 'MIA', key: 'KEYV2-X-0981234567', device_id: 'device', phone: '0981234567', hardware: {}, legacy_keys: [] };
     await client.verifyKeyV2(payload);
     const call = (fetchImpl as any).mock.calls[0];
     expect(call[0].toString()).toBe('https://gotax.vn/verify-key-v2');
@@ -159,7 +169,9 @@ describe('MIA shared-key-server client', () => {
 
   it('logs a sanitized terminal event when license initialization fails', async () => {
     const logger = { info: vi.fn() };
+    const profile = { version: 3, device_id: 'diagnostic-device', phone: '0981234567', hardware: evidence().hardware };
     const setup = manager({
+      store: memoryStore(null, profile),
       api: api({ verifyKeyV2: vi.fn(async () => {
         throw Object.assign(new Error('sensitive upstream detail'), {
           name: 'LicenseApiError', code: 'mia_v2_not_deployed', status: 400, transient: false,
@@ -183,22 +195,26 @@ describe('MIA shared-key-server client', () => {
     };
     const store = createProtectedLicenseStore(directory, protector);
     store.saveProfile({ version: 3, device_id: 'stable' });
-    store.saveLicense({ version: 2, canonical_key: 'MIAV2-STABLE' });
+    store.saveLicense({ version: 2, canonical_key: 'KEYV2-STABLE-0981234567' });
     expect(store.loadProfile().device_id).toBe('stable');
-    expect(fs.readFileSync(path.join(directory, 'license-state.bin'), 'utf8')).not.toContain('MIAV2-STABLE');
+    expect(fs.readFileSync(path.join(directory, 'license-state.bin'), 'utf8')).not.toContain('KEYV2-STABLE-0981234567');
     fs.writeFileSync(path.join(directory, 'license-state.bin'), 'corrupt');
     expect(() => store.loadLicense()).toThrow(/license_state_corrupt/);
   });
 
-  it('migrates an exact V1 license without phone before showing Phone Form', async () => {
-    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id)) }) });
-    const state = await setup.instance.initialize();
+  it('requires a phone locally for exact V1 evidence and migrates after phone submission', async () => {
+    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id, { phone: payload.phone, migrated: true })) }) });
+    expect((await setup.instance.initialize()).state).toBe('legacy_phone_required');
+    expect(setup.client.verifyKeyV2).not.toHaveBeenCalled();
+    const state = await setup.instance.submitPhone('0981234567');
     expect(state.state).toBe('active');
     const payload = (setup.client.verifyKeyV2 as any).mock.calls[0][0];
     expect(payload.tool).toBe('MIA');
-    expect(payload.phone).toBe('');
+    expect(payload.phone).toBe('0981234567');
+    expect(payload.key).toBe(miaV2Key(payload.device_id, '0981234567'));
     expect(payload.legacy_keys).toContain(`key${'b'.repeat(29)}`);
-    expect(setup.store.inspect().license.phone_status).toBe('pending');
+    expect(payload.legacy_keys).toContain(`KEY${'b'.repeat(29)}0981234567`);
+    expect(setup.store.inspect().license.phone_status).toBe('verified');
   });
 
   it('opens Phone Form only after no exact candidate and keeps a stable activation key', async () => {
@@ -207,7 +223,7 @@ describe('MIA shared-key-server client', () => {
     const pending = await setup.instance.submitPhone('0981234567');
     expect(pending.state).toBe('activation_required');
     const deviceId = setup.store.inspect().profile.device_id;
-    expect(pending.activation_key).toBe(miaV2Key(deviceId));
+    expect(pending.activation_key).toBe(miaV2Key(deviceId, '0981234567'));
     await setup.instance.retry();
     expect(setup.store.inspect().profile.device_id).toBe(deviceId);
     expect(setup.client.verifyKeyV2).toHaveBeenCalledTimes(2);
@@ -223,7 +239,7 @@ describe('MIA shared-key-server client', () => {
 
   it('verifies an existing shared-server profile before attempting migration', async () => {
     const deviceId = '8a6414d6-9298-437e-a568-04e546f134d4';
-    const saved = { canonical_key: miaV2Key(deviceId), device_id: deviceId, phone: '0981234567' };
+    const saved = { canonical_key: miaV2Key(deviceId, '0981234567'), device_id: deviceId, phone: '0981234567' };
     const profile = { version: 3, device_id: deviceId, phone: '0981234567', hardware: evidence().hardware };
     const verifyKeyV2 = vi.fn(async () => activeResponse(deviceId, { phone: '0981234567', phone_status: 'verified', migrated: false, reason: 'ok' }));
     const setup = manager({ store: memoryStore(saved, profile), api: api({ verifyKeyV2 }) });
@@ -235,7 +251,7 @@ describe('MIA shared-key-server client', () => {
   it('syncs the canonical device id returned by shared-server hardware recovery', async () => {
     const temporaryId = 'e2fe4915-ed2e-443d-9316-ef58e0bbed5a';
     const canonicalId = 'ec655b34-dd87-4271-ac69-7c46c197e7df';
-    const saved = { canonical_key: miaV2Key(canonicalId), device_id: canonicalId, phone: '0981234567' };
+    const saved = { canonical_key: miaV2Key(canonicalId, '0981234567'), device_id: canonicalId, phone: '0981234567' };
     const profile = { version: 3, device_id: temporaryId, phone: '0981234567', hardware: evidence().hardware };
     const setup = manager({
       store: memoryStore(saved, profile),
@@ -243,6 +259,25 @@ describe('MIA shared-key-server client', () => {
     });
     expect((await setup.instance.initialize()).state).toBe('active');
     expect(setup.store.inspect().profile.device_id).toBe(canonicalId);
+    expect(setup.store.inspect().license.canonical_key).toBe(miaV2Key(canonicalId, '0981234567'));
+  });
+
+  it('maps expiry and hardware mismatch responses without rotating the local device id', async () => {
+    const deviceId = '8a6414d6-9298-437e-a568-04e546f134d4';
+    const profile = { version: 3, device_id: deviceId, phone: '0981234567', hardware: evidence(false).hardware };
+    const expired = manager({
+      evidence: evidence(false), store: memoryStore(null, profile),
+      api: api({ verifyKeyV2: vi.fn(async (payload: any) => ({ ...payload, valid: false, expired: true, reason: 'expired' })) }),
+    });
+    expect((await expired.instance.initialize()).state).toBe('expired');
+    expect(expired.store.inspect().profile.device_id).toBe(deviceId);
+
+    const mismatch = manager({
+      evidence: evidence(false), store: memoryStore(null, profile),
+      api: api({ verifyKeyV2: vi.fn(async (payload: any) => ({ ...payload, valid: false, expired: false, reason: 'hardware_mismatch_below_50_percent' })) }),
+    });
+    expect((await mismatch.instance.initialize()).state).toBe('verification_required');
+    expect(mismatch.store.inspect().profile.device_id).toBe(deviceId);
   });
 
   it('never exposes raw Ed25519 or verification state through preload', () => {

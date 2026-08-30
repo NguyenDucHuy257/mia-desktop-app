@@ -43,7 +43,7 @@ function LicenseFrame({ state, onRetry }: { state: LicenseStateResponse; onRetry
   </main>;
 }
 
-function PhoneForm({ onSubmit }: { onSubmit(phone: string): Promise<void> }) {
+function PhoneForm({ legacy = false, onSubmit }: { legacy?: boolean; onSubmit(phone: string): Promise<void> }) {
   const [phone, setPhone] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -63,8 +63,10 @@ function PhoneForm({ onSubmit }: { onSubmit(phone: string): Promise<void> }) {
   return <main className="license-gate-page"><form className="license-gate-card" onSubmit={(event) => void submit(event)}>
     <img src={logo} alt="" className="license-gate-logo" />
     <strong className="license-gate-brand">MIA WT</strong>
-    <h1>Số điện thoại</h1>
-    <p>Số điện thoại được dùng để quản lý bản quyền và hỗ trợ khôi phục thiết bị.</p>
+    <h1>{legacy ? 'Bổ sung số điện thoại' : 'Số điện thoại'}</h1>
+    <p>{legacy
+      ? 'MIA đã nhận diện bản quyền hiện tại trên thiết bị này. Vui lòng bổ sung số điện thoại để hoàn tất nâng cấp bản quyền. Bạn không cần cấp lại key.'
+      : 'Số điện thoại được dùng để quản lý bản quyền và hỗ trợ khôi phục thiết bị.'}</p>
     <label className="license-phone-field">Số điện thoại
       <input autoFocus inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="Ví dụ: 0981234567" value={phone} onChange={(event) => setPhone(event.target.value.replace(/\D/g, '').slice(0, 10))} />
     </label>
@@ -110,7 +112,9 @@ export function LicenseGate({ children }: PropsWithChildren) {
   useEffect(() => { void initialize(); }, []);
   if (!state || state.state === 'checking' || state.state === 'migrating') return <LicenseFrame state={state || { state: 'checking', active: false }} onRetry={initialize} />;
   if (state.active) return <>{children}</>;
-  if (state.state === 'phone_required') return <PhoneForm onSubmit={submitPhone} />;
+  if (state.state === 'phone_required' || state.state === 'legacy_phone_required') {
+    return <PhoneForm legacy={state.state === 'legacy_phone_required'} onSubmit={submitPhone} />;
+  }
   if (state.state === 'activation_required') return <ActivationPage state={state} onRetry={async () => { if (bridge) setState(await bridge.retry()); }} />;
   return <LicenseFrame state={state} onRetry={initialize} />;
 }

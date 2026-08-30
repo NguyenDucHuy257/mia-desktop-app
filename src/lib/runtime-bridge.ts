@@ -1,7 +1,7 @@
 import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, InvoiceSyncState, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
 
 export type LicenseStateName =
-  | 'checking' | 'migrating' | 'active' | 'phone_required'
+  | 'checking' | 'migrating' | 'active' | 'phone_required' | 'legacy_phone_required'
   | 'activation_required' | 'expired' | 'revoked' | 'offline'
   | 'verification_required' | 'error';
 

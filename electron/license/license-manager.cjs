@@ -4,9 +4,11 @@ const { buildLegacyDetection, normalizePhone, readLegacyPhones } = require('./le
 const TOOL = 'MIA';
 const ACTIVE_STATES = new Set(['active']);
 
-function miaV2Key(deviceId) {
+function miaV2Key(deviceId, phone) {
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) return null;
   const digest = crypto.createHash('sha256').update(`${TOOL}|${deviceId}`, 'utf8').digest('hex');
-  return `MIAV2-${digest.slice(0, 32)}`;
+  return `KEYV2-${digest.slice(0, 32)}-${normalizedPhone}`;
 }
 
 function maskPhone(phone) {
@@ -88,12 +90,16 @@ class LicenseManager {
     return this.detection;
   }
 
-  requestPayload({ phone = this.profile.phone, key = miaV2Key(this.profile.device_id), legacyKeys = [] } = {}) {
+  requestPayload({ phone = this.profile.phone, legacyKeys = [] } = {}) {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      throw Object.assign(new Error('phone required'), { code: 'phone_required' });
+    }
     return {
       tool: TOOL,
-      key,
+      key: miaV2Key(this.profile.device_id, normalizedPhone),
       device_id: this.profile.device_id,
-      phone: normalizePhone(phone) || '',
+      phone: normalizedPhone,
       hardware: this.evidence.hardware,
       legacy_keys: [...new Set(legacyKeys)].slice(0, 32),
     };
@@ -151,7 +157,7 @@ class LicenseManager {
     if (reason === 'key_not_activated') {
       return safeState('activation_required', {
         reason,
-        activation_key: response?.key || miaV2Key(this.profile.device_id),
+        activation_key: response?.key || miaV2Key(this.profile.device_id, phone),
         phone: maskPhone(phone),
       });
     }
@@ -175,43 +181,37 @@ class LicenseManager {
         this.current = safeState('error', { reason: error.code || 'license_state_corrupt' });
         return this.current;
       }
-      if (saved?.canonical_key) {
-        const response = await this.api.verifyKeyV2(this.requestPayload({
-          phone: saved.phone,
-          key: miaV2Key(this.profile.device_id),
-          legacyKeys: detection.exact_key_candidates,
-        }));
-        this.current = response.valid
-          ? this.persistActive(response, response.recovered ? 'device_recovery' : 'v2_verify')
-          : this.stateForRejected(response, { phone: saved.phone });
-        return this.current;
-      }
-
-      this.current = safeState('migrating');
+      const phone = normalizePhone(saved?.phone)
+        || normalizePhone(this.profile?.phone)
+        || detection.phones[0]
+        || null;
       this.log('legacy_detection_completed', {
         candidates: detection.exact_key_candidates.length,
         schemas: detection.detected_schema.length,
       });
-      if (detection.has_any_candidate) {
-        const response = await this.api.verifyKeyV2(this.requestPayload({
-          phone: detection.phones[0] || null,
-          legacyKeys: detection.exact_key_candidates,
-        }));
-        if (response.valid) {
-          this.log('legacy_migration_success', { migrated: Boolean(response.migrated) });
-          return this.persistActive(response, response.migrated ? 'legacy_migration' : 'v2_verify');
-        }
-        this.current = this.stateForRejected(response, { phone: detection.phones[0] || null });
+      if (!phone) {
+        this.current = safeState(detection.has_any_candidate ? 'legacy_phone_required' : 'phone_required');
         return this.current;
       }
-      if (detection.phones[0]) {
-        const response = await this.api.verifyKeyV2(this.requestPayload({ phone: detection.phones[0] }));
-        this.current = response.valid
-          ? this.persistActive(response, response.recovered ? 'device_recovery' : 'v2_verify')
-          : this.stateForRejected(response, { phone: detection.phones[0] });
-        return this.current;
+
+      if (this.profile.phone !== phone) {
+        this.profile = { ...this.profile, phone };
+        this.store.saveProfile(this.profile);
       }
-      this.current = safeState('phone_required');
+      this.detection = buildLegacyDetection(this.evidence, [phone, ...detection.phones]);
+      if (!saved?.canonical_key && this.detection.has_any_candidate) this.current = safeState('migrating');
+      const response = await this.api.verifyKeyV2(this.requestPayload({
+        phone,
+        legacyKeys: this.detection.exact_key_candidates,
+      }));
+      if (response.valid) {
+        const source = response.migrated
+          ? 'legacy_migration'
+          : response.recovered ? 'device_recovery' : 'v2_verify';
+        if (response.migrated) this.log('legacy_migration_success', { migrated: true });
+        return this.persistActive(response, source);
+      }
+      this.current = this.stateForRejected(response, { phone });
       return this.current;
     } catch (error) {
       const reason = error.code || 'license_initialize_failed';
