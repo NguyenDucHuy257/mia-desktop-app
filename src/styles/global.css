@@ -12,13 +12,14 @@ button { color: inherit; }
 .brand > span { display: block; margin-top: 3px; color: var(--mia-text-muted); font-size: 12px; line-height: 16.8px; }
 .primary-nav { padding-top: 16px; }
 .secondary-nav { margin-top: auto; padding-top: 17px; border-top: 1px solid var(--mia-border-warm); }
-.nav-button { width: 185px; height: 42px; padding: 8px 12px; border: 0; border-radius: var(--mia-radius-ui); display: flex; align-items: center; gap: 12px; color: #5d5f5d; background: transparent; font-size: 14px; font-weight: 700; text-align: left; white-space: nowrap; cursor: pointer; }
-.nav-button[data-active="true"] { height: 36px; margin: 0 0 6px; color: var(--mia-green-700); background: var(--mia-green-50); border: 1px solid var(--mia-green-700); }
+.nav-button { width: calc(100% + 24px); height: 42px; margin-left: -12px; padding: 8px 24px; box-sizing: border-box; border: 0; border-radius: 0; display: flex; align-items: center; gap: 12px; color: #5d5f5d; background: transparent; font-size: 14px; font-weight: 700; text-align: left; white-space: nowrap; cursor: pointer; }
+.nav-button[data-active="true"] { color: #fff; background: var(--mia-green-700); border: 0; border-radius: 0; }
+.nav-button[data-active="true"]:hover { color: #fff; background: var(--mia-green-700); }
 .nav-button:not([data-active="true"]):hover { color: #3f5145; background: #ecefe9; }
 .nav-icon-frame { width: 24px; height: 20px; display: grid; place-items: center; flex: 0 0 24px; }
 .nav-icon-frame img { display: block; max-width: 24px; max-height: 20px; }
 .nav-button:not([data-active="true"]) .nav-icon-frame img { filter: grayscale(1) saturate(0) opacity(.72); }
-.nav-button[data-active="true"] .nav-icon-frame img { filter: brightness(0) saturate(100%) invert(30%) sepia(34%) saturate(1070%) hue-rotate(92deg) brightness(91%) contrast(91%); }
+.nav-button[data-active="true"] .nav-icon-frame img { filter: brightness(0) invert(1); }
 .workspace { width: calc(100vw - var(--mia-sidebar-width)); min-width: 0; height: 100%; background: #fff; }
 .topbar { height: 56px; padding: 0 24px; border-bottom: 1px solid var(--mia-border-warm); background: var(--mia-surface-topbar); display: flex; align-items: center; justify-content: space-between; }
 .topbar h1 { margin: 0; font-size: 18px; line-height: 23.4px; font-weight: 700; }
