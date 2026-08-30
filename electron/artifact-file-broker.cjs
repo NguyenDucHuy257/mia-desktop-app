@@ -190,7 +190,12 @@ function createArtifactBroker(getRuntime) {
         return invokeArtifactExport(getRuntime, request);
       }
       const runtime = getRuntime();
-      const started = await runtime.invoke('artifacts.export.start', request);
+      // Starting is asynchronous in the Python runtime. Allow enough time for
+      // temporary scheduling pressure without losing the task id and falsely
+      // reporting failure while the export continues in the background.
+      const started = await runtime.invoke(
+        'artifacts.export.start', request, { timeoutMs: 30_000 },
+      );
       activeTaskId = started.task_id;
       try {
         while (true) {

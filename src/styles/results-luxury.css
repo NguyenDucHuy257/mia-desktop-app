@@ -179,16 +179,17 @@
 
 .results-reconciliation-tab { position: relative; min-width: 260px !important; }
 .results-reconciliation-indicator { position: absolute; top: 8px; right: 8px; width: 8px; height: 8px; border: 2px solid #fff; border-radius: 50%; background: #dc2626; box-shadow: 0 0 0 1px rgb(185 28 28 / 20%); }
-.results-reconciliation-summary { min-height: 48px; margin: 0 0 8px; padding: 6px 10px; border: 1px solid #dbe7dd; border-radius: var(--mia-radius-ui); background: #f7fbf8; display: flex; align-items: center; gap: 22px; color: #344054; }
-.results-reconciliation-summary > span { min-width: 132px; display: grid; gap: 1px; }
-.results-reconciliation-summary small { color: #64748b; font-size: 10px; font-weight: 650; text-transform: uppercase; }
-.results-reconciliation-summary strong { font-size: 13px; }
-.results-reconciliation-summary [data-warning='true'] strong,
-.results-reconciliation-summary em { color: #b91c1c; }
-.results-reconciliation-summary em { margin-left: auto; font-size: 12px; font-style: normal; font-weight: 700; }
-.results-reconciliation-summary p { margin: 0 0 0 auto; color: #475467; font-size: 11px; font-weight: 650; }
+.results-reconciliation-summary { margin: 0 0 8px; padding: 2px 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 28px; color: #344054; font-size: 12px; }
+.results-reconciliation-summary > div { display: grid; gap: 1px; }
+.results-reconciliation-summary p { margin: 0; color: #344054; font-size: 12px; }
+.results-reconciliation-summary p span { font-weight: 650; }
+.results-reconciliation-summary strong { margin-left: 5px; color: #166534; font-size: 12px; }
+.results-reconciliation-summary strong[data-warning='true'] { color: #b91c1c; font-weight: 800; }
+.results-reconciliation-summary small { color: #64748b; font-size: 10px; font-weight: 600; }
+.results-reconciliation-summary footer { width: 100%; color: #475467; font-size: 10px; font-weight: 650; }
 .results-reconciliation-status { max-width: 100%; padding: 3px 7px; overflow: hidden; border-radius: 999px; display: inline-block; font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .results-reconciliation-status.is-missing-detail { background: #fff1f2; color: #be123c; }
 .results-reconciliation-status.is-missing-overview { background: #fff7ed; color: #c2410c; }
 .results-reconciliation-status.is-money-mismatch { background: #fef2f2; color: #b91c1c; }
 .results-reconciliation-difference { color: #b91c1c; font-weight: 750; }
+.results-reconciliation-mismatch-fields { color: #b91c1c; font-weight: 750; white-space: normal; overflow-wrap: anywhere; }

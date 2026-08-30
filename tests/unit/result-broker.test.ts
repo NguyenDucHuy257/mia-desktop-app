@@ -42,7 +42,11 @@ describe('result IPC broker', () => {
     const invoke = vi.fn().mockResolvedValue({ items: [], pagination: { limit: 50, has_more: false, next_cursor: null } });
     const result = await createResultBroker(() => ({ invoke }))[method]({ connection_id: 'account-1' });
     expect(result.ok).toBe(true);
-    expect(invoke).toHaveBeenCalledWith(`results.${method}`, expect.objectContaining({ connection_id: 'account-1', limit: 50 }));
+    expect(invoke).toHaveBeenCalledWith(
+      `results.${method}`,
+      expect.objectContaining({ connection_id: 'account-1', limit: 50 }),
+      { timeoutMs: method === 'reconciliation' ? 30_000 : 15_000 },
+    );
   });
 
   it('validates column filters, symbolic exclusions and facet requests', async () => {

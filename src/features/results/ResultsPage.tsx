@@ -12,6 +12,7 @@ import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from './result-export-errors';
 import { ResultExportProgressBar } from './ResultExportProgressBar';
+import { coalesceResultRequest, requestResultWithRetry } from './result-request-policy';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
 import { ColumnFilterPopover } from './ColumnFilterPopover';
 import { formatResultCell, formatVietnameseNumber } from './result-presentation';
@@ -71,6 +72,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [selection, setSelection] = useState(emptyInvoiceSelection);
   const [confirmExclusion, setConfirmExclusion] = useState(false);
   const generation = useRef(0);
+  const inFlightPages = useRef(new Map<string, Promise<LocalResultPage<ResultItem>>>());
   const pageCache = useRef(new Map<number, LocalResultPage<ResultItem>>());
   const cursorByPage = useRef(new Map<number, string | null>([[1, null]]));
   const exportRoot = useRef<HTMLDivElement>(null);
@@ -126,27 +128,35 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       date_from: dateFrom,
       date_to: dateTo,
     };
-    const started = performance.now();
-    diagnosticLog('results_request', {
-      connection_id: connectionId,
-      mode,
-      date_from: dateFrom,
-      date_to: dateTo,
-      direction: direction || null,
-      query_type: queryType,
-      has_search: Boolean(debouncedSearch),
-      cursor: Boolean(cursor),
-    });
-    const result = await bridge[mode](query) as LocalResultPage<ResultItem>;
-    diagnosticLog('results_response', {
-      connection_id: connectionId,
-      mode,
-      query_type: queryType,
-      row_count: result.items.length,
-      has_more: result.pagination.has_more,
-      duration_ms: Math.round(performance.now() - started),
-    });
-    return result;
+    const requestKey = JSON.stringify([mode, query]);
+    return coalesceResultRequest(inFlightPages.current, requestKey, () => (
+      requestResultWithRetry(
+        () => bridge[mode](query) as Promise<LocalResultPage<ResultItem>>,
+        attempt => {
+          diagnosticLog(
+            attempt.outcome === 'ok' ? 'results_response' : 'results_request_attempt',
+            {
+              connection_id: connectionId,
+              endpoint: `results.${mode}`,
+              mode,
+              attempt: attempt.attempt,
+              outcome: attempt.outcome,
+              duration_ms: attempt.durationMs,
+              error_type: attempt.errorType,
+              code: attempt.code,
+              status: attempt.status,
+              date_from: dateFrom,
+              date_to: dateTo,
+              direction: direction || null,
+              query_type: queryType,
+              has_search: Boolean(debouncedSearch),
+              cursor: Boolean(cursor),
+            },
+            attempt.outcome === 'failed' ? 'error' : attempt.outcome === 'retry' ? 'warn' : 'info',
+          );
+        },
+      )
+    ));
   }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, filtersByMode, mode, queryType]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
@@ -229,6 +239,16 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   useEffect(() => {
     const bridge = window.miaRuntime?.results;
     if (!bridge || typeof bridge.reconciliation !== 'function' || !connectionId) return;
+    // Reconciliation scans the complete overview/detail dataset. Running that
+    // scan for every progress tick keeps long-lived SQLite read transactions
+    // open while the crawler is trying to commit the next detail. On Windows
+    // this can starve the writer until SQLite's busy timeout expires. Defer the
+    // scan until the crawl reaches a terminal state; normal result pages remain
+    // available and continue refreshing from committed checkpoints meanwhile.
+    if (crawlActive) {
+      setReconciliation(null);
+      return;
+    }
     let active = true;
     void bridge.reconciliation({
       connection_id: connectionId,
@@ -246,7 +266,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       if (active) setReconciliation(null);
     });
     return () => { active = false; };
-  }, [connectionId, crawlFingerprint, dateFrom, dateTo, direction, queryType]);
+  }, [connectionId, crawlActive, dateFrom, dateTo, direction, queryType]);
 
   // The result view is allowed while the source job is still running. Refresh
   // from persisted SQLite whenever the polled source progress changes so rows
@@ -536,17 +556,18 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     </div> : null}
 
     {mode === 'reconciliation' && reconciliation ? <div className="results-reconciliation-summary" aria-label="Tổng hợp đối chiếu">
-      <span><small>Tổng quan</small><strong>{formatVietnameseNumber(reconciliation.overview_invoice_count)} hóa đơn</strong></span>
-      <span><small>Chi tiết</small><strong>{formatVietnameseNumber(reconciliation.detail_invoice_count)} hóa đơn</strong></span>
-      <span data-warning={reconciliation.issue_count > 0}><small>Chênh lệch</small><strong>{formatVietnameseNumber(reconciliation.difference)} hóa đơn</strong></span>
-      {reconciliation.issue_count > 0 ? <em>{formatVietnameseNumber(reconciliation.issue_count)} hóa đơn có vấn đề</em> : null}
-      {reconciliation.coverage_ranges.length ? <p>Đối chiếu trên phạm vi: {reconciliation.coverage_ranges.map(range => `${formatDisplayDate(range.date_from)} - ${formatDisplayDate(range.date_to)}`).join('; ')}</p> : null}
+      <div>
+        <p><span>Tổng số lượng hóa đơn:</span> <strong data-warning={reconciliation.difference !== 0}>{reconciliation.difference === 0 ? 'Không chênh lệch' : `Chênh lệch ${reconciliation.difference > 0 ? '+' : ''}${formatVietnameseNumber(reconciliation.difference)} hóa đơn`}</strong></p>
+        <small>(Tổng quan: {formatVietnameseNumber(reconciliation.overview_invoice_count)}; Chi tiết: {formatVietnameseNumber(reconciliation.detail_invoice_count)})</small>
+      </div>
+      <p><span>Hóa đơn lệch tiền:</span> <strong data-warning={reconciliation.money_mismatch_count > 0}>{formatVietnameseNumber(reconciliation.money_mismatch_count)} hóa đơn</strong></p>
+      {reconciliation.coverage_ranges.length ? <footer>Đối chiếu trên phạm vi: {reconciliation.coverage_ranges.map(range => `${formatDisplayDate(range.date_from)} - ${formatDisplayDate(range.date_to)}`).join('; ')}</footer> : null}
     </div> : null}
 
     {feedback ? <div className="results-feedback" role="status">{feedback}</div> : null}
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
     {state === 'loading' && items.length === 0 && columns.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
-    {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{mode === 'reconciliation' && !reconciliation?.coverage_ranges.length ? 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu trong khoảng thời gian này.' : mode === 'reconciliation' && reconciliation?.issue_count === 0 ? 'Không phát hiện chênh lệch giữa Tổng quan và Chi tiết.' : crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
+    {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{mode === 'reconciliation' && !reconciliation?.coverage_ranges.length ? 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu trong khoảng thời gian này.' : mode === 'reconciliation' && reconciliation?.issue_count === 0 ? 'Không phát hiện chênh lệch giữa Tổng quan và Chi tiết.' : crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : !crawlItem ? 'Chưa có dữ liệu hóa đơn.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
     {columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
         {selectable ? <span className="results-checkbox-cell"><input
@@ -608,6 +629,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           }
           if (column === 'reconciliation_status') {
             return <span key={column}><b className={`results-reconciliation-status ${reconciliationStatusClass(display)}`}>{display}</b></span>;
+          }
+          if (column === 'mismatch_fields') {
+            return <span className="results-reconciliation-mismatch-fields" key={column} title={display}>{display}</span>;
           }
           const difference = column.startsWith('difference_') && Number(rawValue) !== 0;
           return <span className={difference ? 'results-reconciliation-difference' : undefined} key={column} title={display}>{display}</span>;

@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -158,12 +159,24 @@ class ResultReconciliationTests(unittest.TestCase):
         fields = result["items"][0]["fields"]
         self.assertEqual(
             fields["reconciliation_status"],
-            "Chênh lệch tiền (Tổng thanh toán)",
+            "Chênh lệch tiền",
         )
+        self.assertEqual(fields["mismatch_fields"], "Tổng thanh toán")
         self.assertEqual(fields["detail_thtien"], 500)
         self.assertEqual(fields["detail_ttcktmai"], 5)
         self.assertEqual(fields["detail_tgtttbso"], 550)
         self.assertEqual(fields["difference_tgtttbso"], 1)
+
+    def test_signed_zero_is_canonical_and_never_a_money_mismatch(self):
+        overview = self.overview(1)
+        overview["tgtcthue"] = Decimal("-0.00")
+        overview["tgtthue"] = Decimal("+0.00")
+        details = self.detail_lines(1, count=1, total=550)
+        details[0]["thtien"] = Decimal("0.00")
+        details[0]["tthue"] = Decimal("-0.00")
+        result = self.reconcile([overview], details)
+        self.assertEqual(result["reconciliation"]["money_mismatch_count"], 0)
+        self.assertEqual(result["items"], [])
 
     def test_all_cursor_pages_are_reconciled_before_ui_pagination(self):
         overview = [self.overview(index) for index in range(1, 206)]
@@ -254,6 +267,7 @@ class ResultReconciliationTests(unittest.TestCase):
             self.detail_lines(2),
         )
         backend = self.backend()
+        progress_events = []
         with tempfile.TemporaryDirectory() as directory, patch(
             "app.external_api.results.JobResultReader", return_value=reader
         ), patch("mia_source_results._result_schema", return_value=SCHEMA):
@@ -266,17 +280,33 @@ class ResultReconciliationTests(unittest.TestCase):
                 "result_filters": {"reconciliation": {
                     "search": "", "column_filters": {},
                 }},
-            })
+            }, progress_callback=progress_events.append)
             self.assertEqual(result["count"], 1)
+            self.assertTrue(any(
+                event.get("scope") == "reconciliation"
+                and event.get("phase") == "write_rows"
+                for event in progress_events
+            ))
+            self.assertEqual(progress_events[-1]["percent"], 100.0)
+            self.assertEqual(progress_events[-1]["status"], "completed")
             workbook = load_workbook(result["files"][0], data_only=False)
             try:
-                worksheet = workbook["Đối chiếu"]
+                worksheet = workbook["Bao cao doi chieu"]
                 headers = [cell.value for cell in worksheet[1]]
                 self.assertIn("Trạng thái đối chiếu", headers)
+                self.assertIn("Lý do chênh lệch", headers)
                 detail_total_column = headers.index("Tổng tiền trước thuế - Chi tiết") + 1
                 difference_column = headers.index("Tổng tiền trước thuế - Chênh lệch") + 1
                 self.assertIsNone(worksheet.cell(2, detail_total_column).value)
                 self.assertIsNone(worksheet.cell(2, difference_column).value)
+                reason_column = headers.index("Lý do chênh lệch") + 1
+                self.assertIn("không tìm thấy dữ liệu Chi tiết", worksheet.cell(2, reason_column).value)
+                self.assertIn("lớn hơn Chi tiết 1 đồng", worksheet.cell(3, reason_column).value)
+                self.assertFalse(any(
+                    cell.value in {"-0", "+0", "-0.00", "+0.00"}
+                    for row in worksheet.iter_rows() for cell in row
+                ))
+                self.assertIn("Tong hop", workbook.sheetnames)
             finally:
                 workbook.close()
 

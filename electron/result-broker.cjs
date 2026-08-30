@@ -95,10 +95,14 @@ function validateFacetQuery(value) {
 }
 
 function createResultBroker(getRuntime) {
+  const invokeResult = (method, query) => getRuntime().invoke(
+    `results.${method}`, validateQuery(query),
+    { timeoutMs: method === 'reconciliation' ? 30_000 : 15_000 },
+  );
   return Object.freeze({
-    overview: (query) => runBrokerCommand(() => getRuntime().invoke('results.overview', validateQuery(query))),
-    details: (query) => runBrokerCommand(() => getRuntime().invoke('results.details', validateQuery(query))),
-    reconciliation: (query) => runBrokerCommand(() => getRuntime().invoke('results.reconciliation', validateQuery(query))),
+    overview: (query) => runBrokerCommand(() => invokeResult('overview', query)),
+    details: (query) => runBrokerCommand(() => invokeResult('details', query)),
+    reconciliation: (query) => runBrokerCommand(() => invokeResult('reconciliation', query)),
     facets: (query) => runBrokerCommand(() => getRuntime().invoke('results.facets', validateFacetQuery(query))),
   });
 }

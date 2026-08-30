@@ -65,7 +65,7 @@ function validateRuntimeNotification(message) {
   const allowed = new Set(['status', 'scope', 'phase', 'processed', 'total', 'percent']);
   if (Object.keys(value).some((key) => !allowed.has(key))) return null;
   if (!['running', 'completed', 'failed'].includes(value.status)) return null;
-  if (![null, 'overview', 'details'].includes(value.scope ?? null)) return null;
+  if (![null, 'overview', 'details', 'reconciliation'].includes(value.scope ?? null)) return null;
   if (!EXPORT_PROGRESS_PHASES.has(value.phase)) return null;
   if (!Number.isInteger(value.processed) || value.processed < 0) return null;
   if (!Number.isInteger(value.total) || value.total < 0) return null;

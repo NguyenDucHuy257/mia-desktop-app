@@ -59,6 +59,13 @@ describe('PythonRuntimeClient', () => {
     client.terminate();
   }, PROCESS_TEST_TIMEOUT_MS);
 
+  it('accepts reconciliation workbook progress without killing the runtime', () => {
+    expect(validateRuntimeNotification({ jsonrpc: '2.0', method: 'export.progress', params: {
+      status: 'running', scope: 'reconciliation', phase: 'write_rows',
+      processed: 1, total: 3, percent: 36.5,
+    }})).toMatchObject({ scope: 'reconciliation', processed: 1, total: 3 });
+  });
+
   it('rejects pending work when the child process crashes', async () => {
     const client = new PythonRuntimeClient();
     await client.start();

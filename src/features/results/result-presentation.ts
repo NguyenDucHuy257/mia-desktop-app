@@ -9,7 +9,7 @@ export const MONETARY_FIELDS = new Set([
 ]);
 
 function numericValue(value: unknown) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'number') return Number.isFinite(value) ? (value === 0 ? 0 : value) : null;
   if (typeof value !== 'string') return null;
   const text = value.trim().replace(/%$/, '').replace(/\s/g, '');
   if (!text) return null;
@@ -17,7 +17,7 @@ function numericValue(value: unknown) {
     ? text.replace(/\./g, '').replace(',', '.')
     : text;
   const number = Number(normalized);
-  return Number.isFinite(number) ? number : null;
+  return Number.isFinite(number) ? (number === 0 ? 0 : number) : null;
 }
 
 export function formatVietnameseNumber(value: unknown) {

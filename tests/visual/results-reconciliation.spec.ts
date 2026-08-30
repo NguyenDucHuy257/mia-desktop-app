@@ -14,7 +14,7 @@ test('reconciliation tab shows full-scope warning data in the compact native res
         items: [{
           row_id: 'issue-1', direction: 'purchase', invoice_key: 'purchase|query|0101|AA/26E|1|1',
           fields: {
-            stt: 1, reconciliation_status: 'Chênh lệch tiền (Tổng thanh toán)', khmshdon: '1', khhdon: 'AA/26E', shdon: '1',
+            stt: 1, reconciliation_status: 'Chênh lệch tiền', khmshdon: '1', khhdon: 'AA/26E', shdon: '1',
             tdlap: '01/08/2026', nbmst: '0101', nbten: 'Công ty bán có tên rất dài để kiểm tra ellipsis',
             nmmst: '0202', nmten: 'Công ty mua', mismatch_fields: 'Tổng tiền thanh toán',
             overview_tgtttbso: 5500000, detail_tgtttbso: 5450000, difference_tgtttbso: 50000,
@@ -27,7 +27,7 @@ test('reconciliation tab shows full-scope warning data in the compact native res
         column_types: { overview_tgtttbso: 'number', detail_tgtttbso: 'number', difference_tgtttbso: 'number' },
         total_count: 1,
         aggregate: { matching_row_count: 1, row_count: 1, invoice_count: 1, totals: { overview_tgtttbso: 5500000, detail_tgtttbso: 5450000, difference_tgtttbso: 50000 } },
-        reconciliation: { overview_invoice_count: 152, detail_invoice_count: 150, difference: 2, missing_detail_count: 1, missing_overview_count: 0, money_mismatch_count: 1, issue_count: 2, coverage_ranges: [{ date_from: '2026-08-01', date_to: '2026-08-31' }] },
+        reconciliation: { overview_invoice_count: 1723, detail_invoice_count: 1767, difference: -44, missing_detail_count: 1, missing_overview_count: 0, money_mismatch_count: 1, issue_count: 2, coverage_ranges: [{ date_from: '2026-08-01', date_to: '2026-08-31' }] },
         pagination: { limit: 50, has_more: false, next_cursor: null },
       };
       if (query.date_from === '2026-08-02') {
@@ -49,7 +49,7 @@ test('reconciliation tab shows full-scope warning data in the compact native res
         start: async () => ({ record, accepted: {} }), cancel: async () => ({}), clear: async () => undefined,
       },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
-      results: { overview: async () => empty, details: async () => empty, reconciliation, facets: async () => ({ values: ['Chênh lệch tiền (Tổng thanh toán)'], truncated: false, column_type: 'text' }) },
+      results: { overview: async () => empty, details: async () => empty, reconciliation, facets: async () => ({ values: ['Chênh lệch tiền'], truncated: false, column_type: 'text' }) },
       artifacts: { export: async () => ({ count: 0, files: [] }), selectDirectory: async () => 'C:\\MIA', list: async () => ({ items: [], pagination: { limit: 200, has_more: false, next_cursor: null } }), targets: async () => ({ keys: [], total: 0 }), cancel: async () => ({ cancelled: true }), openDirectory: async () => true, onInvoiceProgress: () => () => undefined, onExportProgress: () => () => undefined },
       external: { open: async () => true },
     } });
@@ -61,10 +61,11 @@ test('reconciliation tab shows full-scope warning data in the compact native res
   await expect(tab).toBeVisible();
   await expect(tab.locator('.results-reconciliation-indicator')).toHaveCount(1);
   await tab.click();
-  await expect(page.locator('.results-reconciliation-summary')).toContainText('152 hóa đơn');
-  await expect(page.locator('.results-reconciliation-summary')).toContainText('150 hóa đơn');
-  await expect(page.locator('.results-reconciliation-summary')).toContainText('2 hóa đơn có vấn đề');
-  await expect(page.locator('.results-reconciliation-status')).toHaveText('Chênh lệch tiền (Tổng thanh toán)');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Chênh lệch -44 hóa đơn');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('(Tổng quan: 1.723; Chi tiết: 1.767)');
+  await expect(page.locator('.results-reconciliation-summary')).toContainText('Hóa đơn lệch tiền: 1 hóa đơn');
+  await expect(page.locator('.results-reconciliation-status')).toHaveText('Chênh lệch tiền');
+  await expect(page.locator('.results-reconciliation-mismatch-fields')).toHaveText('Tổng tiền thanh toán');
   await expect(page.getByRole('button', { name: 'Tải xuống kết quả chênh lệch' })).toBeVisible();
   await expect(page.locator('.results-reconciliation-difference')).toHaveText('50.000');
   await expect(page.locator('.results-checkbox-cell')).toHaveCount(0);

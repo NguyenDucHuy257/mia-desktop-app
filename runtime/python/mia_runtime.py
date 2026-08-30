@@ -830,7 +830,12 @@ def serve() -> int:
             if method in {
                 "artifacts.coverage", "artifacts.snapshot",
                 "artifacts.batch.status", "artifacts.batch.failures",
-                "artifacts.export.status", "artifacts.export.cancel",
+                # Starting an export only validates the request and launches a
+                # background task. Keep it on the responsive control lane so a
+                # slow result query ahead of it cannot make Electron time out
+                # after the task has actually started.
+                "artifacts.export.start", "artifacts.export.status",
+                "artifacts.export.cancel",
                 "results.reconciliation",
                 "source.jobs.status", "source.jobs.cancel", "source.sync.states",
             }:

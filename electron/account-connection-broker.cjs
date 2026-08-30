@@ -72,6 +72,7 @@ function serializeError(error) {
     'artifact_write_failed', 'invalid_artifact_directory',
     'invalid_result_export_range', 'artifact_cancelled', 'artifact_task_active',
     'artifact_batch_empty',
+    'runtime_timeout', 'runtime_not_running', 'runtime_write_failed',
   ]);
   const runtimeMessage = String(error?.message || '');
   if (publicCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_')) {

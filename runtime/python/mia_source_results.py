@@ -948,6 +948,22 @@ _RECONCILIATION_COLUMNS = (
     "overview_tgtphi", "detail_tgtphi", "difference_tgtphi",
     "overview_tgtttbso", "detail_tgtttbso", "difference_tgtttbso",
 )
+_RECONCILIATION_EXPORT_COLUMNS = (
+    "stt", "reconciliation_status", "reconciliation_reason", "mismatch_fields",
+    "khmshdon", "khhdon", "shdon", "tdlap",
+    "nbmst", "nbten", "nmmst", "nmten",
+    *tuple(
+        column
+        for columns in (
+            (
+                f"overview_{overview_field}", f"detail_{detail_field}",
+                f"difference_{overview_field}",
+            )
+            for overview_field, detail_field, _label in RECONCILIATION_MONEY_FIELDS
+        )
+        for column in columns
+    ),
+)
 _RECONCILIATION_LABELS = {
     "stt": "STT",
     "reconciliation_status": "Trạng thái đối chiếu",
@@ -960,6 +976,7 @@ _RECONCILIATION_LABELS = {
     "nmmst": "MST người mua",
     "nmten": "Tên người mua",
     "mismatch_fields": "Chỉ tiêu chênh lệch",
+    "reconciliation_reason": "Lý do chênh lệch",
 }
 for _overview_field, _detail_field, _label in RECONCILIATION_MONEY_FIELDS:
     _RECONCILIATION_LABELS[f"overview_{_overview_field}"] = f"{_label} - Tổng quan"
@@ -971,9 +988,35 @@ def _decimal_or_zero(value: Any) -> Decimal:
     return _as_decimal(value) or Decimal("0")
 
 
+def _canonical_decimal(value: Decimal) -> Decimal:
+    """Remove Decimal's signed zero without changing any non-zero amount."""
+    return Decimal("0") if value.is_zero() else value
+
+
 def _decimal_result(value: Decimal) -> int | str:
+    value = _canonical_decimal(value)
     integral = value.to_integral_value()
     return int(integral) if value == integral else format(value.normalize(), "f")
+
+
+def _reason_money(value: Decimal) -> str:
+    safe = _decimal_result(abs(_canonical_decimal(value)))
+    if isinstance(safe, int):
+        return f"{safe:,}".replace(",", ".")
+    return str(safe).replace(".", ",")
+
+
+def _money_mismatch_reason(
+    differences: list[tuple[str, Decimal, Decimal, Decimal]],
+) -> str:
+    explanations: list[str] = []
+    for label, overview, detail, difference in differences:
+        relation = "lớn hơn" if difference > 0 else "thấp hơn"
+        explanations.append(
+            f"{label} bên Tổng quan {relation} Chi tiết "
+            f"{_reason_money(difference)} đồng"
+        )
+    return "; ".join(explanations) + "."
 
 
 def _merge_date_ranges(ranges: list[tuple[date, date]]) -> list[tuple[date, date]]:
@@ -1209,6 +1252,7 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
                 or overview_safe.get("nlap") or detail_safe.get("nlap")
             )
             mismatches: list[str] = []
+            money_differences: list[tuple[str, Decimal, Decimal, Decimal]] = []
             for overview_field, detail_field, label in RECONCILIATION_MONEY_FIELDS:
                 overview_value = (
                     _decimal_or_zero(overview_fields.get(overview_field))
@@ -1221,7 +1265,7 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
                 else:
                     detail_value = detail_entry["invoice_totals"].get(detail_field, Decimal("0"))
                 difference = (
-                    overview_value - detail_value
+                    _canonical_decimal(overview_value - detail_value)
                     if overview_value is not None and detail_value is not None else None
                 )
                 fields[f"overview_{overview_field}"] = (
@@ -1245,13 +1289,30 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
                     and difference != 0
                 ):
                     mismatches.append(label)
+                    money_differences.append(
+                        (label, overview_value, detail_value, difference)
+                    )
             if not status and mismatches:
-                status = f"Chênh lệch tiền ({', '.join(mismatches)})"
+                status = "Chênh lệch tiền"
                 money_mismatch_count += 1
             if not status:
                 continue
             fields["reconciliation_status"] = status
             fields["mismatch_fields"] = ", ".join(mismatches) or "—"
+            if status == "Thiếu chi tiết":
+                fields["reconciliation_reason"] = (
+                    "Hóa đơn có trong Tổng quan nhưng không tìm thấy dữ liệu Chi tiết "
+                    "sau khi phạm vi này đã đồng bộ đầy đủ Tổng quan và Chi tiết."
+                )
+            elif status == "Thiếu tổng quan":
+                fields["reconciliation_reason"] = (
+                    "Hóa đơn có trong Chi tiết nhưng không tìm thấy hóa đơn tương ứng "
+                    "trong Tổng quan sau khi phạm vi này đã đồng bộ đầy đủ."
+                )
+            else:
+                fields["reconciliation_reason"] = _money_mismatch_reason(
+                    money_differences
+                )
             items.append({
                 "row_id": hashlib.sha256(invoice_key.encode("utf-8")).hexdigest()[:20],
                 "direction": overview_safe.get("direction") or detail_safe.get("direction") or "purchase",
@@ -1902,11 +1963,34 @@ def _filter_detail_records(
     return result
 
 
+def _reconciliation_export_summary(
+    source_summary: dict[str, Any], rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    statuses = [str((item.get("fields") or {}).get("reconciliation_status") or "") for item in rows]
+    difference_totals = {}
+    for overview_field, _detail_field, label in RECONCILIATION_MONEY_FIELDS:
+        column = f"difference_{overview_field}"
+        total = sum(
+            (_decimal_or_zero((item.get("fields") or {}).get(column)) for item in rows),
+            Decimal("0"),
+        )
+        difference_totals[label] = _decimal_result(total)
+    return {
+        **source_summary,
+        "missing_detail_count": statuses.count("Thiếu chi tiết"),
+        "missing_overview_count": statuses.count("Thiếu tổng quan"),
+        "money_mismatch_count": statuses.count("Chênh lệch tiền"),
+        "issue_count": len(rows),
+        "difference_totals": difference_totals,
+    }
+
+
 def _write_reconciliation_excel(
     rows: list[dict[str, Any]], target: Path,
-    *, progress: Callable[[str, int, int], None] | None = None,
+    *, summary: dict[str, Any],
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> None:
-    """Write one fixed-schema mismatch workbook with an atomic final replace."""
+    """Write a fixed-schema reconciliation report with an atomic replace."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
@@ -1914,9 +1998,13 @@ def _write_reconciliation_excel(
     if progress:
         progress("load_template", 0, 1)
     workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = "Đối chiếu"
-    headers = [_RECONCILIATION_LABELS[column] for column in _RECONCILIATION_COLUMNS]
+    summary_sheet = workbook.active
+    summary_sheet.title = "Tong hop"
+    worksheet = workbook.create_sheet("Bao cao doi chieu")
+    headers = [
+        _RECONCILIATION_LABELS[column]
+        for column in _RECONCILIATION_EXPORT_COLUMNS
+    ]
     worksheet.append(headers)
     header_fill = PatternFill("solid", fgColor="EAF4EE")
     for cell in worksheet[1]:
@@ -1932,26 +2020,69 @@ def _write_reconciliation_excel(
         fields = item.get("fields") or {}
         worksheet.append([
             _excel_safe_value(index if column == "stt" else fields.get(column))
-            for column in _RECONCILIATION_COLUMNS
+            for column in _RECONCILIATION_EXPORT_COLUMNS
         ])
+        for column_index, column in enumerate(
+            _RECONCILIATION_EXPORT_COLUMNS, start=1
+        ):
+            cell = worksheet.cell(index + 1, column_index)
+            if column == "mismatch_fields" or (
+                column.startswith("difference_") and cell.value not in (None, 0, "0")
+            ):
+                cell.font = Font(color="B91C1C", bold=True)
+            if column == "reconciliation_reason":
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if column.startswith(("overview_", "detail_", "difference_")):
+                cell.number_format = '#,##0;[Red]-#,##0;0'
         if progress and (index == len(rows) or index % max(1, len(rows) // 200) == 0):
             progress("write_rows", index, len(rows))
-    for column_index, column in enumerate(_RECONCILIATION_COLUMNS, start=1):
-        label = _RECONCILIATION_LABELS[column]
+    for column_index, column in enumerate(_RECONCILIATION_EXPORT_COLUMNS, start=1):
         width = 22
         if column == "stt":
             width = 8
         elif column in {"reconciliation_status", "mismatch_fields"}:
             width = 42
+        elif column == "reconciliation_reason":
+            width = 68
         elif column in {"nbten", "nmten"}:
             width = 34
         worksheet.column_dimensions[get_column_letter(column_index)].width = width
+
+    summary_rows = [
+        ("Khoảng đối chiếu", "; ".join(
+            f"{value['date_from']} - {value['date_to']}"
+            for value in summary.get("coverage_ranges") or ()
+        )),
+        ("Số hóa đơn Tổng quan", summary.get("overview_invoice_count", 0)),
+        ("Số hóa đơn Chi tiết", summary.get("detail_invoice_count", 0)),
+        ("Chênh lệch số lượng", summary.get("difference", 0)),
+        ("Thiếu Chi tiết", summary.get("missing_detail_count", 0)),
+        ("Thiếu Tổng quan", summary.get("missing_overview_count", 0)),
+        ("Hóa đơn lệch tiền", summary.get("money_mismatch_count", 0)),
+    ]
+    summary_rows.extend(
+        (f"Tổng chênh lệch - {label}", value)
+        for label, value in (summary.get("difference_totals") or {}).items()
+    )
+    summary_sheet.append(["BÁO CÁO ĐỐI CHIẾU TỔNG QUAN & CHI TIẾT", None])
+    summary_sheet.merge_cells("A1:B1")
+    summary_sheet["A1"].font = Font(bold=True, color="155D36", size=14)
+    summary_sheet["A1"].fill = header_fill
+    summary_sheet["A1"].alignment = Alignment(horizontal="center")
+    for label, value in summary_rows:
+        summary_sheet.append([label, _excel_safe_value(value)])
+    summary_sheet.column_dimensions["A"].width = 30
+    summary_sheet.column_dimensions["B"].width = 52
+    summary_sheet.freeze_panes = "A2"
     if progress:
-        progress("format", len(_RECONCILIATION_COLUMNS), len(_RECONCILIATION_COLUMNS))
+        progress(
+            "format", len(_RECONCILIATION_EXPORT_COLUMNS),
+            len(_RECONCILIATION_EXPORT_COLUMNS),
+        )
         progress("save", 0, 1)
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.stem}-", suffix=".tmp", dir=target.parent
+        prefix=f".{target.stem}-", suffix=".xlsx", dir=target.parent
     )
     os.close(descriptor)
     temporary = Path(temporary_name)
@@ -2032,7 +2163,7 @@ def _export_results_impl(
         logger.info(
             "reconciliation_export_dataset rows=%s columns=%s missing_detail=%s "
             "missing_overview=%s money_mismatch=%s coverage_ranges=%s",
-            len(rows), len(_RECONCILIATION_COLUMNS),
+            len(rows), len(_RECONCILIATION_EXPORT_COLUMNS),
             dataset["summary"]["missing_detail_count"],
             dataset["summary"]["missing_overview_count"],
             dataset["summary"]["money_mismatch_count"],
@@ -2053,7 +2184,14 @@ def _export_results_impl(
                 context["date_from"], context["date_to"],
             ),
         )
-        _write_reconciliation_excel(rows, target, progress=reporter.unit)
+        export_summary = _reconciliation_export_summary(dataset["summary"], rows)
+        logger.info(
+            "reconciliation_export_write output_path=%s rows=%s columns=%s",
+            target, len(rows), len(_RECONCILIATION_EXPORT_COLUMNS),
+        )
+        _write_reconciliation_excel(
+            rows, target, summary=export_summary, progress=reporter.unit,
+        )
         reporter.complete_unit()
         reporter.complete()
         return {"count": 1, "files": [str(target)]}
