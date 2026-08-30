@@ -17,14 +17,15 @@ test('reconciliation tab shows full-scope warning data in the compact native res
             stt: 1, reconciliation_status: 'Chênh lệch tiền', khmshdon: '1', khhdon: 'AA/26E', shdon: '1',
             tdlap: '01/08/2026', nbmst: '0101', nbten: 'Công ty bán có tên rất dài để kiểm tra ellipsis',
             nmmst: '0202', nmten: 'Công ty mua', mismatch_fields: 'Tổng tiền thanh toán',
+            overview_tgtthue: 20154017, detail_tthue: 20154017, difference_tgtthue: -0.000000003,
             overview_tgtttbso: 5500000, detail_tgtttbso: 5450000, difference_tgtttbso: 50000,
           },
         }],
-        columns: ['stt', 'reconciliation_status', 'khmshdon', 'khhdon', 'shdon', 'tdlap', 'nbmst', 'nbten', 'nmmst', 'nmten', 'mismatch_fields', 'overview_tgtttbso', 'detail_tgtttbso', 'difference_tgtttbso'],
+        columns: ['stt', 'reconciliation_status', 'khmshdon', 'khhdon', 'shdon', 'tdlap', 'nbmst', 'nbten', 'nmmst', 'nmten', 'mismatch_fields', 'overview_tgtthue', 'detail_tthue', 'difference_tgtthue', 'overview_tgtttbso', 'detail_tgtttbso', 'difference_tgtttbso'],
         column_labels: {
           stt: 'STT', reconciliation_status: 'Trạng thái đối chiếu', khmshdon: 'Ký hiệu mẫu số', khhdon: 'Ký hiệu hóa đơn', shdon: 'Số hóa đơn', tdlap: 'Ngày lập', nbmst: 'MST người bán', nbten: 'Tên người bán', nmmst: 'MST người mua', nmten: 'Tên người mua', mismatch_fields: 'Chỉ tiêu chênh lệch', overview_tgtttbso: 'Tổng tiền Tổng quan', detail_tgtttbso: 'Tổng tiền Chi tiết', difference_tgtttbso: 'Chênh lệch',
         },
-        column_types: { overview_tgtttbso: 'number', detail_tgtttbso: 'number', difference_tgtttbso: 'number' },
+        column_types: { overview_tgtthue: 'number', detail_tthue: 'number', difference_tgtthue: 'number', overview_tgtttbso: 'number', detail_tgtttbso: 'number', difference_tgtttbso: 'number' },
         total_count: 1,
         aggregate: { matching_row_count: 1, row_count: 1, invoice_count: 1, totals: { overview_tgtttbso: 5500000, detail_tgtttbso: 5450000, difference_tgtttbso: 50000 } },
         reconciliation: { overview_invoice_count: 1723, detail_invoice_count: 1767, difference: -44, missing_detail_count: 1, missing_overview_count: 0, money_mismatch_count: 1, issue_count: 2, coverage_ranges: [{ date_from: '2026-08-01', date_to: '2026-08-31' }] },
@@ -68,6 +69,9 @@ test('reconciliation tab shows full-scope warning data in the compact native res
   await expect(page.locator('.results-reconciliation-mismatch-fields')).toHaveText('Tổng tiền thanh toán');
   await expect(page.getByRole('button', { name: 'Tải xuống kết quả chênh lệch' })).toBeVisible();
   await expect(page.locator('.results-reconciliation-difference')).toHaveText('50.000');
+  const zeroDifference = page.locator('.results-row:not(.results-row--header):not(.results-row--total) > span').filter({ hasText: /^0$/ });
+  await expect(zeroDifference).toHaveCount(1);
+  await expect(zeroDifference).not.toHaveClass(/results-reconciliation-difference/);
   await expect(page.locator('.results-checkbox-cell')).toHaveCount(0);
 
   const headerHeight = await page.locator('.results-row--header').evaluate(node => node.getBoundingClientRect().height);

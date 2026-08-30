@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 from app.job_engine.models import JobRecord
 
 from mia_backend import ProductionBackend
-from mia_source_results import _RECONCILIATION_CACHE
+from mia_source_results import _RECONCILIATION_CACHE, _compare_money_values
 
 
 SCHEMA = (
@@ -166,6 +166,7 @@ class ResultReconciliationTests(unittest.TestCase):
         self.assertEqual(fields["detail_ttcktmai"], 5)
         self.assertEqual(fields["detail_tgtttbso"], 550)
         self.assertEqual(fields["difference_tgtttbso"], 1)
+        self.assertEqual(result["aggregate"]["totals"]["difference_tgtthue"], 0)
 
     def test_signed_zero_is_canonical_and_never_a_money_mismatch(self):
         overview = self.overview(1)
@@ -176,6 +177,41 @@ class ResultReconciliationTests(unittest.TestCase):
         details[0]["tthue"] = Decimal("-0.00")
         result = self.reconcile([overview], details)
         self.assertEqual(result["reconciliation"]["money_mismatch_count"], 0)
+        self.assertEqual(result["items"], [])
+
+    def test_money_comparison_quantizes_vnd_before_deciding_mismatch(self):
+        equal_pairs = (
+            (20154017, 20154017),
+            (9612466, Decimal("9612466.0000000002")),
+            ("15.190.623", 15190623),
+            (Decimal("5385547.00"), 5385547),
+            (483008372, Decimal("483008371.9999999998")),
+        )
+        for overview, detail in equal_pairs:
+            with self.subTest(overview=overview, detail=detail):
+                comparison = _compare_money_values(overview, detail)
+                self.assertEqual(comparison["difference"], Decimal("0"))
+                self.assertFalse(comparison["difference"].is_signed())
+                self.assertFalse(comparison["is_mismatch"])
+
+        mismatch = _compare_money_values(6500000, 0)
+        self.assertEqual(mismatch["difference"], Decimal("6500000"))
+        self.assertTrue(mismatch["is_mismatch"])
+
+    def test_microscopic_detail_residue_does_not_create_an_invoice_issue(self):
+        overview = self.overview(1)
+        details = self.detail_lines(1, count=1)
+        overview.update({"tgtcthue": 100, "tgtthue": 10})
+        details[0].update({
+            "thtien": Decimal("100.0000000002"),
+            "tthue": Decimal("9.9999999998"),
+            "ttcktmai": Decimal("5.0000000002"),
+            "tgtphi": Decimal("1.9999999998"),
+            "tgtttbso": Decimal("550.0000000002"),
+        })
+        result = self.reconcile([overview], details)
+        self.assertEqual(result["reconciliation"]["money_mismatch_count"], 0)
+        self.assertEqual(result["reconciliation"]["issue_count"], 0)
         self.assertEqual(result["items"], [])
 
     def test_all_cursor_pages_are_reconciled_before_ui_pagination(self):

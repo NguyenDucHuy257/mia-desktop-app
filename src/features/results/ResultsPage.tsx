@@ -15,7 +15,7 @@ import { ResultExportProgressBar } from './ResultExportProgressBar';
 import { coalesceResultRequest, requestResultWithRetry } from './result-request-policy';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
 import { ColumnFilterPopover } from './ColumnFilterPopover';
-import { formatResultCell, formatVietnameseNumber } from './result-presentation';
+import { formatResultCell, formatVietnameseNumber, isNonZeroMoneyDifference } from './result-presentation';
 import { emptyInvoiceSelection, exclusionFromSelection, invoiceSelected, selectionCount, toggleInvoice } from './result-selection';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
@@ -633,7 +633,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           if (column === 'mismatch_fields') {
             return <span className="results-reconciliation-mismatch-fields" key={column} title={display}>{display}</span>;
           }
-          const difference = column.startsWith('difference_') && Number(rawValue) !== 0;
+          const difference = column.startsWith('difference_') && isNonZeroMoneyDifference(rawValue);
           return <span className={difference ? 'results-reconciliation-difference' : undefined} key={column} title={display}>{display}</span>;
         })}
       </div>)}

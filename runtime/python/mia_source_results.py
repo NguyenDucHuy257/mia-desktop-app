@@ -37,6 +37,7 @@ _RESULT_ANALYSIS_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDi
 _RESULT_ANALYSIS_CACHE_LIMIT = 32
 _RECONCILIATION_CACHE: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
 _RECONCILIATION_CACHE_LIMIT = 16
+_RECONCILIATION_ALGORITHM_VERSION = 2
 _EXCLUSION_CACHE: OrderedDict[tuple[Any, ...], frozenset[str]] = OrderedDict()
 _EXCLUSION_CACHE_LIMIT = 16
 _LOOKUP_CACHE: OrderedDict[tuple[Any, ...], tuple[str, str]] = OrderedDict()
@@ -993,6 +994,37 @@ def _canonical_decimal(value: Decimal) -> Decimal:
     return Decimal("0") if value.is_zero() else value
 
 
+def _normalize_reconciliation_money(value: Any) -> Decimal | None:
+    """Normalize source totals to the VND unit displayed by the result report.
+
+    Detail totals are sums of persisted line values and can retain microscopic
+    decimal residue (for example ``-3E-9``) even when the invoice totals are
+    equal to the đồng.  Reconciliation is a VND report, so comparison must be
+    performed after both sides are quantized to one đồng, not merely formatted
+    that way in React.
+    """
+    parsed = _as_decimal(value)
+    if parsed is None:
+        return None
+    return _canonical_decimal(parsed.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def _compare_money_values(overview: Any, detail: Any) -> dict[str, Any]:
+    overview_value = _normalize_reconciliation_money(overview)
+    detail_value = _normalize_reconciliation_money(detail)
+    difference = (
+        _canonical_decimal(overview_value - detail_value)
+        if overview_value is not None and detail_value is not None
+        else None
+    )
+    return {
+        "overview_value": overview_value,
+        "detail_value": detail_value,
+        "difference": difference,
+        "is_mismatch": difference is not None and difference != Decimal("0"),
+    }
+
+
 def _decimal_result(value: Decimal) -> int | str:
     value = _canonical_decimal(value)
     integral = value.to_integral_value()
@@ -1157,7 +1189,8 @@ def _reconciliation_cache_key(backend, context) -> tuple[Any, ...]:
     control_value = getattr(backend, "control_db", None)
     control_revision = _database_revision(Path(control_value)) if control_value else ()
     return (
-        "reconciliation", str(database_path.resolve()), _database_revision(database_path),
+        "reconciliation", _RECONCILIATION_ALGORITHM_VERSION,
+        str(database_path.resolve()), _database_revision(database_path),
         control_revision,
         context["base_job"].company_tax_code, context["date_from"], context["date_to"],
         tuple(context["directions"]), tuple(context["query_types"]),
@@ -1264,10 +1297,10 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
                     detail_value = detail_entry["line_totals"][detail_field]
                 else:
                     detail_value = detail_entry["invoice_totals"].get(detail_field, Decimal("0"))
-                difference = (
-                    _canonical_decimal(overview_value - detail_value)
-                    if overview_value is not None and detail_value is not None else None
-                )
+                comparison = _compare_money_values(overview_value, detail_value)
+                overview_value = comparison["overview_value"]
+                detail_value = comparison["detail_value"]
+                difference = comparison["difference"]
                 fields[f"overview_{overview_field}"] = (
                     _decimal_result(overview_value) if overview_value is not None else None
                 )
@@ -1285,8 +1318,7 @@ def _reconciliation_dataset(backend, query: dict[str, Any]) -> dict[str, Any]:
                     overview_entry is not None
                     and detail_entry is not None
                     and overview_field in overview_fields
-                    and difference is not None
-                    and difference != 0
+                    and comparison["is_mismatch"]
                 ):
                     mismatches.append(label)
                     money_differences.append(

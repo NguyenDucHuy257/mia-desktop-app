@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMoney, formatResultCell, formatTaxRate, formatVietnameseNumber } from '../../src/features/results/result-presentation';
+import { formatMoney, formatResultCell, formatTaxRate, formatVietnameseNumber, isNonZeroMoneyDifference, normalizeMoneyDifference } from '../../src/features/results/result-presentation';
 import { emptyInvoiceSelection, exclusionFromSelection, invoiceSelected, selectionCount, toggleInvoice } from '../../src/features/results/result-selection';
 
 describe('Vietnamese result presentation', () => {
@@ -31,7 +31,12 @@ describe('Vietnamese result presentation', () => {
     expect(formatResultCell('difference_tgtttbso', 50000, 'number')).toBe('50.000');
     expect(formatMoney(-0)).toBe('0');
     expect(formatMoney('-0.00')).toBe('0');
+    expect(formatMoney(-0.000000003)).toBe('0');
     expect(formatVietnameseNumber(-0)).toBe('0');
+    expect(normalizeMoneyDifference('15.190.623')).toBe(15190623);
+    expect(normalizeMoneyDifference(-0.000000003)).toBe(0);
+    expect(isNonZeroMoneyDifference(-0.000000003)).toBe(false);
+    expect(isNonZeroMoneyDifference(6500000)).toBe(true);
   });
 });
 
