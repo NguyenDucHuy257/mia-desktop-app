@@ -1,0 +1,20 @@
+:root {
+  --mia-green-700: #166534;
+  --mia-green-50: #f0fdf4;
+  --mia-green-500: #22c55e;
+  --mia-surface-sidebar: #f6f6f3;
+  --mia-surface-topbar: #f9f9f7;
+  --mia-border-warm: #e5e5e0;
+  --mia-border-cool: #e2e8f0;
+  --mia-text: #191c1e;
+  --mia-text-strong: #1a1c1b;
+  --mia-text-muted: #62625b;
+  --mia-text-soft: #747686;
+  --mia-danger: #ef4444;
+  --mia-blue: #3b82f6;
+  --mia-sidebar-width: 210px;
+  --mia-radius-sm: 4px;
+  --mia-radius-md: 8px;
+  --mia-radius-lg: 12px;
+  --mia-radius-ui: 6px;
+}

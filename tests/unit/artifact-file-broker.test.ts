@@ -1,0 +1,315 @@
+import { createRequire } from 'node:module';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+
+const require = createRequire(import.meta.url);
+const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest } = require('../../electron/artifact-file-broker.cjs');
+
+describe('artifact filesystem boundary', () => {
+  it.each(['../escape.xml', 'C:\\escape.xml', 'CON.pdf', 'name.exe', 'a/b.html'])('rejects unsafe name %s', (name) => {
+    expect(() => validateArtifactName(name)).toThrow();
+  });
+
+  it('requires an absolute selected directory', () => {
+    expect(() => resolveInside('relative', 'safe.xml')).toThrow('invalid_artifact_directory');
+  });
+
+  it('sanitizes the export DTO and rejects traversal-like account ids', () => {
+    const destination = path.resolve(tmpdir(), 'MIA');
+    expect(validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'excel'] })).toEqual({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'excel'] });
+    expect(() => validateExportRequest({ destination, connection_ids: ['../account'], kinds: ['xml'] })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['exe'] })).toThrow();
+  });
+
+  it('validates filtered result workbook export separately from normal artifacts', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    expect(validateExportRequest({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview', 'details'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+      direction: 'purchase',
+      query_type: 'query',
+      search: '000123',
+    })).toMatchObject({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview', 'details'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+      direction: 'purchase',
+      query_type: 'query',
+      search: '000123',
+    });
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-08-01', date_to: '2026-08-31', query_type: 'bad' })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+  });
+
+  it('preserves allowlisted XML/HTML invoice filters', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-packages');
+    expect(validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'],
+      date_from: '2026-08-01', date_to: '2026-08-31', direction: 'sold',
+      query_type: 'sco-query', search: '000123',
+    })).toMatchObject({
+      destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'],
+      direction: 'sold', query_type: 'sco-query', search: '000123',
+    });
+    expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['xml'], query_type: 'bad' })).toThrow('invalid_artifact_query_type');
+    expect(() => validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['xml'],
+      exclusion: { keys: ['invoice-a'], rules: [] },
+    })).toThrow('invalid_artifact_request');
+  });
+
+  it('validates independent Overview and Details filters for Excel only', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-filtered-results');
+    const request = validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'],
+      result_scopes: ['overview', 'details'], date_from: '2026-08-01', date_to: '2026-08-31',
+      result_filters: {
+        overview: { search: 'A', column_filters: { nbten: { values: ['Alpha'] } } },
+        details: { search: 'B', column_filters: { ten: { values: ['Dịch vụ'] } } },
+      },
+      exclusion: { keys: ['purchase|query|0101|AA|1|1'], rules: [] },
+    });
+    expect(request.result_filters.overview.column_filters).toEqual({ nbten: { values: ['Alpha'] } });
+    expect(request.result_filters.details.column_filters).toEqual({ ten: { values: ['Dịch vụ'] } });
+    expect(request.exclusion.keys).toHaveLength(1);
+  });
+
+  it('allows the fixed reconciliation export scope and its own filters', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-reconciliation');
+    const request = validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'],
+      result_scopes: ['reconciliation'],
+      date_from: '2026-08-01', date_to: '2026-08-31',
+      result_filters: {
+        reconciliation: {
+          search: 'Thiếu chi tiết',
+          column_filters: { reconciliation_status: { values: ['Thiếu chi tiết'] } },
+        },
+      },
+    });
+    expect(request.result_scopes).toEqual(['reconciliation']);
+    expect(request.result_filters.reconciliation.column_filters).toEqual({
+      reconciliation_status: { values: ['Thiếu chi tiết'] },
+    });
+  });
+
+  it('returns the broker envelope expected by preload for successful exports', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    const runtime = {
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'excel_1', status: 'running' })
+        .mockResolvedValueOnce({
+          task_id: 'excel_1', status: 'completed',
+          result: { count: 1, files: [path.join(destination, 'result.xlsx')] },
+        }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.export({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { count: 1 },
+    });
+    expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
+      'artifacts.export.start', 'artifacts.export.status',
+    ]);
+  });
+
+  it('preserves a safe no-data reason for the renderer', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results');
+    const runtime = {
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'excel_2', status: 'running' })
+        .mockResolvedValueOnce({
+          task_id: 'excel_2', status: 'completed',
+          result: { count: 0, files: [], error_code: 'result_export_empty' },
+        }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.export({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview'],
+      date_from: '2026-08-01',
+      date_to: '2026-08-31',
+    })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: 'result_export_empty',
+        message: 'Không có dữ liệu phù hợp để tạo Excel.',
+      },
+    });
+  });
+
+  it('runs XML and HTML copying as a cancellable local artifact task', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-packages');
+    const runtime = {
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'artifact_1', status: 'running' })
+        .mockResolvedValueOnce({ task_id: 'artifact_1', status: 'running' })
+        .mockResolvedValueOnce({ task_id: 'artifact_1', status: 'completed', result: { count: 2, files: ['a.xml', 'a.html'] } }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.export({ destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'] }))
+      .resolves.toMatchObject({ ok: true, data: { count: 2 } });
+    expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
+      'artifacts.export.start', 'artifacts.export.status', 'artifacts.export.status',
+    ]);
+  });
+
+  it('snapshots every filtered artifact target before the source job starts', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-targets');
+    const runtime = { invoke: vi.fn().mockResolvedValue({ keys: ['purchase|query|0101|AA|1|1'], total: 1 }) };
+    const broker = createArtifactBroker(() => runtime);
+
+    await expect(broker.targets({
+      destination, connection_ids: ['conn_1'], kinds: ['xml', 'html'],
+      date_from: '2026-08-01', date_to: '2026-08-31', direction: 'purchase',
+      query_type: 'query', search: 'AA',
+    })).resolves.toMatchObject({ ok: true, data: { total: 1 } });
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.targets', expect.objectContaining({ search: 'AA' }));
+  });
+
+  it('forwards stop to the active local artifact task', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-packages-cancel');
+    let cancelled = false;
+    const runtime = {
+      invoke: vi.fn(async (method) => {
+        if (method === 'artifacts.export.start') return { task_id: 'artifact_2', status: 'running' };
+        if (method === 'artifacts.export.cancel') { cancelled = true; return { task_id: 'artifact_2', status: 'cancelling' }; }
+        if (method === 'artifacts.export.status') return cancelled
+          ? { task_id: 'artifact_2', status: 'cancelled', error: 'artifact_cancelled' }
+          : { task_id: 'artifact_2', status: 'running' };
+        throw new Error('unexpected method');
+      }),
+    };
+    const broker = createArtifactBroker(() => runtime);
+    const exportPromise = broker.export({ destination, connection_ids: ['conn_1'], kinds: ['xml'] });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    await expect(broker.cancel()).resolves.toEqual({ ok: true, data: { cancelled: true } });
+    await expect(exportPromise).resolves.toMatchObject({ ok: false, error: { code: 'artifact_cancelled' } });
+  });
+
+  it('sanitizes artifact list filters and date bounds', () => {
+    const query = validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31', limit: 50 });
+    expect(query).toMatchObject({ connection_ids: ['conn_1'], kind: 'xml', direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31' });
+    expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'xml', date_from: '2026-02-01', date_to: '2026-01-01' })).toThrow();
+    expect(() => validateListRequest({ connection_ids: ['conn_1'], kind: 'exe' })).toThrow();
+  });
+
+  it('uses the dedicated lightweight runtime method for coverage readiness', async () => {
+    const runtime = { invoke: vi.fn().mockResolvedValue({ accounts: [] }) };
+    const broker = createArtifactBroker(() => runtime);
+    const request = { connection_ids: ['conn_1'], directions: ['purchase'], date_from: '2026-02-01', date_to: '2026-05-31' };
+    await expect(broker.coverage(request)).resolves.toMatchObject({ ok: true, data: { accounts: [] } });
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.coverage', request);
+  });
+
+  it('validates unified coverage and batch DTOs including PDF concurrency', () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified');
+    expect(validateArtifactSnapshotRequest({
+      connection_ids: ['conn_1'], directions: ['purchase', 'sold'],
+      date_from: '2026-01-01', date_to: '2026-08-31',
+    })).toMatchObject({ directions: ['purchase', 'sold'] });
+    expect(validateArtifactBatchRequest({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'],
+      kinds: ['pdf'], date_from: '2026-01-01', date_to: '2026-08-31',
+      pdf_concurrency: 100,
+    })).toMatchObject({ kinds: ['pdf'], pdf_concurrency: 100 });
+    for (const pdf_concurrency of [0, 101]) {
+      expect(() => validateArtifactBatchRequest({
+        destination, connection_ids: ['conn_1'], directions: ['purchase'],
+        kinds: ['pdf'], date_from: '2026-01-01', date_to: '2026-08-31',
+        pdf_concurrency,
+      })).toThrow('invalid_pdf_concurrency');
+    }
+  });
+
+  it('starts, polls and globally cancels one unified artifact batch', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified-task');
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_1', status: 'running' };
+      if (method === 'artifacts.batch.status') return { task_id: 'artifact_1', status: 'running', accounts: {}, formats: {} };
+      if (method === 'artifacts.batch.cancel') return { task_id: 'artifact_1', cancelled: true, kind: null };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await expect(broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'],
+      kinds: ['xml', 'pdf'], date_from: '2026-01-01', date_to: '2026-08-31',
+      pdf_concurrency: 5,
+    })).resolves.toMatchObject({ ok: true, data: { task_id: 'artifact_1' } });
+    await expect(broker.batchStatus({ task_id: 'artifact_1' })).resolves.toMatchObject({ ok: true });
+    await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { kind: null } });
+    await expect(broker.cancelBatch({ kind: 'pdf' })).resolves.toMatchObject({ ok: false });
+    expect(runtime.invoke.mock.calls.map(([method]) => method)).toEqual([
+      'artifacts.batch.start', 'artifacts.batch.status', 'artifacts.batch.cancel',
+    ]);
+  });
+
+  it('clears the active unified task after a terminal poll', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified-terminal');
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_done', status: 'running' };
+      if (method === 'artifacts.batch.status') return { task_id: 'artifact_done', status: 'completed', accounts: {}, formats: {} };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'], kinds: ['xml'],
+      date_from: '2026-01-01', date_to: '2026-01-31', pdf_concurrency: 5,
+    });
+    await expect(broker.batchStatus({ task_id: 'artifact_done' })).resolves.toMatchObject({ ok: true });
+    await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { cancelled: false } });
+  });
+
+  it('returns a validated paged structured failure list for the latest batch', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-unified-failures');
+    const runtime = { invoke: vi.fn(async (method, value) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_failures', status: 'running' };
+      if (method === 'artifacts.batch.failures') return { task_id: 'artifact_failures', connection_id: 'conn_1', items: [], total: 0, offset: 0, limit: 50, request: value };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'], kinds: ['xml'],
+      date_from: '2026-01-01', date_to: '2026-01-31', pdf_concurrency: 5,
+    });
+    await expect(broker.batchFailures({ task_id: 'artifact_failures', connection_id: 'conn_1', offset: 0, limit: 50 })).resolves.toMatchObject({ ok: true, data: { total: 0 } });
+    await expect(broker.batchFailures({ task_id: 'wrong', connection_id: 'conn_1' })).resolves.toMatchObject({ ok: false, error: { code: 'internal_error' } });
+    expect(runtime.invoke).toHaveBeenLastCalledWith('artifacts.batch.failures', {
+      task_id: 'artifact_failures', connection_id: 'conn_1', offset: 0, limit: 50,
+    });
+  });
+
+  it('atomically overwrites the canonical artifact filename', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'mia-artifact-'));
+    const first = await atomicWrite(directory, 'hóa-đơn.xml', Buffer.from('<xml/>'));
+    const second = await atomicWrite(directory, 'hóa-đơn.xml', Buffer.from('<xml>2</xml>'));
+    expect(path.basename(first)).toBe('hóa-đơn.xml');
+    expect(path.basename(second)).toBe('hóa-đơn.xml');
+    expect(await readFile(second, 'utf8')).toBe('<xml>2</xml>');
+    expect((await readdir(directory)).filter((name) => name.endsWith('.xml'))).toEqual(['hóa-đơn.xml']);
+    expect((await readdir(directory)).some((name) => name.endsWith('.tmp'))).toBe(false);
+  });
+});
