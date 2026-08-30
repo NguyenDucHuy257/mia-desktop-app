@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs');
+const { ensureDeviceIdentity } = require('./device-identity.cjs');
 const { collectDeviceEvidence } = require('./license/hardware-profile.cjs');
 const { createLicenseApi } = require('./license/license-api.cjs');
 const { LicenseManager } = require('./license/license-manager.cjs');
@@ -79,7 +79,7 @@ function licenses() {
   const protector = secureProtector();
   let api = null;
   if (enabled) {
-    const baseUrl = process.env.MIA_LICENSE_API_URL;
+    const baseUrl = process.env.MIA_KEY_SERVER_URL;
     if (!baseUrl) throw Object.assign(new Error('MIA license API URL is not configured'), { code: 'license_api_not_configured' });
     api = createLicenseApi({
       baseUrl,
@@ -92,7 +92,6 @@ function licenses() {
     securityDirectory: securityDirectory(),
     store: createProtectedLicenseStore(securityDirectory(), protector),
     ensureIdentity: () => ensureDeviceIdentity(securityDirectory(), protector),
-    signChallenge: (challenge) => signChallenge(securityDirectory(), protector, challenge),
     collectEvidence: () => collectDeviceEvidence(),
     logger: electronLog(),
   });

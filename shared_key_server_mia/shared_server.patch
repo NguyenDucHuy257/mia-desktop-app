@@ -1,0 +1,31 @@
+diff --git a/auth.py b/auth.py
+--- a/auth.py
++++ b/auth.py
+@@ -9,3 +9,4 @@ from contextlib import contextmanager
+ from datetime import datetime
+ from pathlib import Path
++from mia_v2 import verify_mia_key_v2
+ from typing import Dict, Iterable, List, Optional
+@@ -273,13 +274,22 @@ def verify_key_v2(
+     tool: str,
+     *,
+     key: str,
+     device_id: str,
+     phone: str,
+     hardware: Dict[str, str],
+     legacy_keys: List[str],
+ ) -> dict:
+     tool = str(tool or "").upper().strip()
++    if tool == "MIA":
++        return verify_mia_key_v2(
++            BASE_DIR,
++            key=key,
++            device_id=device_id,
++            phone=phone,
++            hardware=hardware,
++            legacy_keys=legacy_keys,
++        )
+     if tool != "GSOFT":
+         raise ValueError("verify-key-v2 currently supports GSOFT only")
+     device_id = str(device_id or "").strip()
+     if not device_id:

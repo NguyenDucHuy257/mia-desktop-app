@@ -11,7 +11,7 @@ Mốc remote: `origin/develop` cùng SHA tại thời điểm audit
 
 Đây là output của Stage 1. Audit này **không thay đổi production license flow**.
 
-Desktop đã có nền móng tốt để làm device proof: một Ed25519 identity ổn định, private key được Electron `safeStorage` bảo vệ và IPC sender được kiểm tra. Tuy nhiên, ứng dụng chưa có một hệ thống license hoàn chỉnh: chưa có `LicenseManager`, state machine, V2 server client, token verification, offline lease, legacy detector, hardware profile, activation UI hoặc license gate.
+Tại thời điểm audit ban đầu, desktop mới có Ed25519 identity và `safeStorage`. Hiện `LicenseManager`, shared `/verify-key-v2` client, legacy detector, hardware profile, activation UI và license gate đã được triển khai sau feature flag; các đoạn “chưa có” bên dưới mô tả baseline lịch sử trước implementation.
 
 Silent migration chưa thể triển khai an toàn chỉ từ repository này. Workspace không có source key-server `/opt/keys_app`, `MIA/vip.txt`, source MIA V1.4, hoặc fixtures đã khử dữ liệu nhạy cảm cho các generation V2/V3/MAK. V1 có công thức đã được tài liệu giao việc xác nhận; các generation khác phải giữ trạng thái chưa chứng minh cho đến khi có source hoặc fixture có provenance.
 
@@ -127,7 +127,7 @@ License UI cần đứng trước việc render/khởi tạo các lifecycle nh�
 
 Crawler vẫn là Python runtime local qua JSON-RPC stdin/stdout với một logical sequential worker. License không được đưa vào Python crawler, không được thêm HTTP control server, và không được xóa/migrate account, session, job, SQLite invoice, artifact hoặc export preferences.
 
-License verification thuộc Electron main process. Chỉ sau state `active`/offline lease hợp lệ renderer mới mount application workspace. Việc này không thay đổi crawler worker invariant.
+License verification thuộc Electron main process. Chỉ sau state `active` renderer mới mount application workspace. Việc này không thay đổi crawler worker invariant.
 
 ## 4. Legacy schemas
 
@@ -204,13 +204,12 @@ Trước rollout phải chạy lại trên canonical server file và đối chi�
 ```text
 app ready
   -> LicenseManager.initialize()
-     -> protected V2 token exists?
-        -> yes: challenge + Ed25519 verify
-           -> valid: active
-           -> network failure: evaluate signed offline lease
-           -> revoked/expired: terminal UI state
-        -> no/invalid recoverable state: legacy detection
-           -> exact candidate match: transactional silent migration
+     -> protected V2 profile exists?
+        -> yes: POST /verify-key-v2 tool=MIA
+           -> valid: sync canonical device_id/key, active
+           -> expired/hardware mismatch: terminal UI state
+        -> no profile: legacy detection
+           -> exact candidate match: silent migration through /verify-key-v2
               -> phone known: active
               -> phone absent: legacy_phone_pending policy (không phải new user)
            -> ambiguous: verification_required/manual recovery
@@ -224,7 +223,7 @@ State model đề xuất:
 ```text
 checking | migrating | active | legacy_phone_pending |
 phone_required | activation_required | expired | revoked |
-offline | verification_required | error
+verification_required | error
 ```
 
 ## 6. Client design dự kiến
@@ -244,9 +243,9 @@ electron/license/
 
 Trách nhiệm:
 
-- `license-manager`: state machine, in-flight deduplication, retry/offline policy, no concurrent activation/migration;
+- `license-manager`: state machine, in-flight deduplication, retry và no concurrent activation/migration;
 - `license-api`: HTTPS-only, timeouts, response size/schema validation, sanitized errors;
-- `protected-license-store`: atomic encrypted token/profile write và corrupt-state handling;
+- `protected-license-store`: atomic encrypted verification-state/profile write và corrupt-state handling;
 - `legacy-detector`: Windows inventory + local evidence, không gọi portal/crawler;
 - `legacy-formulas`: pure/versioned functions với golden fixtures;
 - `hardware-profile`: collect, normalize, reject placeholder, hash raw signal trước khi return;
@@ -260,12 +259,12 @@ Không chạy PowerShell bằng interpolated shell string. Windows inventory nê
 <userData>/security/
   device-private-key.bin
   device-public-key.pem
-  license-token.bin
+  license-state.bin
   device-profile.bin
   migration-state.json
 ```
 
-- private key, token và device profile được `safeStorage` encrypt;
+- private key, verification state và device profile được `safeStorage` encrypt;
 - `migration-state.json` chỉ chứa non-secret version/status/backoff IDs, không chứa raw key/phone/hardware;
 - write bằng temp file cùng directory, flush phù hợp, atomic replace;
 - update/reinstall không đụng thư mục này;
@@ -282,7 +281,7 @@ Mỗi field:
 3. hash domain-separated `SHA256(field_name + ":" + normalized_value)`;
 4. không log raw hoặc full hash.
 
-Baseline cần ít nhất ba signal hợp lệ. Recovery auto-pass khi match ít nhất 50% baseline với ngưỡng tối thiểu 3 matches; 2/6 không auto-rebind. Đây chỉ là recovery/risk signal. Normal verification vẫn là Ed25519 challenge proof.
+Baseline cần ít nhất ba signal hợp lệ. Recovery auto-pass khi match ít nhất 50% baseline với ngưỡng tối thiểu 3 matches; 2/6 không auto-rebind. Ed25519 identity vẫn được giữ bằng `safeStorage`, nhưng shared `/verify-key-v2` hiện xác minh theo key/device/hardware contract của Taxsoft và không mở thêm challenge endpoint.
 
 ### 6.4 IPC high-level
 
@@ -314,7 +313,15 @@ src/features/licensing/
 
 `LicenseGate` nằm ngoài component khởi tạo account/job/artifact lifecycle. Các screen reuse logo, typography, CSS token, button/card/input hiện có. Settings card dùng cùng high-level bridge và chỉ hiển thị masked data.
 
-## 7. Server V2 design dự kiến
+## 7. Shared key server V2 đã xác nhận
+
+MIA và Taxsoft dùng cùng production service tại `/opt/keys_app` và cùng endpoint `POST /verify-key-v2`. Không deploy server, listener, Uvicorn instance hoặc SQLite riêng cho MIA.
+
+Taxsoft giữ nguyên `tool=GSOFT` và toàn bộ nhánh GSOFT hiện hữu. `auth.py` chỉ thêm dispatch `tool=MIA` sang module `mia_v2.py`; module này chỉ đọc/ghi dưới `BASE_DIR/MIA`. `app.py` giữ nguyên DTO gồm `tool`, `key`, `device_id`, `phone`, `hardware`, `legacy_keys`.
+
+Client MIA dùng HTTPS và key ổn định `MIAV2-SHA256("MIA|device_id")[:32]`. Phone là activation/recovery metadata, không làm rotate canonical key. Shared response có `valid`, canonical `key`, canonical `device_id`, `phone`, `phone_status`, `hardware_profile`, `expires_at`, `expired`, `migrated`, `recovered`, `hardware_match` và `reason`.
+
+Deployment artifact nằm tại `shared_key_server_mia/`. Nó là patch cho service hiện hữu, không phải application server độc lập.
 
 ### 7.0 Audit source snapshot hiện có
 
@@ -338,9 +345,13 @@ Không reuse nguyên implementation này cho MIA vì:
 
 Điểm có thể reuse về ý tưởng, sau khi viết lại trong MIA namespace: tool allowlist, process lock, atomic single-file replace, preserving old row trong grace period, hardware field allowlist và exact legacy candidate lookup.
 
-Phần dưới đây vẫn là contract proposal. Không sửa trực tiếp hai file trong `Downloads`; cần authoritative server repository, deployment owner và regression environment.
+Snapshot trong `Downloads` chỉ dùng để tạo deployment patch có kiểm soát. Không chỉnh trực tiếp snapshot local; production owner phải backup, dry-run patch, compile/import và chạy đủ bốn smoke cases trước restart service hiện hữu.
 
-### 7.1 Namespace/API
+### 7.1 Thiết kế server độc lập trước đây — đã loại bỏ
+
+Phần proposal dưới đây được lưu như lịch sử audit, không còn là kiến trúc triển khai.
+
+### 7.1 Namespace/API cũ — không triển khai
 
 ```text
 POST /license/v2/challenge
@@ -365,7 +376,7 @@ Migration match priority chỉ exact:
 
 Không first-row/newest-expiry heuristic, substring hoặc fuzzy match.
 
-### 7.2 Database proposal
+### 7.2 Database proposal cũ — không triển khai
 
 `MIA/license.db` với SQLite transaction/WAL/backup policy được kiểm chứng trước production:
 
@@ -381,7 +392,7 @@ Migration transaction must preserve original expiry and metadata, enforce one le
 
 `MIA/vip.txt` remains unchanged/read-compatible throughout pilot and grace period.
 
-### 7.3 Offline lease
+### 7.3 Offline lease proposal cũ — không triển khai
 
 Offline duration is a business policy blocker. Token must be server-signed and contain immutable license/device IDs, issued/expiry, `offline_valid_until`, audience/tool and token ID. Network error may use an unexpired lease; expired/revoked/invalid signature must not. Timeout must never delete token or legacy evidence.
 
@@ -433,7 +444,7 @@ The current generic sensitive-key regex treats `key` mainly in API-key contexts 
 - challenge replay/expiry/wrong key/signature failures;
 - stable identity/license across restart and update;
 - atomic store failure keeps last valid state;
-- network failure respects signed offline lease;
+- network failure giữ error/retry state và không bị biến thành `no_match`;
 - 6/6 through 3/6 recovery and 2/6 rejection;
 - copied security directory fails on a second Windows device;
 - phone update preserves canonical IDs;
@@ -466,7 +477,7 @@ Use a main-process configuration such as `MIA_LICENSE_V2_ENABLED`, never a rende
 Rollout:
 
 1. audit/server data analyzer;
-2. server V2 alongside untouched legacy endpoint;
+2. patch shared `/verify-key-v2` với MIA-only dispatch, giữ nguyên legacy endpoint;
 3. client V2 behind disabled flag;
 4. internal fixtures and clean Windows VM;
 5. pilot verified V1/V2 cohorts;
@@ -476,34 +487,32 @@ Rollout:
 
 ## 12. Rollback plan
 
-- Do not delete or rewrite `MIA/vip.txt`.
-- Do not mark a legacy record migrated until server transaction commits.
-- Keep `legacy_migrated_at` and `legacy_grace_until`; pilot rollback can disable V2 while legacy MIA remains accepted during grace.
-- Client feature flag can return startup to current behavior without deleting protected token/profile or customer data.
-- New client must tolerate V2 server unavailable by honoring the approved offline lease or showing retry; it must not create a new phone/license identity.
-- Database deployment requires backup, migration version and restore rehearsal.
-- Server rollback is MIA V2 only; no shared-tool route/config mutation.
+- Không xóa hoặc rewrite legacy row trong `MIA/vip.txt`; migration append canonical row và giữ original row.
+- Backup toàn `/opt/keys_app` và riêng `/opt/keys_app/MIA` trước patch.
+- Client feature flag có thể trả startup về behavior cũ mà không xóa protected profile/customer data.
+- Network failure phải hiển thị retry; không được biến thành `no_match` hoặc tự tạo identity/license khác.
+- Rollback restore nguyên shared-server snapshot để code/data nhất quán; không mutate riêng namespace tool khác.
 
 ## 13. Đầu vào còn thiếu trước khi triển khai production
 
-Client MIA V2 và server package độc lập đã được triển khai, test cục bộ và giữ sau feature flag. Các đầu vào dưới đây không chặn implementation, nhưng vẫn chặn việc bật production:
+Client MIA V2 và shared-server patch đã được triển khai, test cục bộ và giữ sau feature flag. Các đầu vào dưới đây không chặn implementation, nhưng vẫn chặn việc bật production:
 
-1. authoritative key-server repository/revision, dependency/config, deployment procedure và tests; hai source snapshot đã có nhưng không kèm provenance/version history;
+1. quyền deploy/restart service hiện hữu tại `/opt/keys_app` và production revision/provenance của `app.py/auth.py`;
 2. canonical server `MIA/vip.txt` được đối chiếu SHA/count ngay trước rollout; controlled snapshot hiện tại đã được phân tích;
 3. source path/golden fixtures cho V2 phone, full-hash và MAK generation;
 4. sanitized samples cho malformed/custom rows;
 5. production/staging HTTPS base URL và certificate/deployment ownership;
-6. business policy cho offline lease, legacy phone pending, device count/rebind và expiry;
+6. business policy cho legacy phone pending, device count/rebind và expiry;
 7. authorized staging admin/test licenses cho migration tests;
 8. code-signing certificate và clean Windows VM cho packaged rollout.
 
 ## 14. Kết quả Stage 1
 
-- Legacy schemas đã phân loại. Pure V1 formula và ordered candidate builder đã được triển khai tại `electron/license/legacy-formulas.cjs` với golden/regression tests; module chưa được nối vào startup hoặc server.
+- Legacy schemas đã phân loại. Pure V1 formula và ordered candidate builder đã được nối vào startup/shared-server migration với golden/regression tests.
 - Source snapshot/server functions đã được audit, nhưng exact production revision và generator path của MIA V2/V3/MAK vẫn chưa được chứng minh.
 - Snapshot schema distribution đã đo: V1/V2 observed 98,43%; conservative unique-hash estimate 95,19%; không trình bày estimate này như actual migration rate.
 - Trường hợp manual bắt buộc: ambiguous hash mapping, unsupported/unproven schema, insufficient device proof, revoked/expired policy, malformed record và recovery dưới threshold.
-- Client files/modules, server APIs, database schema, UI flow, data path, test gates và rollback đã được thiết kế.
+- Client files/modules, shared-server patch, UI flow, data path, test gates và rollback đã được thiết kế.
 - Production behavior giữ nguyên trong Stage 1.
 
 ## 15. Implementation MIA License V2
@@ -512,13 +521,13 @@ Taxsoft `develop` tại commit `815ba9b26a73b72789dcd9ba9a1b426e6f876fae` đư�
 
 Phần đã triển khai:
 
-- Electron `LicenseManager` chạy theo thứ tự token V2 -> exact legacy migration -> Phone Form;
+- Electron `LicenseManager` chạy theo thứ tự saved V2 profile -> exact legacy migration -> Phone Form;
 - hardware profile sáu signal đã hash theo domain, exact MIA V1 disk candidates và observed V2 phone candidates;
-- Ed25519 one-time challenge/response, token rotation, offline lease, device binding và recovery 3/6 trở lên;
-- profile/token được mã hóa bằng Electron `safeStorage`, ghi atomic và không expose raw token/private key qua preload;
+- Ed25519 identity tiếp tục được bảo vệ cục bộ; shared server dùng contract key/device/hardware hiện có và recovery 3/6 trở lên;
+- profile/verification state được mã hóa bằng Electron `safeStorage`, ghi atomic và không expose raw private key qua preload;
 - React license gate cho migration, Phone Form, activation, retry và settings;
-- package deploy độc lập `server_mia_license_v2/` với SQLite schema, import legacy, API routes, smoke test và tài liệu deploy;
+- deployment patch `shared_key_server_mia/` mở rộng `auth.py` cho `tool=MIA`, không tạo service/database/route mới;
 - mọi server operation bắt buộc `tool=MIA`; các namespace MIA2/MIA3/GBOT/IDQUICK/GSOFT không bị mutate;
 - feature flag `MIA_LICENSE_V2_ENABLED` mặc định tắt, nên production startup hiện tại không đổi cho đến khi rollout được phê duyệt.
 
-Trạng thái: **implementation ready; production deployment pending**. Còn cần staging HTTPS URL, secret/certificate ownership, canonical legacy snapshot trước rollout, authorized test license, code signing và clean Windows VM/NSIS upgrade verification.
+Trạng thái: **implementation ready; production deployment pending**. Còn cần quyền `/opt/keys_app`, backup/restore rehearsal, authorized four-way smoke fixtures, canonical legacy snapshot trước rollout, code signing và clean Windows VM/NSIS upgrade verification.

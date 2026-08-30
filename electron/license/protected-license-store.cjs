@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const PROFILE_FILE = 'device-profile.bin';
-const LICENSE_FILE = 'license-token.bin';
+const LICENSE_FILE = 'license-state.bin';
 const MIGRATION_FILE = 'migration-state.json';
 
 function atomicWrite(filename, content, mode = 0o600) {

@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const require = createRequire(import.meta.url);
 const { buildDeviceEvidence, hashHardwareSignal } = require('../../electron/license/hardware-profile.cjs');
 const { buildLegacyDetection, normalizePhone } = require('../../electron/license/legacy-detector.cjs');
-const { validateBaseUrl } = require('../../electron/license/license-api.cjs');
-const { LicenseManager } = require('../../electron/license/license-manager.cjs');
+const { createLicenseApi, validateServerUrl } = require('../../electron/license/license-api.cjs');
+const { LicenseManager, miaV2Key } = require('../../electron/license/license-manager.cjs');
 const { createProtectedLicenseStore } = require('../../electron/license/protected-license-store.cjs');
 
 const directories: string[] = [];
@@ -31,8 +31,8 @@ function evidence(withLegacy = true) {
   };
 }
 
-function memoryStore(savedLicense: any = null) {
-  let profile: any = null;
+function memoryStore(savedLicense: any = null, savedProfile: any = null) {
+  let profile: any = savedProfile;
   let license = savedLicense;
   let migration: any = null;
   return {
@@ -48,12 +48,15 @@ function memoryStore(savedLicense: any = null) {
 
 function api(overrides: Record<string, any> = {}) {
   return {
-    challenge: vi.fn(async ({ action }: { action: string }) => ({ challenge_id: `${action}-challenge-id`, challenge: `${action}-challenge-value-000000000000` })),
-    verify: vi.fn(),
-    migrate: vi.fn(async () => ({ valid: false, migrated: false, reason: 'no_legacy_match' })),
-    activate: vi.fn(async () => ({ valid: false, reason: 'key_not_activated', canonical_key: 'MIAV2-PENDING' })),
-    recover: vi.fn(),
-    updatePhone: vi.fn(),
+    verifyKeyV2: vi.fn(async (payload: any) => ({
+      valid: false,
+      key: payload.key,
+      device_id: payload.device_id,
+      phone: payload.phone,
+      expired: false,
+      migrated: false,
+      reason: payload.phone ? 'key_not_activated' : 'phone_required',
+    })),
     ...overrides,
   };
 }
@@ -72,7 +75,6 @@ function manager(options: Record<string, any> = {}) {
       api: client,
       securityDirectory: path.join(directory, 'security'),
       ensureIdentity: () => ({ publicKeyPem: 'PUBLIC-KEY', fingerprint: 'f'.repeat(64) }),
-      signChallenge: (challenge: string) => `signature:${challenge}`,
       collectEvidence: async () => options.evidence || evidence(),
       logger: { info: vi.fn() },
       now: () => new Date('2026-08-30T00:00:00.000Z'),
@@ -80,8 +82,25 @@ function manager(options: Record<string, any> = {}) {
   };
 }
 
-describe('MIA license client foundations', () => {
-  it('hashes six normalized signals and reconstructs the exact ordered V1 candidate', () => {
+function activeResponse(deviceId: string, overrides: Record<string, any> = {}) {
+  return {
+    valid: true,
+    key: miaV2Key(deviceId),
+    device_id: deviceId,
+    phone: '',
+    phone_status: 'pending',
+    expires_at: '31/12/2027',
+    expired: false,
+    migrated: true,
+    recovered: false,
+    hardware_profile: evidence().hardware,
+    reason: 'legacy_migrated',
+    ...overrides,
+  };
+}
+
+describe('MIA shared-key-server client', () => {
+  it('hashes six normalized signals and reconstructs exact MIA V1 candidates', () => {
     const result = buildDeviceEvidence({
       system_uuid: ' uuid ', bios_serial: 'bios', baseboard_serial: 'board',
       machine_guid: 'guid', cpu_id: 'cpu', disk_serial: 'disk',
@@ -92,7 +111,7 @@ describe('MIA license client foundations', () => {
     expect(result.legacy.exact_key_candidates[0]).toMatch(/^key[a-f0-9]{29}$/);
   });
 
-  it('creates observed phone candidates only from a real normalized phone', () => {
+  it('builds phone legacy candidates only from a real phone', () => {
     const base = evidence();
     expect(normalizePhone('0000000000')).toBeNull();
     expect(normalizePhone('098 123 4567')).toBe('0981234567');
@@ -101,13 +120,19 @@ describe('MIA license client foundations', () => {
     expect(JSON.stringify(detection)).not.toContain('0000000000');
   });
 
-  it('requires HTTPS except an explicitly enabled localhost development endpoint', () => {
-    expect(() => validateBaseUrl('http://gotax.vn/license/v2')).toThrow(/HTTPS/);
-    expect(validateBaseUrl('https://gotax.vn/license/v2').protocol).toBe('https:');
-    expect(validateBaseUrl('http://127.0.0.1:8765/license/v2', true).hostname).toBe('127.0.0.1');
+  it('posts the Taxsoft-compatible payload only to /verify-key-v2 over HTTPS', async () => {
+    expect(() => validateServerUrl('http://gotax.vn')).toThrow(/HTTPS/);
+    expect(validateServerUrl('https://gotax.vn').protocol).toBe('https:');
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ valid: false, reason: 'phone_required' }), { status: 200 }));
+    const client = createLicenseApi({ baseUrl: 'https://gotax.vn', fetchImpl });
+    const payload = { tool: 'MIA', key: 'MIAV2-X', device_id: 'device', phone: '', hardware: {}, legacy_keys: [] };
+    await client.verifyKeyV2(payload);
+    const call = (fetchImpl as any).mock.calls[0];
+    expect(call[0].toString()).toBe('https://gotax.vn/verify-key-v2');
+    expect(JSON.parse(call[1].body)).toEqual(payload);
   });
 
-  it('stores encrypted profile/license JSON and fails closed on corruption', () => {
+  it('stores profile and verification state encrypted and fails closed on corruption', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mia-license-store-'));
     directories.push(directory);
     const protector = {
@@ -115,71 +140,70 @@ describe('MIA license client foundations', () => {
       decrypt: (value: Buffer) => [...value.toString()].reverse().join(''),
     };
     const store = createProtectedLicenseStore(directory, protector);
-    store.saveProfile({ version: 1, device_id: 'stable' });
-    store.saveLicense({ version: 1, license_token: 'opaque' });
+    store.saveProfile({ version: 3, device_id: 'stable' });
+    store.saveLicense({ version: 2, canonical_key: 'MIAV2-STABLE' });
     expect(store.loadProfile().device_id).toBe('stable');
-    expect(fs.readFileSync(path.join(directory, 'license-token.bin'), 'utf8')).not.toContain('"opaque"');
-    fs.writeFileSync(path.join(directory, 'license-token.bin'), 'corrupt');
+    expect(fs.readFileSync(path.join(directory, 'license-state.bin'), 'utf8')).not.toContain('MIAV2-STABLE');
+    fs.writeFileSync(path.join(directory, 'license-state.bin'), 'corrupt');
     expect(() => store.loadLicense()).toThrow(/license_state_corrupt/);
   });
 
-  it('runs legacy migration before Phone Form and admits a V1 user without phone', async () => {
-    const active = {
-      valid: true, migrated: true, migration_source: 'mia_v1_disk_hash29',
-      license_token: 'token', license_id: 'license', device_id: 'device',
-      canonical_key: 'MIAV2-STABLE', phone: null, phone_status: 'pending',
-      expires_at: '2027-12-31', offline_valid_until: '2026-09-02T00:00:00Z',
-    };
-    const setup = manager({ api: api({ migrate: vi.fn(async () => active) }) });
+  it('migrates an exact V1 license without phone before showing Phone Form', async () => {
+    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id)) }) });
     const state = await setup.instance.initialize();
     expect(state.state).toBe('active');
-    expect(setup.client.migrate).toHaveBeenCalledOnce();
-    expect(setup.client.activate).not.toHaveBeenCalled();
+    const payload = (setup.client.verifyKeyV2 as any).mock.calls[0][0];
+    expect(payload.tool).toBe('MIA');
+    expect(payload.phone).toBe('');
+    expect(payload.legacy_keys).toContain(`key${'b'.repeat(29)}`);
     expect(setup.store.inspect().license.phone_status).toBe('pending');
   });
 
-  it('shows Phone Form only after definitive no-match and keeps activation identity stable', async () => {
+  it('opens Phone Form only after no exact candidate and keeps a stable activation key', async () => {
     const setup = manager({ evidence: evidence(false) });
     expect((await setup.instance.initialize()).state).toBe('phone_required');
     const pending = await setup.instance.submitPhone('0981234567');
     expect(pending.state).toBe('activation_required');
     const deviceId = setup.store.inspect().profile.device_id;
+    expect(pending.activation_key).toBe(miaV2Key(deviceId));
     await setup.instance.retry();
     expect(setup.store.inspect().profile.device_id).toBe(deviceId);
-    expect(setup.client.activate).toHaveBeenCalledTimes(2);
+    expect(setup.client.verifyKeyV2).toHaveBeenCalledTimes(2);
   });
 
-  it('recovers an existing license before creating a new activation', async () => {
-    const recovered = {
-      valid: true, recovered: true,
-      license_token: 'recovered-token', license_id: 'stable-license', device_id: 'canonical-device',
-      canonical_key: 'MIAV2-STABLE', phone: '0981234567', phone_status: 'verified',
-      expires_at: '2027-12-31', offline_valid_until: '2026-09-02T00:00:00Z',
-    };
-    const setup = manager({ evidence: evidence(false), api: api({ recover: vi.fn(async () => recovered) }) });
-    expect((await setup.instance.initialize()).state).toBe('phone_required');
-    const state = await setup.instance.submitPhone('0981234567');
-    expect(state.state).toBe('active');
-    expect(setup.client.recover).toHaveBeenCalledOnce();
-    expect(setup.client.activate).not.toHaveBeenCalled();
-    expect(setup.store.inspect().profile.device_id).toBe('canonical-device');
-  });
-
-  it('verifies a protected V2 token before any legacy migration and uses a valid offline lease on network failure', async () => {
-    const saved = {
-      license_token: 'saved-token', license_id: 'license', device_id: 'device',
-      canonical_key: 'MIAV2-STABLE', phone: '0981234567', phone_status: 'verified',
-      expires_at: '2027-12-31', offline_valid_until: '2026-09-01T00:00:00.000Z',
-    };
-    const networkError = Object.assign(new Error('offline'), { code: 'license_network_error', transient: true });
-    const setup = manager({ store: memoryStore(saved), api: api({ verify: vi.fn(async () => { throw networkError; }) }) });
+  it('uses an existing real profile phone before opening Phone Form', async () => {
+    const profile = { version: 3, device_id: 'phone-profile-device', phone: '0981234567', hardware: evidence(false).hardware };
+    const setup = manager({ evidence: evidence(false), store: memoryStore(null, profile) });
     const state = await setup.instance.initialize();
-    expect(state.state).toBe('offline');
-    expect(setup.client.verify).toHaveBeenCalledOnce();
-    expect(setup.client.migrate).not.toHaveBeenCalled();
+    expect(state.state).toBe('activation_required');
+    expect((setup.client.verifyKeyV2 as any).mock.calls[0][0].phone).toBe('0981234567');
   });
 
-  it('never exposes raw private identity or token methods through preload', () => {
+  it('verifies an existing shared-server profile before attempting migration', async () => {
+    const deviceId = '8a6414d6-9298-437e-a568-04e546f134d4';
+    const saved = { canonical_key: miaV2Key(deviceId), device_id: deviceId, phone: '0981234567' };
+    const profile = { version: 3, device_id: deviceId, phone: '0981234567', hardware: evidence().hardware };
+    const verifyKeyV2 = vi.fn(async () => activeResponse(deviceId, { phone: '0981234567', phone_status: 'verified', migrated: false, reason: 'ok' }));
+    const setup = manager({ store: memoryStore(saved, profile), api: api({ verifyKeyV2 }) });
+    expect((await setup.instance.initialize()).state).toBe('active');
+    expect(verifyKeyV2).toHaveBeenCalledOnce();
+    expect((verifyKeyV2 as any).mock.calls[0][0].key).toBe(saved.canonical_key);
+  });
+
+  it('syncs the canonical device id returned by shared-server hardware recovery', async () => {
+    const temporaryId = 'e2fe4915-ed2e-443d-9316-ef58e0bbed5a';
+    const canonicalId = 'ec655b34-dd87-4271-ac69-7c46c197e7df';
+    const saved = { canonical_key: miaV2Key(canonicalId), device_id: canonicalId, phone: '0981234567' };
+    const profile = { version: 3, device_id: temporaryId, phone: '0981234567', hardware: evidence().hardware };
+    const setup = manager({
+      store: memoryStore(saved, profile),
+      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(canonicalId, { phone: '0981234567', recovered: true })) }),
+    });
+    expect((await setup.instance.initialize()).state).toBe('active');
+    expect(setup.store.inspect().profile.device_id).toBe(canonicalId);
+  });
+
+  it('never exposes raw Ed25519 or verification state through preload', () => {
     const preload = fs.readFileSync(path.resolve('electron/preload.cjs'), 'utf8');
     expect(preload).not.toContain('getDeviceIdentity:');
     expect(preload).not.toContain('signDeviceChallenge:');
