@@ -22,9 +22,11 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
 
   const menu = page.locator('.app-navigation .nav-button');
   await expect(menu).toHaveCount(6);
-  await expect(menu).toHaveText(['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Danh sách MST', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng']);
-  await expect(page.locator('.topbar-company h1')).toHaveText('CÔNG TY TNHH MIA TEST');
-  await expect(page.locator('.support-hotline')).toContainText('0865 219 286 · 0383 466 992');
+  await expect(menu).toHaveText(['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng']);
+  await expect(page.locator('.sidebar')).not.toContainText('Danh sách MST');
+  await expect(page.locator('.brand > span')).toHaveText('Giải pháp tải HDDT hàng loạt');
+  await expect(page.locator('.topbar-company h1')).toHaveText('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
+  await expect(page.locator('.support-hotline')).toContainText('0383.466.992 - 0865.219.286');
 
   await page.getByRole('button', { name: 'Liên hệ ngay' }).click();
   expect(await page.evaluate(() => (window as unknown as { __shellTest: { external: string[] } }).__shellTest.external)).toEqual(['https://chat.zalo.me/']);
@@ -32,7 +34,11 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await page.getByRole('button', { name: 'Thông tin tài khoản' }).click();
   const popup = page.getByRole('dialog', { name: 'Thông tin tài khoản' });
   await expect(popup).toBeVisible();
-  await expect(popup).toContainText('MST: 0101234567');
+  await expect(popup).not.toContainText('CÔNG TY TNHH MIA TEST');
+  await expect(popup).not.toContainText('MST:');
+  await expect(popup).not.toContainText('SĐT:');
+  await expect(popup).not.toContainText('Đăng xuất');
+  await expect(popup).toContainText('MIA 4.0.1');
   await expect(popup.locator('code')).not.toContainText('20cd0a15');
   await popup.getByRole('button', { name: 'Hiện' }).click();
   await expect(popup.locator('code')).toHaveText('KEYV2-20cd0a15bc1ab172b385707877c0f82b-0987654321');
@@ -42,4 +48,13 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
 
   await page.keyboard.press('Escape');
   await expect(popup).toBeHidden();
+
+  await page.getByRole('button', { name: 'Tra cứu MVT', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Tra cứu MVT' })).toBeVisible();
+  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
+  const guide = page.getByRole('button', { name: 'Hướng dẫn sử dụng', exact: true });
+  await expect(guide.locator('svg')).toHaveCount(1);
+  await guide.click();
+  await expect(page.getByRole('heading', { name: 'Hướng dẫn sử dụng' })).toBeVisible();
+  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
 });

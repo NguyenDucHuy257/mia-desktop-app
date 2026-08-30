@@ -33,12 +33,15 @@ describe('MIA desktop shell', () => {
 
   it('renders the ordered navigation, support card and customer hotlines', () => {
     const html = renderToStaticMarkup(createElement(AppShell, {
-      active: 'invoices', account: { companyName: 'Công ty Mẫu', taxCode: '0100000000' }, onNavigate: () => undefined, children: createElement('main'),
+      active: 'invoices', onNavigate: () => undefined, children: createElement('main'),
     }));
-    const labels = ['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Danh sách MST', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng'];
+    const labels = ['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng'];
     expect(labels.map((label) => html.indexOf(label))).toEqual([...labels.map((label) => html.indexOf(label))].sort((a, b) => a - b));
+    expect(html).not.toContain('Danh sách MST');
     expect(html).toContain('Hỗ trợ tận tâm');
-    expect(html).toContain('0865 219 286 · 0383 466 992');
-    expect(html).toContain('Công ty Mẫu');
+    expect(html).toContain('0383.466.992 - 0865.219.286');
+    expect(html).toContain('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
+    expect(html).toContain('Giải pháp tải HDDT hàng loạt');
+    expect(html).toContain('Phiên bản MIA 4.0.1');
   });
 });

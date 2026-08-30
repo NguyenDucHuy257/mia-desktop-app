@@ -54,6 +54,7 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
   const isSettings = title === 'Cài đặt' || title === 'Cài đặt hệ thống';
   const isLogs = title === 'Nhật ký' || title === 'Lịch sử tải xuống';
   const isGuide = title === 'Hướng dẫn sử dụng';
+  const isComingSoon = isGuide || title === 'Tra cứu MVT';
 
   useEffect(() => {
     if (isSettings) void window.miaRuntime?.preferences?.get().then((value) => {
@@ -116,7 +117,7 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
   }
 
   return <section className="utility-page">
-    <h1>{title}</h1><p>{description}</p>
+    <h1>{title}</h1>{description ? <p>{description}</p> : null}
     {isSettings ? <div className="utility-panel">
       <label>Chế độ xử lý<select value={1} disabled aria-label="Chế độ xử lý tuần tự"><option value={1}>Tuần tự (1 tài khoản/lần)</option></select></label>
       <label>Số lần thử lại<input type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /></label>
@@ -134,7 +135,7 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
         <div><strong>{logTitle(entry)}</strong><span>{formatTimestamp(entry.timestamp)} · {entry.source}</span>{entry.details ? <pre>{entry.details}</pre> : null}</div>
         <div className="utility-log-meta"><code>{entry.event}</code>{entry.level === 'error' ? <button type="button" onClick={() => void copyLog(entry)}>Sao chép lỗi</button> : null}</div>
       </article>)}</div> : <div className="utility-empty"><strong>Chưa có nhật ký phù hợp</strong><span>Lịch sử đăng nhập, đồng bộ, tải dữ liệu và lỗi kỹ thuật sẽ xuất hiện tại đây.</span></div>}
-    </div> : <div className="utility-panel"><div className="utility-empty"><strong>{isGuide ? 'Hướng dẫn sử dụng MIA WT' : 'Danh sách MST'}</strong><span>{isGuide ? 'Chọn chức năng ở thanh bên để quản lý tài khoản, đồng bộ hóa đơn và tải kết quả.' : 'Các mã số thuế đã kết nối được quản lý tại mục Quản lý HĐĐT.'}</span></div></div>}
+    </div> : <div className="utility-panel"><div className="utility-empty"><strong>{isComingSoon ? 'Chức năng đang cập nhật' : 'Chưa có dữ liệu'}</strong></div></div>}
     {message ? <NoticeDialog kind={message.startsWith('Đã ') ? 'success' : 'notice'} message={message} onClose={() => setMessage(null)} /> : null}
   </section>;
 }

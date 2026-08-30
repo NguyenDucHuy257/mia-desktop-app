@@ -17,14 +17,20 @@ button { color: inherit; }
 .nav-button:not([data-active="true"]):hover { color: #3f5145; background: #ecefe9; }
 .nav-icon-frame { width: 24px; height: 20px; display: grid; place-items: center; flex: 0 0 24px; }
 .nav-icon-frame img { display: block; max-width: 24px; max-height: 20px; }
+.nav-icon-frame svg { width: 20px; height: 20px; fill: currentColor; }
 .nav-button:not([data-active="true"]) .nav-icon-frame img { filter: grayscale(1) saturate(0) opacity(.72); }
 .nav-button[data-active="true"] .nav-icon-frame img { filter: brightness(0) invert(1); }
-.support-card { margin-top: auto; padding: 12px; border-radius: var(--mia-radius-md); color: #fff; background: var(--mia-green-700); display: grid; gap: 5px; }
-.support-card strong { font-size: 13px; }
-.support-card span { color: rgb(255 255 255 / 78%); font-size: 11px; line-height: 15px; }
-.support-card button { height: 30px; margin-top: 4px; border: 0; border-radius: var(--mia-radius-ui); color: var(--mia-green-700); background: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
-.support-card button:hover { background: var(--mia-green-50); }
-.support-card button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.sidebar-bottom { margin-top: auto; display: grid; gap: 10px; }
+.support-card { padding: 11px; border: 1px solid #ccebd7; border-radius: var(--mia-radius-md); color: var(--mia-text-strong); background: #eaf8ef; box-shadow: 0 5px 14px rgb(22 101 52 / 8%); display: grid; grid-template-columns: 34px 1fr; gap: 7px 9px; align-items: center; }
+.support-card-icon { width: 34px; height: 34px; border-radius: 50%; color: #fff; background: var(--mia-green-700); display: grid; place-items: center; }
+.support-card-icon svg { width: 19px; height: 19px; fill: currentColor; }
+.support-card > div { min-width: 0; display: grid; gap: 2px; }
+.support-card strong { color: var(--mia-green-700); font-size: 12px; }
+.support-card > div span { color: var(--mia-text-muted); font-size: 10px; line-height: 13px; }
+.support-card button { grid-column: 1 / -1; height: 30px; border: 0; border-radius: var(--mia-radius-ui); color: #fff; background: var(--mia-green-700); font-size: 11px; font-weight: 700; cursor: pointer; }
+.support-card button:hover { background: #14532d; }
+.support-card button:focus-visible { outline: 2px solid var(--mia-green-500); outline-offset: 2px; }
+.sidebar-footer { display: grid; gap: 2px; color: var(--mia-text-muted); font-size: 9px; line-height: 12px; text-align: center; }
 .workspace { position: relative; width: calc(100vw - var(--mia-sidebar-width)); min-width: 0; height: 100%; background: #fff; }
 .workspace-content { height: 100%; min-height: 0; }
 .workspace[data-topbar="true"] .workspace-content { height: calc(100% - 56px); }
@@ -33,28 +39,28 @@ button { color: inherit; }
 .topbar-company h1 { max-width: min(520px, 42vw); margin: 0; overflow: hidden; color: var(--mia-text-strong); font-size: 15px; line-height: 20px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .topbar-company span { color: var(--mia-text-muted); font-size: 10px; line-height: 14px; }
 .topbar-actions { min-width: 0; display: flex; align-items: center; gap: 12px; }
-.support-hotline { padding-right: 14px; border-right: 1px solid var(--mia-border-warm); display: grid; gap: 1px; text-align: right; white-space: nowrap; }
-.support-hotline span { color: var(--mia-text-muted); font-size: 10px; }
+.support-hotline { padding-right: 14px; border-right: 1px solid var(--mia-border-warm); display: flex; align-items: center; gap: 8px; text-align: left; white-space: nowrap; }
+.support-hotline-icon { width: 30px; height: 30px; border-radius: 50%; color: var(--mia-green-700); background: var(--mia-green-50); display: grid; place-items: center; }
+.support-hotline-icon svg { width: 17px; height: 17px; fill: currentColor; }
+.support-hotline > div { display: grid; gap: 1px; }
+.support-hotline > div span { color: var(--mia-text-muted); font-size: 10px; }
 .support-hotline strong { color: var(--mia-green-700); font-size: 12px; }
 .notification-button { width: 34px; height: 34px; padding: 7px; border: 0; border-radius: var(--mia-radius-ui); color: #59655d; background: transparent; cursor: default; }
 .notification-button svg { width: 20px; height: 20px; fill: currentColor; }
-.profile-menu { position: relative; }
+.profile-menu { position: relative; padding-right: 13px; }
 .profile-button { width: 36px; height: 36px; border: 0; border-radius: 999px; color: #fff; background: var(--mia-green-700); display: grid; place-items: center; font-size: 14px; font-weight: 800; cursor: pointer; }
 .profile-button:hover { background: #14532d; }
 .profile-button:focus-visible { outline: 2px solid var(--mia-green-500); outline-offset: 2px; }
-.account-popover { position: absolute; z-index: 100; top: calc(100% + 9px); right: 0; width: 310px; padding: 14px; border: 1px solid var(--mia-border-warm); border-radius: var(--mia-radius-ui); background: #fff; box-shadow: 0 14px 34px rgb(15 23 42 / 16%); display: grid; gap: 12px; }
-.account-popover-heading { min-width: 0; padding-right: 24px; display: grid; gap: 3px; }
-.account-popover-heading strong { overflow: hidden; color: var(--mia-text-strong); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.account-popover-heading span, .account-version { color: var(--mia-text-muted); font-size: 11px; }
+.profile-chevron { position: absolute; top: 13px; right: 1px; width: 7px; height: 7px; border-right: 1.5px solid var(--mia-text-muted); border-bottom: 1.5px solid var(--mia-text-muted); transform: rotate(45deg); pointer-events: none; }
+.account-popover { position: absolute; z-index: 100; top: calc(100% + 9px); right: 0; width: 286px; padding: 14px; border: 1px solid var(--mia-border-warm); border-radius: var(--mia-radius-ui); background: #fff; box-shadow: 0 14px 34px rgb(15 23 42 / 16%); display: grid; gap: 12px; }
+.account-version { color: var(--mia-text-muted); font-size: 11px; }
+.account-version strong { color: var(--mia-text-strong); }
 .account-key-block { padding: 10px; border-radius: var(--mia-radius-ui); background: var(--mia-green-50); display: grid; gap: 7px; }
 .account-key-block > span { color: var(--mia-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .account-key-block code { min-width: 0; overflow: hidden; color: var(--mia-text-strong); font-family: Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .account-key-block > div { display: flex; gap: 6px; }
 .account-key-block button { height: 28px; padding: 0 10px; border: 1px solid rgb(22 101 52 / 25%); border-radius: var(--mia-radius-ui); color: var(--mia-green-700); background: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
 .account-key-block button:hover { background: #f7fff9; }
-.account-logout { height: 34px; border: 0; border-top: 1px solid var(--mia-border-warm); color: var(--mia-text-muted); background: transparent; font-size: 12px; font-weight: 700; text-align: left; }
-.account-logout:disabled { opacity: .55; cursor: not-allowed; }
-.account-popover-close { position: absolute; top: 7px; right: 8px; width: 26px; height: 26px; border: 0; color: var(--mia-text-muted); background: transparent; font-size: 19px; cursor: pointer; }
 .shell-toast { position: absolute; z-index: 120; top: 68px; right: 24px; padding: 9px 13px; border-radius: var(--mia-radius-ui); color: #fff; background: var(--mia-green-700); box-shadow: 0 8px 22px rgb(15 23 42 / 18%); font-size: 12px; font-weight: 700; }
 .invoice-page { height: 100%; display: flex; flex-direction: column; }
 .toolbar-canvas { height: 164px; padding: 24px 24px 30px; flex: 0 0 164px; }

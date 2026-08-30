@@ -20,7 +20,7 @@ const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   'xml-html': 'XML/HTML',
-  materials: 'Danh sách MST',
+  mvt: 'Tra cứu MVT',
   logs: 'Lịch sử tải xuống',
   settings: 'Cài đặt hệ thống',
   guide: 'Hướng dẫn sử dụng',
@@ -149,16 +149,10 @@ function WorkspaceApp() {
     setView('navigation');
   }
 
-  const currentAccount = accounts?.find((account) => account.connection_id === connectionId)
-    ?? accounts?.find((account) => selectedAccountIds.includes(account.connection_id))
-    ?? accounts?.[0]
-    ?? null;
-
   return (
     <>
       <AppShell
         active={active}
-        account={currentAccount ? { companyName: currentAccount.company_name || null, taxCode: currentAccount.username } : null}
         onNavigate={navigate}
         showTopbar={view === 'navigation'}
       >
@@ -195,7 +189,7 @@ function WorkspaceApp() {
             onDirectionChange={(direction) => setArtifactSelection((current) => ({ ...current, direction }))}
           />
         ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} coverageRevision={invoiceJobs.coverageRevision} pdfConcurrency={pdfConcurrency} />
-          : <UtilityPage title={labels[active]} description={active === 'materials' ? 'Quản lý danh sách mã số thuế đã kết nối.' : active === 'logs' ? 'Theo dõi lịch sử tải xuống và hoạt động cục bộ.' : active === 'guide' ? 'Hướng dẫn sử dụng các chức năng của MIA WT.' : 'Thiết lập ứng dụng MIA WT.'} onPdfConcurrencyChange={setPdfConcurrency} />}
+          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'guide' ? '' : active === 'logs' ? 'Theo dõi lịch sử tải xuống và hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} onPdfConcurrencyChange={setPdfConcurrency} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />
     </>
