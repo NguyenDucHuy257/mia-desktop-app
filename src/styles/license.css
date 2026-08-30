@@ -1,0 +1,38 @@
+.license-gate-page { min-height: 100vh; padding: 32px; display: grid; place-items: center; background: #f5f8fb; color: var(--mia-text-strong, #0b1c30); }
+.license-gate-card { width: min(460px, 100%); padding: 36px; border: 1px solid var(--mia-border-cool, #dbe3eb); border-radius: 16px; background: #fff; box-shadow: 0 18px 50px rgb(15 23 42 / 10%); display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
+.license-gate-logo { width: 48px; height: 48px; object-fit: contain; align-self: center; }
+.license-gate-brand { align-self: center; color: var(--mia-green-700, #166534); font-size: 18px; }
+.license-gate-card h1 { margin: 8px 0 0; text-align: center; font-size: 25px; line-height: 32px; }
+.license-gate-card > p { margin: 0; color: var(--mia-text-muted, #62625b); text-align: center; font-size: 14px; line-height: 21px; }
+.license-gate-card > small { color: #64748b; text-align: center; }
+.license-progress { height: 6px; margin-top: 8px; overflow: hidden; border-radius: 999px; background: #dcfce7; }
+.license-progress span { display: block; width: 42%; height: 100%; border-radius: inherit; background: var(--mia-green-700, #166534); animation: license-pulse 1.3s ease-in-out infinite alternate; }
+@keyframes license-pulse { from { transform: translateX(0); } to { transform: translateX(138%); } }
+.license-primary-button, .license-secondary-button { min-height: 42px; padding: 0 18px; border-radius: 8px; font: inherit; font-weight: 700; cursor: pointer; }
+.license-primary-button { border: 1px solid #0051d5; color: #fff; background: #0051d5; }
+.license-primary-button:hover { background: #0044b3; }
+.license-primary-button:focus-visible, .license-secondary-button:focus-visible { outline: 3px solid rgb(0 81 213 / 25%); outline-offset: 2px; }
+.license-primary-button:disabled, .license-secondary-button:disabled { opacity: .55; cursor: default; }
+.license-secondary-button { border: 1px solid #cbd5e1; color: #1e3a5f; background: #fff; }
+.license-phone-field { margin-top: 8px; display: flex; flex-direction: column; gap: 7px; color: #334155; font-size: 13px; font-weight: 700; }
+.license-phone-field input { height: 44px; padding: 0 13px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; outline: 0; }
+.license-phone-field input:focus { border-color: #0051d5; box-shadow: 0 0 0 3px rgb(0 81 213 / 12%); }
+.license-form-error { color: #b91c1c; font-size: 12px; line-height: 18px; }
+.license-activation-key { padding: 12px; border: 1px solid #dbe3eb; border-radius: 8px; background: #f8fafc; display: flex; flex-direction: column; gap: 5px; }
+.license-activation-key span { color: #64748b; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.license-activation-key code { overflow-wrap: anywhere; color: #0f172a; font-size: 13px; }
+.license-gate-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.license-settings-card { margin-top: 18px; padding: 20px; border: 1px solid var(--mia-border-cool, #dbe3eb); border-radius: var(--mia-radius-ui, 8px); background: #fff; }
+.license-settings-card header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.license-settings-card h2 { margin: 0; font-size: 18px; }
+.license-settings-card p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
+.license-settings-card header > span { padding: 5px 10px; border-radius: 999px; color: #475569; background: #e2e8f0; font-size: 12px; font-weight: 700; }
+.license-settings-card header > span[data-active="true"] { color: #166534; background: #dcfce7; }
+.license-settings-card dl { margin: 18px 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.license-settings-card dl > div { min-width: 0; padding: 10px 12px; border-radius: 8px; background: #f8fafc; }
+.license-settings-card dt { color: #64748b; font-size: 11px; }
+.license-settings-card dd { margin: 4px 0 0; overflow-wrap: anywhere; color: #0f172a; font-size: 13px; font-weight: 700; }
+.license-settings-card > button { height: 38px; padding: 0 15px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a; font-weight: 700; cursor: pointer; }
+.license-settings-card > small { margin-left: 10px; color: #b91c1c; }
+@media (max-width: 560px) { .license-gate-page { padding: 16px; } .license-gate-card { padding: 26px 20px; } .license-settings-card dl { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .license-progress span { animation: none; width: 65%; } }

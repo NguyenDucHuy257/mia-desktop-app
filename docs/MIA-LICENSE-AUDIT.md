@@ -484,9 +484,9 @@ Rollout:
 - Database deployment requires backup, migration version and restore rehearsal.
 - Server rollback is MIA V2 only; no shared-tool route/config mutation.
 
-## 13. Blockers cần đầu vào
+## 13. Đầu vào còn thiếu trước khi triển khai production
 
-Không bắt đầu server/migration production implementation cho đến khi có:
+Client MIA V2 và server package độc lập đã được triển khai, test cục bộ và giữ sau feature flag. Các đầu vào dưới đây không chặn implementation, nhưng vẫn chặn việc bật production:
 
 1. authoritative key-server repository/revision, dependency/config, deployment procedure và tests; hai source snapshot đã có nhưng không kèm provenance/version history;
 2. canonical server `MIA/vip.txt` được đối chiếu SHA/count ngay trước rollout; controlled snapshot hiện tại đã được phân tích;
@@ -505,3 +505,20 @@ Không bắt đầu server/migration production implementation cho đến khi c�
 - Trường hợp manual bắt buộc: ambiguous hash mapping, unsupported/unproven schema, insufficient device proof, revoked/expired policy, malformed record và recovery dưới threshold.
 - Client files/modules, server APIs, database schema, UI flow, data path, test gates và rollback đã được thiết kế.
 - Production behavior giữ nguyên trong Stage 1.
+
+## 15. Implementation MIA License V2
+
+Taxsoft `develop` tại commit `815ba9b26a73b72789dcd9ba9a1b426e6f876fae` được dùng làm reference contract cho kết nối, hardware profile và recovery threshold; namespace `GSOFT`, HTTP endpoint và mô hình phone-first của Taxsoft không được sao chép sang MIA.
+
+Phần đã triển khai:
+
+- Electron `LicenseManager` chạy theo thứ tự token V2 -> exact legacy migration -> Phone Form;
+- hardware profile sáu signal đã hash theo domain, exact MIA V1 disk candidates và observed V2 phone candidates;
+- Ed25519 one-time challenge/response, token rotation, offline lease, device binding và recovery 3/6 trở lên;
+- profile/token được mã hóa bằng Electron `safeStorage`, ghi atomic và không expose raw token/private key qua preload;
+- React license gate cho migration, Phone Form, activation, retry và settings;
+- package deploy độc lập `server_mia_license_v2/` với SQLite schema, import legacy, API routes, smoke test và tài liệu deploy;
+- mọi server operation bắt buộc `tool=MIA`; các namespace MIA2/MIA3/GBOT/IDQUICK/GSOFT không bị mutate;
+- feature flag `MIA_LICENSE_V2_ENABLED` mặc định tắt, nên production startup hiện tại không đổi cho đến khi rollout được phê duyệt.
+
+Trạng thái: **implementation ready; production deployment pending**. Còn cần staging HTTPS URL, secret/certificate ownership, canonical legacy snapshot trước rollout, authorized test license, code signing và clean Windows VM/NSIS upgrade verification.

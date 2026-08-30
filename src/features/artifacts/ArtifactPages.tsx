@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import type { DiagnosticLogEntry } from '../../lib/runtime-bridge';
+import { LicenseSettingsCard } from '../licensing/LicenseSettingsCard';
 
 const EVENT_LABELS: Record<string, string> = {
   account_login_requested: 'Đang đăng nhập tài khoản',
@@ -120,6 +121,7 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
       <label>Số lần thử lại<input type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /></label>
       <label>Số PDF xử lý đồng thời<input type="number" min="1" max="100" aria-label="Số PDF xử lý đồng thời" value={pdfConcurrency} onChange={(event) => setPdfConcurrency(Number(event.target.value))} /></label>
       <button type="button" onClick={() => void saveSettings()}>Lưu cài đặt</button>
+      <LicenseSettingsCard />
     </div> : isLogs ? <div className="utility-panel utility-log-panel">
       <div className="utility-log-toolbar">
         <label className="utility-log-search">Tìm kiếm<input aria-label="Tìm kiếm Nhật ký" placeholder="Tìm chức năng, lỗi hoặc mã tác vụ..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>

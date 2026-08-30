@@ -4,6 +4,10 @@ const path = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { ensureDeviceIdentity, signChallenge } = require('./device-identity.cjs');
+const { collectDeviceEvidence } = require('./license/hardware-profile.cjs');
+const { createLicenseApi } = require('./license/license-api.cjs');
+const { LicenseManager } = require('./license/license-manager.cjs');
+const { createProtectedLicenseStore } = require('./license/protected-license-store.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
 const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
@@ -15,7 +19,6 @@ const { createReleaseUpdater } = require('./release-updater.cjs');
 const { createDiagnosticLogger } = require('./app-logger.cjs');
 const { validateExternalUrl } = require('./external-url-policy.cjs');
 
-const LICENSE_FILE = 'license-token.bin';
 const RUNTIME_KEY_FILE = 'runtime-session-key.bin';
 let jobLifecycleBroker;
 let offlineRuntime;
@@ -26,6 +29,7 @@ let releaseUpdater;
 let runtimeShutdownStarted = false;
 let electronLogger;
 let rendererLogger;
+let licenseManagerInstance;
 
 function diagnosticDirectory() {
   return path.join(app.getPath('userData'), 'logs');
@@ -67,6 +71,52 @@ function secureProtector() {
 
 function securityDirectory() {
   return path.join(app.getPath('userData'), 'security');
+}
+
+function licenses() {
+  if (licenseManagerInstance) return licenseManagerInstance;
+  const enabled = process.env.MIA_LICENSE_V2_ENABLED === 'true';
+  const protector = secureProtector();
+  let api = null;
+  if (enabled) {
+    const baseUrl = process.env.MIA_LICENSE_API_URL;
+    if (!baseUrl) throw Object.assign(new Error('MIA license API URL is not configured'), { code: 'license_api_not_configured' });
+    api = createLicenseApi({
+      baseUrl,
+      allowInsecureLocalhost: process.env.MIA_LICENSE_ALLOW_INSECURE_LOCALHOST === 'true',
+    });
+  }
+  licenseManagerInstance = new LicenseManager({
+    enabled,
+    api,
+    securityDirectory: securityDirectory(),
+    store: createProtectedLicenseStore(securityDirectory(), protector),
+    ensureIdentity: () => ensureDeviceIdentity(securityDirectory(), protector),
+    signChallenge: (challenge) => signChallenge(securityDirectory(), protector, challenge),
+    collectEvidence: () => collectDeviceEvidence(),
+    logger: electronLog(),
+  });
+  return licenseManagerInstance;
+}
+
+function serializeLicenseError(error) {
+  const allowed = new Set([
+    'invalid_phone', 'license_api_not_configured', 'license_network_error', 'license_timeout',
+    'insufficient_hardware', 'hardware_query_failed', 'hardware_query_timeout',
+    'device_profile_corrupt', 'license_state_corrupt', 'internal_error',
+  ]);
+  const code = allowed.has(String(error?.code)) ? String(error.code) : 'internal_error';
+  electronLog().error('license_ipc_failed', { code, error_type: error?.name, message: error?.message });
+  return { ok: false, error: { code, message: code } };
+}
+
+async function handleLicense(method, ...args) {
+  try {
+    const data = await licenses()[method](...args);
+    return { ok: true, data };
+  } catch (error) {
+    return serializeLicenseError(error);
+  }
 }
 
 function runtimeSessionKey() {
@@ -144,28 +194,19 @@ function createWindow() {
   }
 }
 
-ipcMain.handle('mia:device-identity', (event) => {
-  assertTrustedSender(event);
-  return ensureDeviceIdentity(securityDirectory(), secureProtector());
-});
-ipcMain.handle('mia:sign-device-challenge', (event, challenge) => {
-  assertTrustedSender(event);
-  return signChallenge(securityDirectory(), secureProtector(), challenge);
-});
-ipcMain.handle('mia:license-store', (event, token) => {
-  assertTrustedSender(event);
-  if (typeof token !== 'string' || token.length < 16 || token.length > 8192) {
-    throw new TypeError('invalid license token');
-  }
-  const directory = securityDirectory();
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(
-    path.join(directory, LICENSE_FILE),
-    secureProtector().encrypt(token),
-    { mode: 0o600 },
-  );
-  return true;
-});
+for (const [channel, method] of [
+  ['mia:license:status', 'status'],
+  ['mia:license:initialize', 'initialize'],
+  ['mia:license:submit-phone', 'submitPhone'],
+  ['mia:license:retry', 'retry'],
+  ['mia:license:details', 'details'],
+  ['mia:license:update-phone', 'updatePhone'],
+]) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event);
+    return handleLicense(method, ...args);
+  });
+}
 ipcMain.handle('mia:artifacts:select-directory', async (event) => {
   assertTrustedSender(event);
   const owner = BrowserWindow.fromWebContents(event.sender);

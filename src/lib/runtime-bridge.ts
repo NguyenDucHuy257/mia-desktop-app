@@ -1,9 +1,37 @@
 import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQueryType, InvoiceSyncState, JobAccepted, JobStatusResponse, JobSummaryResponse } from './api/contracts';
 
-export interface MiaDeviceIdentity {
-  algorithm: 'Ed25519';
-  publicKeyPem: string;
-  fingerprint: string;
+export type LicenseStateName =
+  | 'checking' | 'migrating' | 'active' | 'phone_required'
+  | 'activation_required' | 'expired' | 'revoked' | 'offline'
+  | 'verification_required' | 'error';
+
+export interface LicenseStateResponse {
+  state: LicenseStateName;
+  active: boolean;
+  mode?: string;
+  reason?: string | null;
+  activation_key?: string | null;
+  phone?: string | null;
+  details?: {
+    license_id?: string;
+    device_id?: string;
+    canonical_key?: string;
+    phone?: string | null;
+    phone_status?: 'verified' | 'legacy' | 'pending';
+    expires_at?: string | null;
+  };
+}
+
+export interface LicenseDetails {
+  state: LicenseStateName;
+  active: boolean;
+  phone: string | null;
+  phone_status: 'verified' | 'legacy' | 'pending' | null;
+  expires_at: string | null;
+  device_bound: boolean;
+  canonical_key: string | null;
+  reason: string | null;
+  mode: string | null;
 }
 
 export interface MiaAccountCredentials {
@@ -21,9 +49,14 @@ export interface MiaAccountConnectionsBridge {
 
 export interface MiaRuntimeBridge {
   platform: string;
-  getDeviceIdentity(): Promise<MiaDeviceIdentity>;
-  signDeviceChallenge(challenge: string): Promise<string>;
-  storeLicenseToken(token: string): Promise<boolean>;
+  license: {
+    status(): Promise<LicenseStateResponse>;
+    initialize(): Promise<LicenseStateResponse>;
+    submitPhone(phone: string): Promise<LicenseStateResponse>;
+    retry(): Promise<LicenseStateResponse>;
+    details(): Promise<LicenseDetails>;
+    updatePhone(phone: string): Promise<LicenseStateResponse>;
+  };
   accountConnections: MiaAccountConnectionsBridge;
   jobs: {
     resume(): Promise<PersistedJob | null>;

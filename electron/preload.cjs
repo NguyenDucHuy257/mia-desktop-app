@@ -17,10 +17,14 @@ async function invokeResult(channel, ...args) {
 
 contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   platform: process.platform,
-  getDeviceIdentity: () => ipcRenderer.invoke('mia:device-identity'),
-  signDeviceChallenge: (challenge) =>
-    ipcRenderer.invoke('mia:sign-device-challenge', challenge),
-  storeLicenseToken: (token) => ipcRenderer.invoke('mia:license-store', token),
+  license: Object.freeze({
+    status: () => invokeResult('mia:license:status'),
+    initialize: () => invokeResult('mia:license:initialize'),
+    submitPhone: (phone) => invokeResult('mia:license:submit-phone', phone),
+    retry: () => invokeResult('mia:license:retry'),
+    details: () => invokeResult('mia:license:details'),
+    updatePhone: (phone) => invokeResult('mia:license:update-phone', phone),
+  }),
   accountConnections: Object.freeze({
     create: (credentials) => invokeResult('mia:account-connections:create', credentials),
     list: () => invokeResult('mia:account-connections:list'),

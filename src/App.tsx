@@ -10,6 +10,7 @@ import { useResultExportLifecycle } from './features/results/use-result-export-l
 import { UtilityPage } from './features/artifacts/ArtifactPages';
 import { XmlHtmlPage, type ArtifactSelectionState } from './features/artifacts/XmlHtmlPage';
 import { useArtifactDownloadLifecycle } from './features/artifacts/use-artifact-download-lifecycle';
+import { LicenseGate } from './features/licensing/LicenseGate';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
@@ -50,7 +51,7 @@ function DeleteProgressPopup({ progress }: { progress: DeleteProgress }) {
   );
 }
 
-export default function App() {
+function WorkspaceApp() {
   const [active, setActive] = useState<NavigationKey>('invoices');
   const [view, setView] = useState<'navigation' | 'add-account' | 'results'>('navigation');
   const [connectionId, setConnectionId] = useState('');
@@ -192,4 +193,8 @@ export default function App() {
       <DeleteProgressPopup progress={deleteProgress} />
     </>
   );
+}
+
+export default function App() {
+  return <LicenseGate><WorkspaceApp /></LicenseGate>;
 }
