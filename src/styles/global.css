@@ -4,28 +4,59 @@ body { overflow: hidden; font-family: Inter, "Segoe UI", sans-serif; color: var(
 button, input, textarea { font: inherit; }
 button { color: inherit; }
 .app-frame { width: 100vw; height: 100vh; min-width: 1024px; display: flex; background: #fff; }
-.sidebar { width: var(--mia-sidebar-width); flex: 0 0 var(--mia-sidebar-width); height: 100%; padding: 24px 12px; background: var(--mia-surface-sidebar); border-right: 1px solid var(--mia-border-warm); display: flex; flex-direction: column; }
-.brand { padding: 0 8px 32px; }
+.sidebar { width: var(--mia-sidebar-width); flex: 0 0 var(--mia-sidebar-width); height: 100%; padding: 24px 12px 16px; background: var(--mia-surface-sidebar); border-right: 1px solid var(--mia-border-warm); display: flex; flex-direction: column; }
+.brand { padding: 0 8px 24px; }
 .brand-row { display: flex; align-items: center; height: 32px; gap: 8px; }
 .brand-logo { width: 32px; height: 32px; }
 .brand strong { color: var(--mia-green-700); font-size: 22px; line-height: 27.5px; }
 .brand > span { display: block; margin-top: 3px; color: var(--mia-text-muted); font-size: 12px; line-height: 16.8px; }
-.primary-nav { padding-top: 16px; }
-.secondary-nav { margin-top: auto; padding-top: 17px; border-top: 1px solid var(--mia-border-warm); }
-.nav-button { width: calc(100% + 24px); height: 42px; margin-left: -12px; padding: 8px 24px; box-sizing: border-box; border: 0; border-radius: 0; display: flex; align-items: center; gap: 12px; color: #5d5f5d; background: transparent; font-size: 14px; font-weight: 700; text-align: left; white-space: nowrap; cursor: pointer; }
-.nav-button[data-active="true"] { color: #fff; background: var(--mia-green-700); border: 0; border-radius: 0; }
+.app-navigation { display: grid; gap: 4px; }
+.nav-button { width: 100%; height: 42px; padding: 8px 12px; box-sizing: border-box; border: 0; border-radius: var(--mia-radius-ui); display: flex; align-items: center; gap: 10px; color: #5d5f5d; background: transparent; font-size: 13px; font-weight: 700; text-align: left; white-space: nowrap; cursor: pointer; }
+.nav-button[data-active="true"] { color: #fff; background: var(--mia-green-700); border: 0; border-radius: var(--mia-radius-ui); }
 .nav-button[data-active="true"]:hover { color: #fff; background: var(--mia-green-700); }
 .nav-button:not([data-active="true"]):hover { color: #3f5145; background: #ecefe9; }
 .nav-icon-frame { width: 24px; height: 20px; display: grid; place-items: center; flex: 0 0 24px; }
 .nav-icon-frame img { display: block; max-width: 24px; max-height: 20px; }
 .nav-button:not([data-active="true"]) .nav-icon-frame img { filter: grayscale(1) saturate(0) opacity(.72); }
 .nav-button[data-active="true"] .nav-icon-frame img { filter: brightness(0) invert(1); }
-.workspace { width: calc(100vw - var(--mia-sidebar-width)); min-width: 0; height: 100%; background: #fff; }
-.topbar { height: 56px; padding: 0 24px; border-bottom: 1px solid var(--mia-border-warm); background: var(--mia-surface-topbar); display: flex; align-items: center; justify-content: space-between; }
-.topbar h1 { margin: 0; font-size: 18px; line-height: 23.4px; font-weight: 700; }
-.profile-button { width: 36px; height: 36px; border: 0; border-radius: 999px; background: transparent; display: grid; place-items: center; }
-.profile-button img { width: 20px; height: 20px; }
-.invoice-page { height: calc(100% - 56px); display: flex; flex-direction: column; }
+.support-card { margin-top: auto; padding: 12px; border-radius: var(--mia-radius-md); color: #fff; background: var(--mia-green-700); display: grid; gap: 5px; }
+.support-card strong { font-size: 13px; }
+.support-card span { color: rgb(255 255 255 / 78%); font-size: 11px; line-height: 15px; }
+.support-card button { height: 30px; margin-top: 4px; border: 0; border-radius: var(--mia-radius-ui); color: var(--mia-green-700); background: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+.support-card button:hover { background: var(--mia-green-50); }
+.support-card button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.workspace { position: relative; width: calc(100vw - var(--mia-sidebar-width)); min-width: 0; height: 100%; background: #fff; }
+.workspace-content { height: 100%; min-height: 0; }
+.workspace[data-topbar="true"] .workspace-content { height: calc(100% - 56px); }
+.topbar { height: 56px; padding: 0 24px; border-bottom: 1px solid var(--mia-border-warm); background: var(--mia-surface-topbar); display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.topbar-company { min-width: 0; display: grid; gap: 1px; }
+.topbar-company h1 { max-width: min(520px, 42vw); margin: 0; overflow: hidden; color: var(--mia-text-strong); font-size: 15px; line-height: 20px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-company span { color: var(--mia-text-muted); font-size: 10px; line-height: 14px; }
+.topbar-actions { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.support-hotline { padding-right: 14px; border-right: 1px solid var(--mia-border-warm); display: grid; gap: 1px; text-align: right; white-space: nowrap; }
+.support-hotline span { color: var(--mia-text-muted); font-size: 10px; }
+.support-hotline strong { color: var(--mia-green-700); font-size: 12px; }
+.notification-button { width: 34px; height: 34px; padding: 7px; border: 0; border-radius: var(--mia-radius-ui); color: #59655d; background: transparent; cursor: default; }
+.notification-button svg { width: 20px; height: 20px; fill: currentColor; }
+.profile-menu { position: relative; }
+.profile-button { width: 36px; height: 36px; border: 0; border-radius: 999px; color: #fff; background: var(--mia-green-700); display: grid; place-items: center; font-size: 14px; font-weight: 800; cursor: pointer; }
+.profile-button:hover { background: #14532d; }
+.profile-button:focus-visible { outline: 2px solid var(--mia-green-500); outline-offset: 2px; }
+.account-popover { position: absolute; z-index: 100; top: calc(100% + 9px); right: 0; width: 310px; padding: 14px; border: 1px solid var(--mia-border-warm); border-radius: var(--mia-radius-ui); background: #fff; box-shadow: 0 14px 34px rgb(15 23 42 / 16%); display: grid; gap: 12px; }
+.account-popover-heading { min-width: 0; padding-right: 24px; display: grid; gap: 3px; }
+.account-popover-heading strong { overflow: hidden; color: var(--mia-text-strong); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.account-popover-heading span, .account-version { color: var(--mia-text-muted); font-size: 11px; }
+.account-key-block { padding: 10px; border-radius: var(--mia-radius-ui); background: var(--mia-green-50); display: grid; gap: 7px; }
+.account-key-block > span { color: var(--mia-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.account-key-block code { min-width: 0; overflow: hidden; color: var(--mia-text-strong); font-family: Consolas, monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.account-key-block > div { display: flex; gap: 6px; }
+.account-key-block button { height: 28px; padding: 0 10px; border: 1px solid rgb(22 101 52 / 25%); border-radius: var(--mia-radius-ui); color: var(--mia-green-700); background: #fff; font-size: 11px; font-weight: 700; cursor: pointer; }
+.account-key-block button:hover { background: #f7fff9; }
+.account-logout { height: 34px; border: 0; border-top: 1px solid var(--mia-border-warm); color: var(--mia-text-muted); background: transparent; font-size: 12px; font-weight: 700; text-align: left; }
+.account-logout:disabled { opacity: .55; cursor: not-allowed; }
+.account-popover-close { position: absolute; top: 7px; right: 8px; width: 26px; height: 26px; border: 0; color: var(--mia-text-muted); background: transparent; font-size: 19px; cursor: pointer; }
+.shell-toast { position: absolute; z-index: 120; top: 68px; right: 24px; padding: 9px 13px; border-radius: var(--mia-radius-ui); color: #fff; background: var(--mia-green-700); box-shadow: 0 8px 22px rgb(15 23 42 / 18%); font-size: 12px; font-weight: 700; }
+.invoice-page { height: 100%; display: flex; flex-direction: column; }
 .toolbar-canvas { height: 164px; padding: 24px 24px 30px; flex: 0 0 164px; }
 .toolbar-card { position: relative; width: 100%; height: 110px; padding: 12px; border: 1px solid var(--mia-border-warm); border-radius: 12px; background: var(--mia-surface-sidebar); display: flex; align-items: flex-start; gap: 8px; }
 .date-picker, .compact-select { height: 42px; border: 1px solid var(--mia-border-warm); background: #fff; border-radius: 12px; display: flex; align-items: center; }

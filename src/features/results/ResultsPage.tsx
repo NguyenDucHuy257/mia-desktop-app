@@ -481,7 +481,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const headerIndeterminate = selectedInvoiceCount > 0 && !headerChecked;
 
   return <section className="results-page results-page--figma" aria-label="Kết quả hóa đơn">
-    <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại Quản lý HDDT</button>
+    <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại Quản lý HĐĐT</button>
     <header className="results-header results-header--figma">
       <div>
         <h1>Kết quả hóa đơn</h1>

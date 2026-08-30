@@ -188,7 +188,7 @@ test('verified runtime account immediately shows portal company information', as
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
-  await expect(page.getByText('Công ty đã xác thực')).toBeVisible();
+  await expect(page.locator('.invoice-page .company-name', { hasText: 'Công ty đã xác thực' })).toBeVisible();
   await expect(page.getByText('Chưa kiểm tra đăng nhập')).toHaveCount(0);
 });
 
@@ -444,8 +444,8 @@ test('date, company, search, status and pagination controls update the UI', asyn
   await expect(page.locator('.table-row')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Trang sau' })).toBeDisabled();
   await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('1');
-  await page.getByRole('button', { name: 'Cài đặt tài khoản' }).click();
-  await expect(page.getByRole('heading', { name: 'Cài đặt' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cài đặt hệ thống', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Cài đặt hệ thống' })).toBeVisible();
 });
 
 test('settings persist scheduler limits and logs are filtered after main-process redaction', async ({ page }) => {
@@ -458,13 +458,13 @@ test('settings persist scheduler limits and logs are filtered after main-process
     } });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Cài đặt', exact: true }).click();
+  await page.getByRole('button', { name: 'Cài đặt hệ thống', exact: true }).click();
   await page.getByLabel('Số lần thử lại').fill('1');
   await page.getByLabel('Số PDF xử lý đồng thời').fill('100');
   await page.getByRole('button', { name: 'Lưu cài đặt' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('Tác vụ mới sẽ áp dụng');
   await page.getByRole('button', { name: 'Đóng' }).click();
-  await page.getByRole('button', { name: 'Nhật ký' }).click();
+  await page.getByRole('button', { name: 'Lịch sử tải xuống' }).click();
   await expect(page.locator('.utility-log-list')).not.toContainText('storage_initialized');
   await expect(page.locator('.utility-log-row')).toHaveCount(1);
   await expect(page.locator('.utility-log-row')).toHaveCSS('min-height', '46px');

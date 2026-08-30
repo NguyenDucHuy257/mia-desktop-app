@@ -103,7 +103,7 @@ describe('invoice result control presentation', () => {
     expect(invoicePage).toContain('pageRows.map');
     expect(invoicePage).not.toContain('[1, 2, 3].map');
     expect(datePicker).toContain('date-range-calendar-control');
-    expect(addAccount).toContain('Quay lại Quản lý HDDT');
+    expect(addAccount).toContain('Quay lại Quản lý HĐĐT');
     expect(addAccount).not.toContain('Quay lại Quản lý tải');
   });
 

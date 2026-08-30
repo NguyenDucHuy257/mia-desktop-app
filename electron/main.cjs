@@ -199,6 +199,7 @@ for (const [channel, method] of [
   ['mia:license:submit-phone', 'submitPhone'],
   ['mia:license:retry', 'retry'],
   ['mia:license:details', 'details'],
+  ['mia:license:reveal-key', 'revealKey'],
   ['mia:license:update-phone', 'updatePhone'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {

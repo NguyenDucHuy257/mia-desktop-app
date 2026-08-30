@@ -8,7 +8,7 @@ export default async function warmVisualServer(config: FullConfig) {
     // The dev server URL probe only loads index.html. Render the application
     // once so Vite's module graph is ready before the first timed visual test.
     await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-    await page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).waitFor({ timeout: 120_000 });
+    await page.getByRole('button', { name: 'Quản lý HĐĐT', exact: true }).waitFor({ timeout: 120_000 });
   } finally {
     await browser.close();
   }

@@ -39,8 +39,9 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   const nav = page.getByRole('button', { name: 'XML/HTML/PDF', exact: true });
   await nav.click();
   await expect(nav).toHaveAttribute('data-active', 'true');
+  await expect(page.locator('.topbar')).toBeVisible();
   await expect(page.getByLabel('Tìm kiếm tài khoản tải xuống')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).locator('img')).toHaveCSS('filter', 'grayscale(1) saturate(0) opacity(0.72)');
+  await expect(page.getByRole('button', { name: 'Quản lý HĐĐT', exact: true }).locator('img')).toHaveCSS('filter', 'grayscale(1) saturate(0) opacity(0.72)');
   await expect(page.locator('.artifact-toolbar-card')).toHaveCSS('border-radius', '6px');
   await expect(page.getByLabel('Tìm kiếm tài khoản tải xuống')).toHaveCSS('border-radius', '6px');
   await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('white-space', 'nowrap');
@@ -58,7 +59,7 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.getByRole('button', { name: 'Thêm tài khoản' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Đồng bộ dữ liệu' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Xóa tài khoản/ })).toHaveCount(0);
-  await expect(page.getByText('Công ty Mẫu')).toBeVisible();
+  await expect(page.locator('.artifact-account-row strong', { hasText: 'Công ty Mẫu' })).toBeVisible();
   await expect(page.locator('body')).not.toContainText(/artifact/i);
   await expect(page.getByRole('button', { name: 'Mở thư mục' })).toHaveCount(0);
   const downloadButton = page.getByRole('button', { name: 'Tải xuống', exact: true });
@@ -258,7 +259,7 @@ test('artifact date range and account selection transfer back to invoice managem
   await page.getByLabel('Từ ngày nhập tay').fill('01/08/2026');
   await page.getByLabel('Đến ngày nhập tay').fill('23/08/2026');
   await page.getByRole('button', { name: 'Áp dụng' }).click();
-  await page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).click();
+  await page.getByRole('button', { name: 'Quản lý HĐĐT', exact: true }).click();
   await page.locator('.invoice-date-field .date-range-trigger').click();
   await expect(page.getByLabel('Từ ngày đồng bộ nhập tay')).toHaveValue('01/08/2026');
   await expect(page.getByLabel('Đến ngày đồng bộ nhập tay')).toHaveValue('23/08/2026');
@@ -309,7 +310,7 @@ test('latest direction coverage wins and remains deterministic across tab remoun
   await expect(page.locator('.artifact-quantity-value[data-kind="xml"]')).toHaveText('10/20');
 
   for (let index = 0; index < 2; index += 1) {
-    await page.getByRole('button', { name: 'Quản lý HDDT', exact: true }).click();
+    await page.getByRole('button', { name: 'Quản lý HĐĐT', exact: true }).click();
     await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Bán ra' })).toBeVisible();
     await expect(page.locator('.artifact-coverage-badge')).toContainText('01/04/2026 - 31/05/2026');

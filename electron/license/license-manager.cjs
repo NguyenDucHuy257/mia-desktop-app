@@ -59,6 +59,8 @@ class LicenseManager {
 
   details() {
     const details = this.current.details || {};
+    let saved = null;
+    try { saved = this.store.loadLicense(); } catch { saved = null; }
     return {
       state: this.current.state,
       active: this.current.active,
@@ -66,10 +68,15 @@ class LicenseManager {
       phone_status: details.phone_status || null,
       expires_at: details.expires_at || null,
       device_bound: Boolean(details.device_id),
-      canonical_key: maskKey(details.canonical_key),
+      canonical_key: maskKey(saved?.canonical_key || details.canonical_key),
       reason: this.current.reason || null,
       mode: this.current.mode || null,
     };
+  }
+
+  revealKey() {
+    const saved = this.store.loadLicense();
+    return typeof saved?.canonical_key === 'string' ? saved.canonical_key : null;
   }
 
   async prepareLocalState() {
@@ -136,7 +143,6 @@ class LicenseManager {
     this.current = safeState('active', {
       details: {
         device_id: response.device_id,
-        canonical_key: response.key,
         phone,
         phone_status: response.phone_status || (phone ? 'verified' : 'pending'),
         expires_at: response.expires_at || null,

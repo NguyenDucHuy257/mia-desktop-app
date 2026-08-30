@@ -55,6 +55,7 @@ export interface MiaRuntimeBridge {
     submitPhone(phone: string): Promise<LicenseStateResponse>;
     retry(): Promise<LicenseStateResponse>;
     details(): Promise<LicenseDetails>;
+    revealKey(): Promise<string | null>;
     updatePhone(phone: string): Promise<LicenseStateResponse>;
   };
   accountConnections: MiaAccountConnectionsBridge;

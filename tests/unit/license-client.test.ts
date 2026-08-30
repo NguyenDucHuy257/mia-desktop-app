@@ -287,4 +287,18 @@ describe('MIA shared-key-server client', () => {
     expect(preload).not.toContain('storeLicenseToken:');
     expect(preload).toContain('license: Object.freeze');
   });
+
+  it('keeps the canonical key masked by default and reveals it only explicitly', async () => {
+    const deviceId = 'masked-key-device';
+    const profile = { version: 3, device_id: deviceId, phone: '0981234567', hardware: evidence().hardware };
+    const setup = manager({
+      store: memoryStore(null, profile),
+      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(deviceId)) }),
+    });
+    await setup.instance.initialize();
+    const raw = setup.store.inspect().license.canonical_key;
+    expect(setup.instance.status().details.canonical_key).toBeUndefined();
+    expect(setup.instance.details().canonical_key).not.toBe(raw);
+    expect(setup.instance.revealKey()).toBe(raw);
+  });
 });

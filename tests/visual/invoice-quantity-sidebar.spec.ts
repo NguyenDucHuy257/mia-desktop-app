@@ -27,11 +27,11 @@ test('invoice quantities use two real columns and sidebar active state fills its
 
   const active = page.locator('.nav-button[data-active="true"]');
   const sidebar = page.locator('.sidebar');
-  await expect(active).toHaveCSS('border-radius', '0px');
+  await expect(active).toHaveCSS('border-radius', '6px');
   await expect(active).toHaveCSS('border-top-width', '0px');
   const [activeBox, sidebarBox] = await Promise.all([active.boundingBox(), sidebar.boundingBox()]);
-  expect(activeBox?.x).toBe(sidebarBox?.x);
-  expect(Math.abs((activeBox?.width ?? 0) - (sidebarBox?.width ?? 0))).toBeLessThanOrEqual(1);
+  expect((activeBox?.x ?? 0) - (sidebarBox?.x ?? 0)).toBe(12);
+  expect(Math.abs((activeBox?.width ?? 0) - ((sidebarBox?.width ?? 0) - 24))).toBeLessThanOrEqual(1);
 
   await page.screenshot({ path: 'test-results/invoice-quantity-sidebar.png', fullPage: true });
 });

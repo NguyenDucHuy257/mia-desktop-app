@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     submitPhone: (phone) => invokeResult('mia:license:submit-phone', phone),
     retry: () => invokeResult('mia:license:retry'),
     details: () => invokeResult('mia:license:details'),
+    revealKey: () => invokeResult('mia:license:reveal-key'),
     updatePhone: (phone) => invokeResult('mia:license:update-phone', phone),
   }),
   accountConnections: Object.freeze({

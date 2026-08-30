@@ -9,7 +9,7 @@ describe('MIA desktop shell', () => {
     const html = renderToStaticMarkup(createElement(App));
 
     expect(html).toContain('MIA WT');
-    expect(html).toContain('Quản lý HDDT');
+    expect(html).toContain('Quản lý HĐĐT');
     expect(html).toContain('Đồng bộ dữ liệu');
     expect(html).not.toContain('0101234567');
     expect(html.match(/class="table-row table-grid"/g)).toBeNull();
@@ -29,5 +29,16 @@ describe('MIA desktop shell', () => {
       active: 'xml-html', onNavigate: () => undefined, children: createElement('main'),
     }));
     expect(html).not.toMatch(/<span>PDF<\/span>/);
+  });
+
+  it('renders the ordered navigation, support card and customer hotlines', () => {
+    const html = renderToStaticMarkup(createElement(AppShell, {
+      active: 'invoices', account: { companyName: 'Công ty Mẫu', taxCode: '0100000000' }, onNavigate: () => undefined, children: createElement('main'),
+    }));
+    const labels = ['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Danh sách MST', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng'];
+    expect(labels.map((label) => html.indexOf(label))).toEqual([...labels.map((label) => html.indexOf(label))].sort((a, b) => a - b));
+    expect(html).toContain('Hỗ trợ tận tâm');
+    expect(html).toContain('0865 219 286 · 0383 466 992');
+    expect(html).toContain('Công ty Mẫu');
   });
 });
