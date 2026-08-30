@@ -127,7 +127,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
     </aside>
     <main className="workspace" data-topbar={showTopbar}>
       {showTopbar ? <header className="topbar">
-        <div className="topbar-company"><h1 title="CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH">CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH</h1><span>Giải pháp số cho doanh nghiệp hiện đại</span></div>
+        <div className="topbar-company"><h1 title="CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH">CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH</h1><span className="topbar-company-description">Giải pháp số cho doanh nghiệp hiện đại <svg viewBox="0 0 16 16" aria-label="Đã xác minh"><circle cx="8" cy="8" r="7" /><path d="m4.7 8 2.1 2.1 4.5-4.5" /></svg></span></div>
         <div className="topbar-actions">
           <div className="support-hotline"><span className="support-hotline-icon"><HeadsetIcon /></span><div><span>Hỗ trợ khách hàng</span><strong>0383.466.992 - 0865.219.286</strong></div></div>
           <button className="notification-button" type="button" aria-label="Thông báo"><NotificationIcon /></button>
