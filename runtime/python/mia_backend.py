@@ -253,7 +253,7 @@ class ProductionBackend(SourceBackend):
         database = self.data_root / tax_code / "db" / "invoices.sqlite3"
         if not database.is_file():
             return {
-                "invoice_count": 0, "added_count": 0,
+                "invoice_count": 0, "detail_invoice_count": 0, "added_count": 0,
                 "replaced_old_count": None, "downloaded_new_count": None,
                 "sync_from": None, "sync_until": None,
             }
@@ -263,6 +263,32 @@ class ProductionBackend(SourceBackend):
                 "SELECT COUNT(*) FROM invoice_overview_items WHERE company_tax_code=? AND direction=?",
                 (tax_code, direction),
             ).fetchone()[0])
+            tables = {
+                str(row[0]) for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            detail_count = 0
+            if "invoice_detail_items" in tables:
+                detail_columns = {
+                    str(row[1]) for row in connection.execute(
+                        "PRAGMA table_info(invoice_detail_items)"
+                    )
+                }
+                detail_conditions = ["company_tax_code=?", "direction=?"]
+                if "normalized_ready" in detail_columns:
+                    detail_conditions.append("normalized_ready=1")
+                if "error_message" in detail_columns:
+                    detail_conditions.append(
+                        "(error_message IS NULL OR TRIM(error_message)='')"
+                    )
+                # invoice_detail_items has one durable row per unique invoice
+                # identity. Never count invoice_detail_lines (product rows).
+                detail_count = int(connection.execute(
+                    "SELECT COUNT(*) FROM invoice_detail_items WHERE "
+                    + " AND ".join(detail_conditions),
+                    (tax_code, direction),
+                ).fetchone()[0])
             coverage = connection.execute(
                 """SELECT MIN(from_date), MAX(to_date)
                    FROM invoice_overview_checkpoints
@@ -284,6 +310,7 @@ class ProductionBackend(SourceBackend):
                 ).fetchone()[0])
         return {
             "invoice_count": count,
+            "detail_invoice_count": detail_count,
             "added_count": added,
             "replaced_old_count": int(replaced) if replaced is not None else None,
             "downloaded_new_count": downloaded,
@@ -385,6 +412,7 @@ class ProductionBackend(SourceBackend):
                 "current_until": self._current_processing_until(job, state, month_key) if status == "running" else None,
                 "sync_from": sync_from, "sync_until": sync_until,
                 "invoice_count": metrics["invoice_count"],
+                "detail_invoice_count": metrics["detail_invoice_count"],
                 "baseline_invoice_count": int(baseline) if baseline is not None else None,
                 "added_invoice_count": metrics["added_count"] if baseline is not None else None,
                 "replaced_old_count": metrics["replaced_old_count"],

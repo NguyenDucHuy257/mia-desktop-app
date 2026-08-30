@@ -28,7 +28,6 @@ interface InvoiceRow {
   progress: number;
   progressLabel: string;
   failureHint?: string;
-  actionsReady?: boolean;
   syncState?: InvoiceSyncState;
 }
 
@@ -36,7 +35,7 @@ const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const ACCOUNT_PAGE_SIZE = 20;
 
 const rows: InvoiceRow[] = [
-  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong', actionsReady: true },
+  { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong' },
   { taxCode: '0309876543', company: 'Công ty TNHH Thương Mại Dịch Vụ B', status: 'failed', selected: true, progress: 0, progressLabel: 'Không thể đăng nhập Cổng HĐĐT', failureHint: 'Vui lòng kiểm tra lại MST hoặc mật khẩu.' },
   { taxCode: '0104567890', company: 'Công ty TNHH Sản xuất C', status: 'processing', selected: true, progress: 37, progressLabel: 'Chi tiết - Mua vào - 45/120 hóa đơn' },
   ...['E', 'G', 'H', 'Y', 'K', 'L', 'M'].map((letter) => ({
@@ -127,18 +126,7 @@ function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
   return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
-function InvoiceCountCell({ state }: { state?: InvoiceSyncState }) {
-  const format = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
-  const current = state?.invoice_count ?? 0;
-  const replacement = state?.sync_mode === 'new' && state.replaced_old_count !== null && state.replaced_old_count !== undefined;
-  const baseline = replacement ? state?.replaced_old_count ?? 0 : state?.baseline_invoice_count ?? current;
-  const added = replacement ? state?.downloaded_new_count ?? 0 : state?.added_invoice_count ?? 0;
-  return <div className="invoice-count-cell">
-    <strong className="invoice-count-current">{format(current)}</strong>
-    <span className="invoice-count-added">(+{format(added)} mới)</span>
-    <span className="invoice-count-baseline">{format(baseline)} cũ</span>
-  </div>;
-}
+const formatInvoiceCount = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
 
 export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults, initialDateFrom, initialDateTo, initialDirection = 'purchase', onDateRangeChange, onDirectionChange }: {
   jobLifecycle: BatchJobLifecycle;
@@ -339,6 +327,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           sync_from: persistedSyncState?.sync_from ?? null,
           sync_until: persistedSyncState?.sync_until ?? null,
           invoice_count: persistedSyncState?.invoice_count ?? 0,
+          detail_invoice_count: persistedSyncState?.detail_invoice_count ?? 0,
           baseline_invoice_count: persistedSyncState?.invoice_count ?? 0,
           added_invoice_count: 0,
           replaced_old_count: null,
@@ -395,7 +384,6 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
           ? 'Vui lòng nhập lại MST và mật khẩu.'
           : jobFailureHint(errorCode)
         : undefined,
-      actionsReady: Boolean(job?.job_id),
       syncState,
     };
   });
@@ -507,7 +495,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
         <div className="data-card">
           <div className="table-header table-grid">
             <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFilteredCount === filteredAccountIds.length ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...filteredAccountIds])])}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
-            <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span>Tiến trình</span><span>Trạng thái đồng bộ</span><span>Số lượng hóa đơn</span><span>Tác vụ</span>
+            <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span className="artifact-quantity-header invoice-count-header"><strong>Số lượng</strong><span><b>Tổng quan</b><b>Chi tiết</b></span></span><span>Tiến trình</span><span>Trạng thái đồng bộ</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
             {pageRows.map((row, index) => {
@@ -517,11 +505,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
                 <span>{row.taxCode}</span>
                 <strong className="company-name" title={row.company}>{row.company}</strong>
                 <span className="status-badge" data-status={row.status}>{statusLabels[row.status]}</span>
+                <span className="invoice-count-value invoice-count-value--overview">{formatInvoiceCount(row.syncState?.invoice_count ?? 0)}</span>
+                <span className="invoice-count-value invoice-count-value--detail">{formatInvoiceCount(row.syncState?.detail_invoice_count ?? 0)}</span>
                 <ProgressCell row={row} />
                 <SyncStatusCell state={row.syncState} />
-                <InvoiceCountCell state={row.syncState} />
                 {account ? <span className="row-action-group">
-                  {row.actionsReady ? <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}
+                  <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button>
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
               </div>;

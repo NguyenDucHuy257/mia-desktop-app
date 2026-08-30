@@ -75,14 +75,14 @@
     112px
     minmax(170px, 1.2fr)
     100px
+    64px
+    64px
     minmax(160px, .9fr)
     minmax(150px, .9fr)
-    minmax(175px, 1fr)
     minmax(190px, 220px);
 }
 
-.invoice-page .sync-state-cell,
-.invoice-page .invoice-count-cell {
+.invoice-page .sync-state-cell {
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -90,6 +90,33 @@
   color: #475569;
   font-size: 11px;
   line-height: 14px;
+}
+
+.invoice-page .invoice-count-header {
+  grid-column: span 2;
+  width: 100%;
+  min-width: 0;
+}
+
+.invoice-page .invoice-count-header > span {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 10px;
+}
+
+.invoice-page .invoice-count-value {
+  min-width: 0;
+  padding-right: 4px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.invoice-page .invoice-count-value--detail {
+  border-left: 1px solid #e2e8f0;
 }
 
 .invoice-page .sync-state-cell strong { color: #166534; }

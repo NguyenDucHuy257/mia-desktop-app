@@ -47,6 +47,7 @@ export interface InvoiceSyncState {
   sync_from: string | null;
   sync_until: string | null;
   invoice_count: number;
+  detail_invoice_count: number;
   baseline_invoice_count: number | null;
   added_invoice_count: number | null;
   replaced_old_count?: number | null;

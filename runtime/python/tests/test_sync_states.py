@@ -24,6 +24,14 @@ class SyncStateTests(unittest.TestCase):
                 CREATE TABLE invoice_overview_checkpoints (
                     company_tax_code TEXT, direction TEXT, from_date TEXT, to_date TEXT, checkpoint_status TEXT
                 );
+                CREATE TABLE invoice_detail_items (
+                    id INTEGER PRIMARY KEY, company_tax_code TEXT, direction TEXT,
+                    query_type TEXT, nbmst TEXT, khhdon TEXT, shdon TEXT,
+                    khmshdon TEXT, normalized_ready INTEGER, error_message TEXT
+                );
+                CREATE TABLE invoice_detail_lines (
+                    id INTEGER PRIMARY KEY, detail_item_id INTEGER, line_number INTEGER
+                );
             """)
             connection.executemany(
                 "INSERT INTO invoice_overview_items(company_tax_code,direction,nlap_date) VALUES(?,?,?)",
@@ -32,6 +40,14 @@ class SyncStateTests(unittest.TestCase):
             connection.execute(
                 "INSERT INTO invoice_overview_checkpoints VALUES(?,?,?,?,?)",
                 (self.tax_code, "purchase", "2025-01-01", "2025-01-31", "finalized"),
+            )
+            connection.execute(
+                "INSERT INTO invoice_detail_items VALUES(1,?,?,?,?,?,?,?,?,?)",
+                (self.tax_code, "purchase", "query", "0200000000", "AA/25E", "1", "1", 1, None),
+            )
+            connection.executemany(
+                "INSERT INTO invoice_detail_lines(detail_item_id,line_number) VALUES(1,?)",
+                [(line,) for line in range(1, 11)],
             )
             connection.commit()
         self.backend = object.__new__(ProductionBackend)
@@ -53,6 +69,7 @@ class SyncStateTests(unittest.TestCase):
         state = self.backend.sync_states(["conn_account"], "purchase")[0]
         self.assertEqual(state["status"], "running")
         self.assertEqual(state["invoice_count"], 2)
+        self.assertEqual(state["detail_invoice_count"], 1)
         self.assertEqual(state["added_invoice_count"], 1)
         self.assertEqual(state["current_until"], "2025-02-28")
 
@@ -67,6 +84,24 @@ class SyncStateTests(unittest.TestCase):
         self.assertEqual(state["replaced_old_count"], 4)
         self.assertEqual(state["downloaded_new_count"], 1)
         self.assertEqual(state["invoice_count"], 2)
+
+    def test_persistent_counts_do_not_require_an_active_or_historical_job(self):
+        self.backend.repository.latest_invoice_job_for_direction.return_value = None
+        state = self.backend.sync_states(["conn_account"], "purchase")[0]
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["invoice_count"], 2)
+        self.assertEqual(state["detail_invoice_count"], 1)
+        self.assertIsNone(state["last_job_id"])
+
+    def test_missing_account_database_reports_zero_counts(self):
+        self.backend.service.get_account_connection.return_value = SimpleNamespace(
+            username="0999999999"
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = None
+        state = self.backend.sync_states(["conn_empty"], "purchase")[0]
+        self.assertEqual(state["status"], "not_synced")
+        self.assertEqual(state["invoice_count"], 0)
+        self.assertEqual(state["detail_invoice_count"], 0)
 
     def test_progress_totals_accumulate_discovered_months(self):
         totals = _progress_totals_from_state({"modules": {"overview": {"status": "running", "months": [

@@ -30,8 +30,16 @@ describe('invoice result control presentation', () => {
     expect(component).not.toContain("assets/figma/stop.png");
     expect(component).toContain('title={row.company}');
     expect(styles).toContain('minmax(170px, 1.2fr)');
-    expect(component).toContain('<span>Trạng thái đồng bộ</span><span>Số lượng hóa đơn</span><span>Tác vụ</span>');
-    expect(component).toContain('<InvoiceCountCell state={row.syncState} />');
+    expect(component).toContain('artifact-quantity-header invoice-count-header');
+    expect(component).toContain('<b>Tổng quan</b><b>Chi tiết</b>');
+    expect(styles).toContain('grid-column: span 2');
+    expect(component).toContain('invoice-count-value invoice-count-value--overview');
+    expect(component).toContain('invoice-count-value invoice-count-value--detail');
+    expect(component).toContain('row.syncState?.detail_invoice_count ?? 0');
+    expect(component).not.toContain('<small>Tổng quan</small>');
+    expect(component).not.toContain('<small>Chi tiết</small>');
+    expect(component).not.toContain('row.actionsReady ?');
+    expect(component).toContain('<button className="row-result-button"');
     expect(component).not.toContain('monthProgress');
   });
 
