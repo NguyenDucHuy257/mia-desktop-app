@@ -1,8 +1,10 @@
 # Audit license, device binding và silent migration
 
-Ngày audit: 2026-08-30  
-Repository: `NguyenDucHuy257/mia-desktop-app`  
-Branch/HEAD: `develop` / `bb16382a4de04fc38a55f89a07a2b35b6e1c565c`  
+Ngày audit: 2026-08-30
+
+Repository: `NguyenDucHuy257/mia-desktop-app`
+
+Branch/HEAD: `develop` / `bb16382a4de04fc38a55f89a07a2b35b6e1c565c`
 Mốc remote: `origin/develop` cùng SHA tại thời điểm audit
 
 ## 1. Phạm vi và kết luận
