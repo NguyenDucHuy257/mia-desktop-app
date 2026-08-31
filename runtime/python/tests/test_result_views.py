@@ -8,13 +8,12 @@ from unittest.mock import Mock, patch
 from openpyxl import Workbook, load_workbook
 
 import mia_runtime
-from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
 from app.job_engine.models import JobRecord
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
 from app.services.overview_downloader import _find_header_row
 from mia_backend import ProductionBackend
-from mia_source_results import _available_path
+from mia_source_results import _DETAIL_EXPORT_COLUMNS, _available_path
 
 
 class SourceJobIntentTests(unittest.TestCase):
@@ -334,6 +333,9 @@ class ResultViewTests(unittest.TestCase):
             ), patch(
                 "mia_source_results._combine_source_workbooks_atomically",
                 side_effect=combine,
+            ), patch(
+                "mia_source_results._normalize_detail_excel_atomically",
+                return_value=None,
             ):
                 result = backend.export_results({
                     "destination": directory,
@@ -415,6 +417,9 @@ class ResultViewTests(unittest.TestCase):
             ), patch(
                 "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
                 MarkerDetailExporter,
+            ), patch(
+                "mia_source_results._normalize_detail_excel_atomically",
+                return_value=None,
             ):
                 result = backend.export_results({
                     "destination": directory,
@@ -637,21 +642,19 @@ class ResultViewTests(unittest.TestCase):
 
             detail_workbook = load_workbook(detail_path, data_only=False)
             try:
-                self.assertEqual(detail_workbook.sheetnames, ["Hóa đơn điện tử"])
-                worksheet = detail_workbook["Hóa đơn điện tử"]
-                header_row = InvoiceDetailExcelExporter._find_header_row(worksheet)
+                self.assertEqual(detail_workbook.sheetnames, ["Sheet1"])
+                worksheet = detail_workbook["Sheet1"]
+                header_row = 1
                 headers = [
                     str(worksheet.cell(header_row, column).value or "")
                     for column in range(1, worksheet.max_column + 1)
                 ]
+                self.assertEqual(headers, [label for _key, label in _DETAIL_EXPORT_COLUMNS])
+                self.assertEqual(len(headers), 37)
+                self.assertNotIn("STT", headers)
                 shdon_column = headers.index("Số hóa đơn") + 1
-                column_keys = InvoiceDetailExcelExporter._column_keys(worksheet, header_row)
-                url_column = column_keys.index("url") + 1
-                code_column = column_keys.index("mk") + 1
-                self.assertEqual(
-                    worksheet.cell(4, 1).value,
-                    "Từ ngày 01/05/2025 đến ngày 02/05/2025",
-                )
+                url_column = 30
+                code_column = 31
                 values = [
                     worksheet.cell(row, shdon_column).value
                     for row in range(header_row + 1, worksheet.max_row + 1)
@@ -707,6 +710,9 @@ class ResultViewTests(unittest.TestCase):
             ), patch(
                 "mia_source_results._combine_source_workbooks_atomically",
                 side_effect=combine,
+            ), patch(
+                "mia_source_results._normalize_detail_excel_atomically",
+                return_value=None,
             ):
                 result = backend.export_results({
                     "destination": directory,

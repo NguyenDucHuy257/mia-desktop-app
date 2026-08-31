@@ -10,9 +10,12 @@ from openpyxl import load_workbook
 
 from mia_progressive_excel_exporter import ProgressiveInvoiceDetailExcelExporter
 from mia_source_results import (
+    _DETAIL_EXPORT_COLUMNS,
+    _DETAIL_EXPORT_WIDTHS,
     _ExcelSafeDetailRowBuilder,
     _ExportProgressReporter,
     _combine_source_workbooks_atomically,
+    _normalize_detail_excel_atomically,
     _source_template_dir,
     _write_overview_excel_from_source_template,
 )
@@ -226,6 +229,71 @@ class ExcelExportProgressTests(unittest.TestCase):
                         source_book.close()
             finally:
                 combined_book.close()
+
+    def test_detail_finalizer_matches_customer_fixed_37_column_format(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = self._records(root)
+            payload = detail_payload("1")
+            payload["detail"]["nbten"] = "N" * 200
+            payload["detail"]["urltracuu"] = "https" + "://invoice.example/lookup"
+            Path(records[0]["raw_detail_path"]).write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+            template = _source_template_dir() / "invoice_detail.xlsx"
+            electronic = root / "electronic.xlsx"
+            cash = root / "cash.xlsx"
+            combined = root / "combined.xlsx"
+            for target in (electronic, cash):
+                InvoiceDetailExcelExporter(
+                    template, _ExcelSafeDetailRowBuilder()
+                ).export(records, target, "2026-08-01", "2026-08-31")
+
+            _combine_source_workbooks_atomically(
+                [
+                    ("purchase", "electronic", electronic),
+                    ("purchase", "Máy tính tiền", cash),
+                ],
+                combined,
+            )
+            _normalize_detail_excel_atomically(combined)
+
+            workbook = load_workbook(combined, data_only=False)
+            try:
+                worksheet = workbook.active
+                expected_headers = [label for _key, label in _DETAIL_EXPORT_COLUMNS]
+                self.assertEqual(workbook.sheetnames, ["Sheet1"])
+                self.assertEqual(worksheet.max_column, 37)
+                self.assertEqual(worksheet.max_row, 9)
+                self.assertEqual(
+                    [worksheet.cell(1, column).value for column in range(1, 38)],
+                    expected_headers,
+                )
+                self.assertEqual(worksheet["A1"].value, "Mẫu số HD")
+                self.assertEqual(worksheet["AK1"].value, "Hạn dùng")
+                self.assertNotIn("STT", expected_headers)
+                self.assertEqual(worksheet["J2"].value, "N" * 200)
+                self.assertIsInstance(worksheet["S2"].value, (int, float))
+                self.assertIsInstance(worksheet["W2"].value, (int, float))
+                self.assertEqual(worksheet["A1"].fill.fgColor.rgb, "FFFFFF00")
+                self.assertEqual(worksheet["A1"].font.sz, 12)
+                self.assertEqual(worksheet["A2"].font.sz, 12)
+                self.assertFalse(worksheet.merged_cells.ranges)
+                self.assertIsNone(worksheet.freeze_panes)
+                self.assertIsNone(worksheet.auto_filter.ref)
+                for column, expected_width in enumerate(
+                    _DETAIL_EXPORT_WIDTHS, start=1
+                ):
+                    letter = worksheet.cell(1, column).column_letter
+                    self.assertAlmostEqual(
+                        worksheet.column_dimensions[letter].width,
+                        expected_width,
+                        places=4,
+                    )
+                for row in range(1, worksheet.max_row + 1):
+                    self.assertIsNone(worksheet.row_dimensions[row].height)
+            finally:
+                workbook.close()
 
     def test_reporter_events_are_monotonic_and_terminal(self):
         events = []
