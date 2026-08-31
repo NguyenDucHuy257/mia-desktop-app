@@ -18,7 +18,6 @@ import sqlite3
 import tempfile
 import time
 from collections import OrderedDict
-from copy import copy
 from contextlib import closing
 from dataclasses import replace
 from datetime import date, timedelta
@@ -1797,63 +1796,6 @@ def _combine_source_workbooks_atomically(
         temporary.unlink(missing_ok=True)
 
 
-def _combine_detail_workbooks_atomically(
-    staged_jobs: list[tuple[str, str, Path]],
-    target: Path,
-) -> None:
-    """Combine detail categories into the sample's single 37-column sheet."""
-    from app.services.overview_downloader import (
-        _clone_cell,
-        _load_workbook,
-        _new_workbook,
-    )
-
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.stem}-", suffix=".xlsx", dir=target.parent
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    temporary.unlink(missing_ok=True)
-    target_workbook = _new_workbook()
-    target_sheet = target_workbook.active
-    target_sheet.title = "Sheet1"
-    target_row = 1
-    try:
-        for source_index, (_direction, _category, source_path) in enumerate(staged_jobs):
-            source_workbook = _load_workbook(source_path, data_only=False)
-            try:
-                source_sheet = source_workbook.active
-                first_source_row = 1 if source_index == 0 else 2
-                for source_row in range(first_source_row, source_sheet.max_row + 1):
-                    for source_cell in source_sheet[source_row]:
-                        _clone_cell(
-                            source_cell,
-                            target_sheet.cell(target_row, source_cell.column),
-                        )
-                    target_sheet.row_dimensions[target_row].height = (
-                        source_sheet.row_dimensions[source_row].height
-                    )
-                    target_row += 1
-                if source_index == 0:
-                    for key, dimension in source_sheet.column_dimensions.items():
-                        target_sheet.column_dimensions[key].width = dimension.width
-                        target_sheet.column_dimensions[key].hidden = dimension.hidden
-                    target_sheet.freeze_panes = source_sheet.freeze_panes
-                    target_sheet.auto_filter.ref = source_sheet.auto_filter.ref
-                    target_sheet.sheet_view.showGridLines = source_sheet.sheet_view.showGridLines
-                    target_sheet.page_margins = copy(source_sheet.page_margins)
-                    target_sheet.page_setup = copy(source_sheet.page_setup)
-                    target_sheet.sheet_properties = copy(source_sheet.sheet_properties)
-            finally:
-                source_workbook.close()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target_workbook.save(temporary)
-        os.replace(temporary, target)
-    finally:
-        target_workbook.close()
-        temporary.unlink(missing_ok=True)
-
-
 class _ExportProgressReporter:
     """Map actual workbook work units to one monotonic request percentage."""
 
@@ -2220,7 +2162,7 @@ def _export_results_impl(
 ) -> dict[str, Any]:
     """Build Excel on demand from persisted source-owned data only."""
     from app.config.crawl_config import QUERY_TYPE_TO_CATEGORY
-    from mia_detail_excel_exporter import CustomerDetailExcelExporter
+    from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
     from app.repositories.invoice_detail_query_repository import InvoiceDetailQueryRepository
 
     destination = Path(value["destination"])
@@ -2430,7 +2372,7 @@ def _export_results_impl(
                         else _ExcelSafeDetailRowBuilder()
                     )
                     if reporter.callback is None:
-                        exporter = CustomerDetailExcelExporter(
+                        exporter = InvoiceDetailExcelExporter(
                             _source_template_dir() / "invoice_detail.xlsx",
                             row_builder=export_row_builder,
                         )
@@ -2483,10 +2425,7 @@ def _export_results_impl(
                     context["date_to"],
                 ),
             )
-            if scope == "details":
-                _combine_detail_workbooks_atomically(staged_jobs, target)
-            else:
-                _combine_source_workbooks_atomically(staged_jobs, target)
+            _combine_source_workbooks_atomically(staged_jobs, target)
             reporter.unit("format", len(staged_jobs), len(staged_jobs))
             reporter.unit("save", 1, 1)
             reporter.complete_unit()
