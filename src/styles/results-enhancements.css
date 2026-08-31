@@ -1,14 +1,23 @@
-.results-page--figma {
+.results-page.results-page--figma {
   height: 100%;
-  padding: 10px 24px 12px;
+  min-height: 0;
+  padding: 4px 24px 6px;
   gap: 0;
   overflow: hidden;
   color: #1a1c1b;
 }
 
+.results-page--figma > .results-back,
+.results-page--figma > .results-header--figma,
+.results-page--figma > .results-tabs--figma,
+.results-page--figma > .results-filters--figma,
+.results-page--figma > .results-reconciliation-summary {
+  flex: 0 0 auto;
+}
+
 .results-back {
   width: max-content;
-  height: 24px;
+  height: 20px;
   margin: 0 0 2px;
   padding: 0;
   border: 0;
@@ -20,8 +29,8 @@
 }
 
 .results-header--figma {
-  min-height: 49px;
-  margin-bottom: 2px;
+  min-height: 40px;
+  margin-bottom: 0;
   justify-content: space-between;
 }
 
@@ -30,16 +39,16 @@
 }
 
 .results-header--figma h1 {
-  margin: 0 0 1px;
+  margin: 0;
   font-size: 22px;
-  line-height: 26px;
+  line-height: 24px;
 }
 
 .results-header--figma p {
   margin: 0;
   color: #62625b;
   font-size: 13px;
-  line-height: 16px;
+  line-height: 14px;
 }
 
 .results-export {
@@ -147,14 +156,14 @@
 }
 
 .results-tabs--figma {
-  height: 40px;
-  margin: 0 0 5px;
+  height: 36px;
+  margin: 0 0 2px;
   gap: 0;
 }
 
 .results-tabs--figma button {
   min-width: 110px;
-  height: 39px;
+  height: 35px;
   padding: 0 20px;
   color: #62625b;
   font-size: 14px;
@@ -170,9 +179,9 @@
 .results-filters--figma {
   position: relative;
   z-index: 20;
-  min-height: 50px;
-  margin-bottom: 5px;
-  padding: 3px 10px;
+  min-height: 44px;
+  margin-bottom: 2px;
+  padding: 1px 10px;
   border: 1px solid #e5e5e0;
   border-radius: var(--mia-radius-ui);
   background: #f8f8f6;
@@ -184,15 +193,15 @@
   position: relative;
   z-index: 40;
   width: 250px;
-  height: 42px;
+  height: 40px;
   flex: 0 0 250px;
   align-self: center;
 }
 
 .results-page--figma .results-date-range .date-range-trigger {
   width: 100%;
-  height: 42px;
-  padding: 6px 12px;
+  height: 40px;
+  padding: 4px 12px;
   border: 1px solid #d6d6cf;
   border-radius: var(--mia-radius-ui);
   outline: 0;
@@ -210,7 +219,7 @@
 
 .results-page--figma .results-date-range .date-range-trigger > span {
   min-width: 0;
-  height: 28px;
+  height: 26px;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -352,7 +361,7 @@
 
 .results-filters--figma > select {
   width: 170px;
-  height: 42px;
+  height: 40px;
   border-color: #d6d6cf;
   border-radius: var(--mia-radius-ui);
   color: #45464d;
@@ -365,7 +374,7 @@
 
 .results-search-wrap > input {
   width: 100%;
-  height: 42px;
+  height: 40px;
   padding-right: 38px;
   border-color: #d6d6cf;
   border-radius: var(--mia-radius-ui);
@@ -373,7 +382,7 @@
 
 .results-search-wrap > button {
   position: absolute;
-  top: 5px;
+  top: 4px;
   right: 5px;
   width: 32px;
   height: 32px;

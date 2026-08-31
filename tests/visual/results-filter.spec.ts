@@ -66,6 +66,31 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   await expect(page.locator('.results-table')).not.toContainText('7000000002');
 
   const resultTabs = page.locator('.results-tabs--figma [role="tab"]');
+  const compactLayout = await page.evaluate(() => {
+    const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect();
+    const back = box('.results-back');
+    const title = box('.results-header--figma h1');
+    const description = box('.results-header--figma p');
+    const tabs = box('.results-tabs--figma');
+    const filters = box('.results-filters--figma');
+    const table = box('.results-table');
+    return {
+      backTitleGap: title.top - back.bottom,
+      descriptionTabsGap: tabs.top - description.bottom,
+      tabsFilterGap: filters.top - tabs.bottom,
+      tabsHeight: tabs.height,
+      filtersHeight: filters.height,
+      filterTableGap: table.top - filters.bottom,
+      tableTop: table.top,
+    };
+  });
+  expect(compactLayout.backTitleGap).toBeLessThanOrEqual(12);
+  expect(compactLayout.descriptionTabsGap).toBeLessThanOrEqual(4);
+  expect(compactLayout.tabsFilterGap).toBeLessThanOrEqual(4);
+  expect(compactLayout.tabsHeight).toBeLessThanOrEqual(38);
+  expect(compactLayout.filtersHeight).toBeLessThanOrEqual(46);
+  expect(compactLayout.filterTableGap).toBeLessThanOrEqual(4);
+  expect(compactLayout.tableTop).toBeLessThanOrEqual(180);
   const overviewTableBox = await page.locator('.results-table').boundingBox();
   expect(overviewTableBox).not.toBeNull();
   await resultTabs.nth(1).click();
