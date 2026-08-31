@@ -8,12 +8,12 @@ from unittest.mock import Mock, patch
 from openpyxl import Workbook, load_workbook
 
 import mia_runtime
-from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
 from app.job_engine.models import JobRecord
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
 from app.services.overview_downloader import _find_header_row
 from mia_backend import ProductionBackend
+from mia_detail_excel_exporter import DETAIL_EXPORT_COLUMNS
 from mia_source_results import _available_path
 
 
@@ -329,10 +329,13 @@ class ResultViewTests(unittest.TestCase):
                 "app.repositories.invoice_detail_query_repository.InvoiceDetailQueryRepository",
                 return_value=detail_repository,
             ), patch(
-                "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
+                "mia_detail_excel_exporter.CustomerDetailExcelExporter",
                 return_value=detail_exporter,
             ), patch(
                 "mia_source_results._combine_source_workbooks_atomically",
+                side_effect=combine,
+            ), patch(
+                "mia_source_results._combine_detail_workbooks_atomically",
                 side_effect=combine,
             ):
                 result = backend.export_results({
@@ -383,6 +386,16 @@ class ResultViewTests(unittest.TestCase):
                 workbook.save(path)
                 workbook.close()
 
+            def write_detail_marker(path: Path, marker: str) -> None:
+                workbook = Workbook()
+                worksheet = workbook.active
+                worksheet.cell(1, 1).value = "Mẫu số HD"
+                worksheet.cell(1, 2).value = "Marker"
+                worksheet.cell(2, 1).value = "1"
+                worksheet.cell(2, 2).value = marker
+                workbook.save(path)
+                workbook.close()
+
             def overview_rows(_context, direction, query_type, _search):
                 return [{"marker": f"overview:{direction}:{query_type}"}]
 
@@ -401,7 +414,7 @@ class ResultViewTests(unittest.TestCase):
                     pass
 
                 def export(self, *, detail_records, output_path, **_kwargs):
-                    write_marker(Path(output_path), detail_records[0]["marker"])
+                    write_detail_marker(Path(output_path), detail_records[0]["marker"])
 
             with patch(
                 "mia_source_results._all_overview_fields",
@@ -413,7 +426,7 @@ class ResultViewTests(unittest.TestCase):
                 "app.repositories.invoice_detail_query_repository.InvoiceDetailQueryRepository",
                 return_value=detail_repository,
             ), patch(
-                "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
+                "mia_detail_excel_exporter.CustomerDetailExcelExporter",
                 MarkerDetailExporter,
             ):
                 result = backend.export_results({
@@ -445,11 +458,22 @@ class ResultViewTests(unittest.TestCase):
                 direction = "purchase" if "Mua vào" in path.name else "sold"
                 workbook = load_workbook(path, data_only=False)
                 try:
-                    self.assertEqual(workbook.sheetnames, list(labels))
-                    for sheet_name, query_type in labels.items():
+                    if scope == "overview":
+                        self.assertEqual(workbook.sheetnames, list(labels))
+                        for sheet_name, query_type in labels.items():
+                            self.assertEqual(
+                                workbook[sheet_name].cell(6, 2).value,
+                                f"{scope}:{direction}:{query_type}",
+                            )
+                    else:
+                        self.assertEqual(workbook.sheetnames, ["Sheet1"])
+                        worksheet = workbook.active
                         self.assertEqual(
-                            workbook[sheet_name].cell(6, 2).value,
-                            f"{scope}:{direction}:{query_type}",
+                            [worksheet.cell(row, 2).value for row in (2, 3)],
+                            [
+                                f"{scope}:{direction}:query",
+                                f"{scope}:{direction}:sco-query",
+                            ],
                         )
                 finally:
                     workbook.close()
@@ -637,28 +661,25 @@ class ResultViewTests(unittest.TestCase):
 
             detail_workbook = load_workbook(detail_path, data_only=False)
             try:
-                self.assertEqual(detail_workbook.sheetnames, ["Hóa đơn điện tử"])
-                worksheet = detail_workbook["Hóa đơn điện tử"]
-                header_row = InvoiceDetailExcelExporter._find_header_row(worksheet)
+                self.assertEqual(detail_workbook.sheetnames, ["Sheet1"])
+                worksheet = detail_workbook.active
+                header_row = 1
                 headers = [
                     str(worksheet.cell(header_row, column).value or "")
                     for column in range(1, worksheet.max_column + 1)
                 ]
+                self.assertEqual(headers, [title for _key, title in DETAIL_EXPORT_COLUMNS])
+                self.assertNotIn("STT", headers)
                 shdon_column = headers.index("Số hóa đơn") + 1
-                column_keys = InvoiceDetailExcelExporter._column_keys(worksheet, header_row)
-                url_column = column_keys.index("url") + 1
-                code_column = column_keys.index("mk") + 1
-                self.assertEqual(
-                    worksheet.cell(4, 1).value,
-                    "Từ ngày 01/05/2025 đến ngày 02/05/2025",
-                )
+                url_column = 30
+                code_column = 31
                 values = [
                     worksheet.cell(row, shdon_column).value
                     for row in range(header_row + 1, worksheet.max_row + 1)
                     if worksheet.cell(row, shdon_column).value is not None
                 ]
                 self.assertEqual([str(value) for value in values], ["101"])
-                self.assertNotIn("\x0b", str(worksheet.cell(header_row + 1, 18).value))
+                self.assertNotIn("\x0b", str(worksheet.cell(header_row + 1, 17).value))
                 url_cell = worksheet.cell(header_row + 1, url_column)
                 self.assertEqual(url_cell.value, "https" + "://invoice.example/lookup?code=ABC123")
                 self.assertIsNotNone(url_cell.hyperlink)
@@ -702,10 +723,13 @@ class ResultViewTests(unittest.TestCase):
                 "mia_source_results._FilteredExcelSafeDetailRowBuilder",
                 return_value=row_builder,
             ) as filtered_builder, patch(
-                "app.exporters.invoice_detail_excel_exporter.InvoiceDetailExcelExporter",
+                "mia_detail_excel_exporter.CustomerDetailExcelExporter",
                 return_value=detail_exporter,
             ), patch(
                 "mia_source_results._combine_source_workbooks_atomically",
+                side_effect=combine,
+            ), patch(
+                "mia_source_results._combine_detail_workbooks_atomically",
                 side_effect=combine,
             ):
                 result = backend.export_results({
