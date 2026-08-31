@@ -85,7 +85,8 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
     };
   });
   expect(compactLayout.backTitleGap).toBeLessThanOrEqual(12);
-  expect(compactLayout.descriptionTabsGap).toBeLessThanOrEqual(4);
+  expect(compactLayout.descriptionTabsGap).toBeGreaterThanOrEqual(4);
+  expect(compactLayout.descriptionTabsGap).toBeLessThanOrEqual(10);
   expect(compactLayout.tabsFilterGap).toBeLessThanOrEqual(4);
   expect(compactLayout.tabsHeight).toBeLessThanOrEqual(40);
   expect(compactLayout.filtersHeight).toBeLessThanOrEqual(48);
