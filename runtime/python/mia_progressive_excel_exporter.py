@@ -1,15 +1,20 @@
 """Desktop-only progress and performance adapter for source Excel rendering.
 
-The vendored exporter remains authoritative for row construction and atomic
-staging. This adapter observes its existing work units while the desktop's
-Detail-only finalizer applies the fixed customer workbook format.
+The vendored exporter remains authoritative for workbook structure, values,
+styles, merges, and atomic saving.  This adapter only observes its existing
+work units and replaces the expensive two-measurement fit pass with an
+equivalent one-measurement implementation.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import sys
 import time
+from array import array
+from copy import copy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
@@ -19,7 +24,8 @@ if str(VENDOR_ROOT) not in sys.path:
     sys.path.insert(0, str(VENDOR_ROOT))
 
 import app.exporters.invoice_detail_excel_exporter as source_module
-from mia_detail_excel_format import FixedDetailExcelExporter
+from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
+from openpyxl.utils import get_column_letter
 
 
 logger = logging.getLogger("mia.excel_export")
@@ -53,7 +59,7 @@ class _ProgressRowBuilder:
                 )
 
 
-class ProgressiveInvoiceDetailExcelExporter(FixedDetailExcelExporter):
+class ProgressiveInvoiceDetailExcelExporter(InvoiceDetailExcelExporter):
     """Expose real source work units without changing source workbook output."""
 
     def __init__(self, template_path, row_builder=None, *, progress: ProgressCallback) -> None:
@@ -190,18 +196,70 @@ class ProgressiveInvoiceDetailExcelExporter(FixedDetailExcelExporter):
         last_data_row: int,
         column_keys: list[str],
     ) -> None:
-        """Report the fixed-format phase without measuring runtime cell content."""
+        """Preserve source sizing while measuring each non-empty cell once."""
         started = time.perf_counter()
+        effective_last_row = max(header_row, last_data_row)
+        row_count = max(0, effective_last_row - first_data_row + 1)
         column_count = len(column_keys)
+        measured_widths = array("d", [math.nan]) * (row_count * column_count)
+        fitted_widths: list[float] = []
+
+        @lru_cache(maxsize=65_536)
+        def display_width(text: str) -> float:
+            return source_module._display_width(text)
+
         self._emit("format", 0, column_count)
-        super()._fit_cells(
-            worksheet,
-            header_row=header_row,
-            first_data_row=first_data_row,
-            last_data_row=last_data_row,
-            column_keys=column_keys,
-        )
-        self._emit("format", column_count, column_count)
+        for column, _key in enumerate(column_keys, start=1):
+            data_widths: list[float] = []
+            for row_offset, row in enumerate(
+                range(first_data_row, effective_last_row + 1)
+            ):
+                value = worksheet.cell(row, column).value
+                if source_module._is_empty_excel_value(value):
+                    continue
+                width = display_width(str(value))
+                measured_widths[
+                    (row_offset * column_count) + (column - 1)
+                ] = width
+                data_widths.append(width)
+
+            dimension = worksheet.column_dimensions[get_column_letter(column)]
+            if not data_widths:
+                dimension.width = 0
+                dimension.hidden = True
+                fitted_widths.append(0)
+            else:
+                width = min(max(source_module._robust_column_width(data_widths), 3), 255)
+                dimension.width = width
+                dimension.hidden = False
+                fitted_widths.append(width)
+            self._emit("format", column, column_count)
+
+        for row_offset, row in enumerate(range(first_data_row, effective_last_row + 1)):
+            required_lines = 1
+            for column, width in enumerate(fitted_widths, start=1):
+                content_width = measured_widths[
+                    (row_offset * column_count) + (column - 1)
+                ]
+                if math.isnan(content_width):
+                    continue
+                usable_width = max(width, 1)
+                if content_width <= usable_width + 0.01:
+                    continue
+                cell = worksheet.cell(row, column)
+                alignment = copy(cell.alignment)
+                alignment.wrap_text = True
+                alignment.shrink_to_fit = False
+                cell.alignment = alignment
+                required_lines = max(
+                    required_lines,
+                    math.ceil(content_width / usable_width),
+                )
+            worksheet.row_dimensions[row].height = min(20 * required_lines, 409)
+
+        worksheet.sheet_view.zoomScale = 90
+        worksheet.sheet_view.zoomScaleNormal = 90
+        worksheet.page_setup.orientation = "landscape"
         self.fit_seconds += time.perf_counter() - started
 
     def _save_atomically(self, workbook, output_path):

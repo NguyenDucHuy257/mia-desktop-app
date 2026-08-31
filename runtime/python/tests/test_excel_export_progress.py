@@ -5,18 +5,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app.exporters.invoice_detail_excel_exporter as source_module
+from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
 from openpyxl import load_workbook
 
-from mia_detail_excel_format import (
-    DETAIL_EXPORT_COLUMNS,
-    DETAIL_TEMPLATE_WIDTHS,
-    FixedDetailExcelExporter,
-    combine_detail_workbooks_atomically,
-)
 from mia_progressive_excel_exporter import ProgressiveInvoiceDetailExcelExporter
 from mia_source_results import (
     _ExcelSafeDetailRowBuilder,
     _ExportProgressReporter,
+    _combine_source_workbooks_atomically,
     _source_template_dir,
     _write_overview_excel_from_source_template,
 )
@@ -56,29 +52,28 @@ class ExcelExportProgressTests(unittest.TestCase):
             })
         return records
 
-    def test_progressive_detail_export_normalizes_to_customer_template(self):
+    def test_progressive_detail_export_preserves_source_workbook_output(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             records = self._records(root)
-            first_payload = detail_payload("1")
-            first_payload["detail"]["nbten"] = "N" * 200
-            Path(records[0]["raw_detail_path"]).write_text(
-                json.dumps(first_payload, ensure_ascii=False), encoding="utf-8"
-            )
-            staged_path = root / "staged.xlsx"
-            final_path = root / "detail.xlsx"
+            source_path = root / "source.xlsx"
+            progressive_path = root / "progressive.xlsx"
             template = _source_template_dir() / "invoice_detail.xlsx"
+            InvoiceDetailExcelExporter(template, _ExcelSafeDetailRowBuilder()).export(
+                records, source_path, "2026-08-01", "2026-08-31"
+            )
             events = []
+            original_width = source_module._display_width
             width_calls = 0
 
-            def measured_width(_value, **_kwargs):
+            def measured_width(value, **kwargs):
                 nonlocal width_calls
                 width_calls += 1
-                return 999
+                return original_width(value, **kwargs)
 
             def progress(phase, processed, total):
                 if phase == "save" and processed == total == 1:
-                    self.assertTrue(staged_path.is_file())
+                    self.assertTrue(progressive_path.is_file())
                 events.append((phase, processed, total))
 
             with patch.object(source_module, "_display_width", side_effect=measured_width):
@@ -86,59 +81,54 @@ class ExcelExportProgressTests(unittest.TestCase):
                     template,
                     _ExcelSafeDetailRowBuilder(),
                     progress=progress,
-                ).export(records, staged_path, "2026-08-01", "2026-08-31")
-            combine_detail_workbooks_atomically(
-                [("purchase", "electronic", staged_path)], final_path
-            )
+                ).export(records, progressive_path, "2026-08-01", "2026-08-31")
 
-            workbook = load_workbook(final_path, data_only=False)
+            source_book = load_workbook(source_path, data_only=False)
+            progressive_book = load_workbook(progressive_path, data_only=False)
             try:
-                worksheet = workbook.active
-                expected_headers = [label for _key, label in DETAIL_EXPORT_COLUMNS]
-                self.assertEqual(workbook.sheetnames, ["Sheet1"])
-                self.assertEqual(worksheet.max_column, 37)
+                source_sheet = source_book.active
+                progressive_sheet = progressive_book.active
+                self.assertEqual(source_sheet.max_row, progressive_sheet.max_row)
+                self.assertEqual(source_sheet.max_column, progressive_sheet.max_column)
                 self.assertEqual(
-                    [worksheet.cell(1, column).value for column in range(1, 38)],
-                    expected_headers,
+                    {str(value) for value in source_sheet.merged_cells.ranges},
+                    {str(value) for value in progressive_sheet.merged_cells.ranges},
                 )
-                self.assertNotIn("STT", expected_headers)
-                self.assertEqual(worksheet["A2"].value, "1")
-                self.assertEqual(worksheet["Q2"].value, "Hàng hóa 0")
-                self.assertEqual(worksheet["J2"].value, "N" * 200)
-                self.assertIsInstance(worksheet["S2"].value, (int, float))
-                self.assertIsInstance(worksheet["W2"].value, (int, float))
-                self.assertEqual(worksheet["A1"].fill.fgColor.rgb, "FFFFFF00")
-                self.assertEqual(worksheet["A1"].font.sz, 12)
-                self.assertEqual(worksheet["A2"].font.sz, 12)
-                self.assertEqual(
-                    tuple(
-                        getattr(worksheet["A1"].border, side).style
-                        for side in ("left", "right", "top", "bottom")
-                    ),
-                    ("thin", "thin", "thin", "thin"),
-                )
-                self.assertFalse(worksheet.merged_cells.ranges)
-                self.assertIsNone(worksheet.freeze_panes)
-                self.assertIsNone(worksheet.auto_filter.ref)
-                for column, expected_width in enumerate(DETAIL_TEMPLATE_WIDTHS, start=1):
-                    letter = worksheet.cell(1, column).column_letter
+                nonempty = 0
+                for row in range(1, source_sheet.max_row + 1):
+                    self.assertEqual(
+                        source_sheet.row_dimensions[row].height,
+                        progressive_sheet.row_dimensions[row].height,
+                    )
+                    for column in range(1, source_sheet.max_column + 1):
+                        source_cell = source_sheet.cell(row, column)
+                        progressive_cell = progressive_sheet.cell(row, column)
+                        self.assertEqual(source_cell.value, progressive_cell.value)
+                        self.assertEqual(source_cell._style, progressive_cell._style)
+                        if row > 5 and source_cell.value not in (None, ""):
+                            nonempty += 1
+                for column in range(1, source_sheet.max_column + 1):
+                    letter = source_sheet.cell(1, column).column_letter
                     self.assertAlmostEqual(
-                        worksheet.column_dimensions[letter].width,
-                        expected_width,
+                        source_sheet.column_dimensions[letter].width or 0,
+                        progressive_sheet.column_dimensions[letter].width or 0,
                         places=4,
                     )
-                for row in range(1, worksheet.max_row + 1):
-                    self.assertIsNone(worksheet.row_dimensions[row].height)
+                    self.assertEqual(
+                        source_sheet.column_dimensions[letter].hidden,
+                        progressive_sheet.column_dimensions[letter].hidden,
+                    )
             finally:
-                workbook.close()
+                source_book.close()
+                progressive_book.close()
 
-            self.assertEqual(width_calls, 0)
+            self.assertLessEqual(width_calls, nonempty)
             self.assertIn(("build_rows", 2, 2), events)
             self.assertIn(("write_rows", 4, 4), events)
             self.assertIn(("format", 38, 38), events)
             self.assertIn(("save", 1, 1), events)
 
-    def test_detail_combiner_appends_categories_under_one_header(self):
+    def test_source_combiner_preserves_detail_sheet_values_styles_and_merges(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             records = self._records(root)
@@ -147,30 +137,93 @@ class ExcelExportProgressTests(unittest.TestCase):
             cash = root / "cash.xlsx"
             combined = root / "combined.xlsx"
             for target in (electronic, cash):
-                FixedDetailExcelExporter(
+                InvoiceDetailExcelExporter(
                     template, _ExcelSafeDetailRowBuilder()
                 ).export(records, target, "2026-08-01", "2026-08-31")
 
-            combine_detail_workbooks_atomically(
+            _combine_source_workbooks_atomically(
                 [
                     ("purchase", "electronic", electronic),
-                    ("purchase", "cash_register", cash),
+                    ("purchase", "Máy tính tiền", cash),
                 ],
                 combined,
             )
 
             combined_book = load_workbook(combined, data_only=False)
             try:
-                worksheet = combined_book.active
-                self.assertEqual(combined_book.sheetnames, ["Sheet1"])
-                self.assertEqual(worksheet.max_row, 9)
-                self.assertEqual(worksheet.max_column, 37)
-                self.assertEqual(worksheet["A1"].value, "Mẫu số HD")
-                self.assertEqual(worksheet["AK1"].value, "Hạn dùng")
                 self.assertEqual(
-                    sum(worksheet.cell(row, 3).value == "1" for row in range(2, 10)),
-                    4,
+                    combined_book.sheetnames,
+                    ["Hóa đơn điện tử", "Máy tính tiền"],
                 )
+                for source_path, sheet_name in (
+                    (electronic, "Hóa đơn điện tử"),
+                    (cash, "Máy tính tiền"),
+                ):
+                    source_book = load_workbook(source_path, data_only=False)
+                    try:
+                        source_sheet = source_book.active
+                        target_sheet = combined_book[sheet_name]
+                        self.assertEqual(
+                            {str(value) for value in source_sheet.merged_cells.ranges},
+                            {str(value) for value in target_sheet.merged_cells.ranges},
+                        )
+                        for row in range(1, source_sheet.max_row + 1):
+                            for column in range(1, source_sheet.max_column + 1):
+                                source_cell = source_sheet.cell(row, column)
+                                target_cell = target_sheet.cell(row, column)
+                                self.assertEqual(source_cell.value, target_cell.value)
+                                if source_cell.value is None:
+                                    continue
+                                message = f"{sheet_name}!R{row}C{column}"
+                                self.assertEqual(
+                                    (
+                                        source_cell.font.name,
+                                        source_cell.font.sz,
+                                        source_cell.font.b,
+                                        source_cell.font.i,
+                                        source_cell.font.color.type if source_cell.font.color else None,
+                                        source_cell.font.color.rgb if source_cell.font.color and source_cell.font.color.type == "rgb" else None,
+                                    ),
+                                    (
+                                        target_cell.font.name,
+                                        target_cell.font.sz,
+                                        target_cell.font.b,
+                                        target_cell.font.i,
+                                        target_cell.font.color.type if target_cell.font.color else None,
+                                        target_cell.font.color.rgb if target_cell.font.color and target_cell.font.color.type == "rgb" else None,
+                                    ),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    (source_cell.fill.fill_type, source_cell.fill.fgColor.type, source_cell.fill.fgColor.rgb),
+                                    (target_cell.fill.fill_type, target_cell.fill.fgColor.type, target_cell.fill.fgColor.rgb),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    tuple(getattr(source_cell.border, side).style for side in ("left", "right", "top", "bottom")),
+                                    tuple(getattr(target_cell.border, side).style for side in ("left", "right", "top", "bottom")),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    (
+                                        source_cell.alignment.horizontal,
+                                        source_cell.alignment.vertical,
+                                        source_cell.alignment.wrap_text,
+                                    ),
+                                    (
+                                        target_cell.alignment.horizontal,
+                                        target_cell.alignment.vertical,
+                                        target_cell.alignment.wrap_text,
+                                    ),
+                                    message,
+                                )
+                                self.assertEqual(
+                                    source_cell.number_format,
+                                    target_cell.number_format,
+                                    message,
+                                )
+                    finally:
+                        source_book.close()
             finally:
                 combined_book.close()
 
