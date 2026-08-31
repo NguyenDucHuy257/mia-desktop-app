@@ -2162,7 +2162,6 @@ def _export_results_impl(
 ) -> dict[str, Any]:
     """Build Excel on demand from persisted source-owned data only."""
     from app.config.crawl_config import QUERY_TYPE_TO_CATEGORY
-    from app.exporters.invoice_detail_excel_exporter import InvoiceDetailExcelExporter
     from app.repositories.invoice_detail_query_repository import InvoiceDetailQueryRepository
 
     destination = Path(value["destination"])
@@ -2364,6 +2363,8 @@ def _export_results_impl(
                         progress=reporter.unit,
                     )
                 else:
+                    from mia_detail_excel_format import FixedDetailExcelExporter
+
                     export_row_builder = (
                         _FilteredExcelSafeDetailRowBuilder(
                             search=plan["search"], column_filters=plan["column_filters"]
@@ -2372,7 +2373,7 @@ def _export_results_impl(
                         else _ExcelSafeDetailRowBuilder()
                     )
                     if reporter.callback is None:
-                        exporter = InvoiceDetailExcelExporter(
+                        exporter = FixedDetailExcelExporter(
                             _source_template_dir() / "invoice_detail.xlsx",
                             row_builder=export_row_builder,
                         )
@@ -2425,7 +2426,12 @@ def _export_results_impl(
                     context["date_to"],
                 ),
             )
-            _combine_source_workbooks_atomically(staged_jobs, target)
+            if scope == "details":
+                from mia_detail_excel_format import combine_detail_workbooks_atomically
+
+                combine_detail_workbooks_atomically(staged_jobs, target)
+            else:
+                _combine_source_workbooks_atomically(staged_jobs, target)
             reporter.unit("format", len(staged_jobs), len(staged_jobs))
             reporter.unit("save", 1, 1)
             reporter.complete_unit()
