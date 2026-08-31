@@ -1,6 +1,6 @@
 .results-page--figma {
   height: 100%;
-  padding: 18px 24px;
+  padding: 10px 24px 12px;
   gap: 0;
   overflow: hidden;
   color: #1a1c1b;
@@ -8,8 +8,8 @@
 
 .results-back {
   width: max-content;
-  height: 29px;
-  margin: 0 0 5px;
+  height: 24px;
+  margin: 0 0 2px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -20,8 +20,8 @@
 }
 
 .results-header--figma {
-  min-height: 58px;
-  margin-bottom: 5px;
+  min-height: 49px;
+  margin-bottom: 2px;
   justify-content: space-between;
 }
 
@@ -30,16 +30,16 @@
 }
 
 .results-header--figma h1 {
-  margin: 0 0 6px;
+  margin: 0 0 1px;
   font-size: 22px;
-  line-height: 28px;
+  line-height: 26px;
 }
 
 .results-header--figma p {
   margin: 0;
   color: #62625b;
   font-size: 13px;
-  line-height: 18px;
+  line-height: 16px;
 }
 
 .results-export {
@@ -147,14 +147,14 @@
 }
 
 .results-tabs--figma {
-  height: 43px;
-  margin: 0 0 10px;
+  height: 40px;
+  margin: 0 0 5px;
   gap: 0;
 }
 
 .results-tabs--figma button {
   min-width: 110px;
-  height: 42px;
+  height: 39px;
   padding: 0 20px;
   color: #62625b;
   font-size: 14px;
@@ -170,9 +170,9 @@
 .results-filters--figma {
   position: relative;
   z-index: 20;
-  min-height: 54px;
-  margin-bottom: 8px;
-  padding: 6px 10px;
+  min-height: 50px;
+  margin-bottom: 5px;
+  padding: 3px 10px;
   border: 1px solid #e5e5e0;
   border-radius: var(--mia-radius-ui);
   background: #f8f8f6;
@@ -385,9 +385,9 @@
 }
 
 .results-feedback {
-  min-height: 28px;
-  margin: 0 0 8px;
-  padding: 5px 10px;
+  min-height: 24px;
+  margin: 0 0 5px;
+  padding: 3px 10px;
   border-radius: var(--mia-radius-ui);
   background: #eff6ff;
   color: #1d4ed8;
@@ -500,9 +500,9 @@
  * geometry and active-page treatment instead of the old append button. */
 .results-pager {
   width: 100%;
-  height: 48px;
-  flex: 0 0 48px;
-  margin-top: 7px;
+  height: 42px;
+  flex: 0 0 42px;
+  margin-top: 5px;
   padding: 0 24px;
   border: 1px solid #e5e7eb;
   border-radius: var(--mia-radius-ui);

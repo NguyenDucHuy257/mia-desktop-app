@@ -81,9 +81,22 @@ test('reconciliation tab shows full-scope warning data in the compact native res
 
   const headerHeight = await page.locator('.results-row--header').evaluate(node => node.getBoundingClientRect().height);
   const rowHeight = await page.locator('.results-row:not(.results-row--header):not(.results-row--total)').evaluate(node => node.getBoundingClientRect().height);
+  const summaryHeight = await page.locator('.results-reconciliation-summary').evaluate(node => node.getBoundingClientRect().height);
+  const tableHeight = await page.locator('.results-table').evaluate(node => node.getBoundingClientRect().height);
   expect(headerHeight).toBeLessThanOrEqual(42);
   expect(rowHeight).toBeLessThanOrEqual(38);
+  expect(summaryHeight).toBeLessThanOrEqual(64);
+  expect(tableHeight).toBeGreaterThan(200);
   await expect(page.locator('.results-table')).toHaveCSS('overflow-x', 'scroll');
+
+  await page.setViewportSize({ width: 1024, height: 768 });
+  const compactSummary = await page.locator('.results-reconciliation-summary').evaluate(node => ({
+    clientWidth: node.clientWidth,
+    scrollWidth: node.scrollWidth,
+  }));
+  expect(compactSummary.scrollWidth).toBeLessThanOrEqual(compactSummary.clientWidth);
+  expect(await page.locator('.results-table').evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(100);
+  await page.setViewportSize({ width: 1500, height: 1024 });
 
   await page.locator('.date-range-trigger').click();
   await page.getByLabel('Từ ngày xem nhập tay').fill('02/08/2026');

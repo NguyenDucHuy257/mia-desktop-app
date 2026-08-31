@@ -65,6 +65,26 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   await expect(page.locator('.results-row--total')).toContainText('3.794.728');
   await expect(page.locator('.results-table')).not.toContainText('7000000002');
 
+  const resultTabs = page.locator('.results-tabs--figma [role="tab"]');
+  const overviewTableBox = await page.locator('.results-table').boundingBox();
+  expect(overviewTableBox).not.toBeNull();
+  await resultTabs.nth(1).click();
+  await expect(page.locator('.results-row:not(.results-row--header):not(.results-row--total)')).toHaveCount(2);
+  const detailTableBox = await page.locator('.results-table').boundingBox();
+  expect(detailTableBox).not.toBeNull();
+  expect(Math.abs(detailTableBox!.y - overviewTableBox!.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(detailTableBox!.height - overviewTableBox!.height)).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: 'test-results/results-details-compact.png', fullPage: true });
+  await resultTabs.nth(0).click();
+  await expect(page.locator('.results-row:not(.results-row--header):not(.results-row--total)')).toHaveCount(2);
+
+  await page.setViewportSize({ width: 1200, height: 760 });
+  const resizedTableBox = await page.locator('.results-table').boundingBox();
+  expect(resizedTableBox).not.toBeNull();
+  expect(resizedTableBox!.height).toBeGreaterThan(100);
+  await expect(page.locator('.results-pager')).toBeVisible();
+  await page.screenshot({ path: 'test-results/results-overview-compact-resized.png', fullPage: true });
+
   const moneyButton = page.getByRole('button', { name: 'Lọc cột Tổng tiền thanh toán' });
   await moneyButton.click();
   const moneyMenu = page.locator('.result-column-filter-menu[data-column="tgtttbso"]');
