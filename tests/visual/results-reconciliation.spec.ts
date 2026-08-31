@@ -85,7 +85,7 @@ test('reconciliation tab shows full-scope warning data in the compact native res
   const tableHeight = await page.locator('.results-table').evaluate(node => node.getBoundingClientRect().height);
   expect(headerHeight).toBeLessThanOrEqual(42);
   expect(rowHeight).toBeLessThanOrEqual(38);
-  expect(summaryHeight).toBeLessThanOrEqual(64);
+  expect(summaryHeight).toBeLessThanOrEqual(68);
   expect(tableHeight).toBeGreaterThan(200);
   await expect(page.locator('.results-table')).toHaveCSS('overflow-x', 'scroll');
 

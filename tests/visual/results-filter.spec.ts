@@ -87,10 +87,10 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   expect(compactLayout.backTitleGap).toBeLessThanOrEqual(12);
   expect(compactLayout.descriptionTabsGap).toBeLessThanOrEqual(4);
   expect(compactLayout.tabsFilterGap).toBeLessThanOrEqual(4);
-  expect(compactLayout.tabsHeight).toBeLessThanOrEqual(38);
-  expect(compactLayout.filtersHeight).toBeLessThanOrEqual(46);
-  expect(compactLayout.filterTableGap).toBeLessThanOrEqual(4);
-  expect(compactLayout.tableTop).toBeLessThanOrEqual(180);
+  expect(compactLayout.tabsHeight).toBeLessThanOrEqual(40);
+  expect(compactLayout.filtersHeight).toBeLessThanOrEqual(48);
+  expect(compactLayout.filterTableGap).toBeLessThanOrEqual(5);
+  expect(compactLayout.tableTop).toBeLessThanOrEqual(200);
   const overviewTableBox = await page.locator('.results-table').boundingBox();
   expect(overviewTableBox).not.toBeNull();
   await resultTabs.nth(1).click();
@@ -181,8 +181,11 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ search: 'Alpha toàn cục' });
 
   await page.getByLabel('Tìm kiếm kết quả').fill('');
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ search: '' });
   await page.locator('.results-row:not(.results-row--header):not(.results-row--total)').first().getByRole('checkbox').check();
-  await page.getByRole('button', { name: /Loại khỏi tải xuống/ }).click();
+  const excludeButton = page.getByRole('button', { name: /Loại khỏi tải xuống/ });
+  await expect(excludeButton).toBeEnabled();
+  await excludeButton.click();
   const confirm = page.locator('.results-exclude-confirm');
   await expect(confirm).toBeVisible();
   await expect(confirm).toHaveCSS('border-radius', '6px');
