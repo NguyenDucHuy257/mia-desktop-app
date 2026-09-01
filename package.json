@@ -1,6 +1,6 @@
 {
   "name": "mia-desktop-app",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "private": true,
   "author": "Nguyễn Đức Huy",
   "description": "MIA WT local desktop client for mia-crawl-service",
@@ -91,7 +91,14 @@
         }
       ]
     },
-    "publish": [{ "provider": "github", "owner": "NguyenDucHuy257", "repo": "mia-desktop-app", "releaseType": "release" }],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "NguyenDucHuy257",
+        "repo": "mia-desktop-app",
+        "releaseType": "release"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
