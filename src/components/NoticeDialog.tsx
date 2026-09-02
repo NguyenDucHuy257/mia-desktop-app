@@ -1,15 +1,19 @@
 import { useEffect, useRef } from 'react';
 
+export type NoticeKind = 'error' | 'warning' | 'info' | 'success' | 'notice';
+
 interface NoticeDialogProps {
-  kind: 'error' | 'notice' | 'success';
+  kind: NoticeKind;
   message: string;
+  path?: string;
   onClose(): void;
   actionLabel?: string;
   onAction?(): void;
 }
 
-export function NoticeDialog({ kind, message, onClose, actionLabel, onAction }: NoticeDialogProps) {
+export function NoticeDialog({ kind, message, path, onClose, actionLabel, onAction }: NoticeDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
+  const semanticKind = kind === 'notice' ? 'warning' : kind;
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -31,9 +35,10 @@ export function NoticeDialog({ kind, message, onClose, actionLabel, onAction }: 
     <div className="notice-backdrop" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section ref={dialogRef} className="notice-dialog" role="alertdialog" aria-modal="true" aria-label={kind === 'error' ? 'Thông báo lỗi' : kind === 'success' ? 'Thông báo thành công' : 'Thông báo'}>
-        <span className="notice-icon" data-kind={kind} aria-hidden="true">{kind === 'error' ? '×' : kind === 'success' ? '✓' : '!'}</span>
-        <p>{message}</p>
+      <section ref={dialogRef} className="notice-dialog" role="alertdialog" aria-modal="true" aria-label={semanticKind === 'error' ? 'Thông báo lỗi' : semanticKind === 'success' ? 'Thông báo thành công' : semanticKind === 'info' ? 'Thông tin' : 'Thông báo cảnh báo'}>
+        <span className="notice-icon" data-kind={semanticKind} aria-hidden="true">{semanticKind === 'error' ? '×' : semanticKind === 'success' ? '✓' : semanticKind === 'info' ? 'i' : '!'}</span>
+        <p className="notice-message">{message}</p>
+        {path ? <div className="notice-path-block"><strong>Đường dẫn:</strong><span className="popup-path">{path}</span></div> : null}
         <div className="notice-actions">
           {actionLabel && onAction ? <button type="button" className="notice-action" onClick={onAction}>{actionLabel}</button> : null}
           <button type="button" className="notice-close" autoFocus onClick={onClose}>Đóng</button>

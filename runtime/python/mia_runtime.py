@@ -443,14 +443,20 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 raise ValueError("invalid_params")
             connection_ids = params.get("connection_ids")
             direction = params.get("direction")
+            date_from = params.get("date_from")
+            date_to = params.get("date_to")
             if (
                 not isinstance(connection_ids, list)
                 or len(connection_ids) > 500
                 or any(not isinstance(item, str) for item in connection_ids)
                 or direction not in {"purchase", "sold"}
+                or ((date_from is not None or date_to is not None) and (
+                    not isinstance(date_from, str) or not isinstance(date_to, str)
+                    or len(date_from) != 10 or len(date_to) != 10 or date_from > date_to
+                ))
             ):
                 raise ValueError("invalid_params")
-            return _production_backend().sync_states(connection_ids, direction), False
+            return _production_backend().sync_states(connection_ids, direction, date_from, date_to), False
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
 
@@ -559,6 +565,26 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             return ArtifactInspector(_production_backend()).coverage(dict(params)), False
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
+
+    if method == "artifacts.vat_return.coverage":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_artifact_pipeline import ArtifactInspector
+            return ArtifactInspector(_production_backend()).vat_return_coverage(dict(params)), False
+        except (KeyError, TypeError, ValueError):
+            raise RpcError(-32602, "invalid_params") from None
+
+    if method == "artifacts.vat_return.export":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_vat_return_export import export_vat_return
+            return export_vat_return(_production_backend(), dict(params)), False
+        except FileNotFoundError:
+            raise RpcError(-32602, "vat_return_template_missing") from None
+        except (KeyError, TypeError, ValueError) as error:
+            raise RpcError(-32602, str(error)) from None
 
     if method == "artifacts.batch.start":
         global _artifact_task
@@ -828,7 +854,7 @@ def serve() -> int:
             decoded = json.loads(raw.decode("utf-8"))
             request_id, method, params = validate_request(decoded)
             if method in {
-                "artifacts.coverage", "artifacts.snapshot",
+                "artifacts.coverage", "artifacts.vat_return.coverage", "artifacts.vat_return.export", "artifacts.snapshot",
                 "artifacts.batch.status", "artifacts.batch.failures",
                 # Starting an export only validates the request and launches a
                 # background task. Keep it on the responsive control lane so a

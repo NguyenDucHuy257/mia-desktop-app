@@ -225,7 +225,7 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   await expect(toolbar).toBeVisible();
   await expect(toolbar.getByText('1. Loại hóa đơn', { exact: true })).toBeVisible();
   await expect(toolbar.getByText('2. Khoảng thời gian', { exact: true })).toBeVisible();
-  await expect(toolbar.getByText('3. Loại bảng kê', { exact: true })).toBeVisible();
+  await expect(toolbar.getByText('3. Loại bảng kê xuất Excel', { exact: true })).toBeVisible();
   await expect(toolbar).toHaveCSS('border-radius', '6px');
   const controlHeights = await toolbar.locator('.compact-select, .date-range-trigger').evaluateAll((controls) => controls.map((control) => Math.round(control.getBoundingClientRect().height)));
   expect(controlHeights).toEqual([46, 46, 46]);
@@ -313,7 +313,7 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   await assertMenuInsideViewport();
   await syncMenu.getByRole('menuitem', { name: /Đồng bộ bổ sung/ }).click();
   const captured = await page.evaluate(() => (window as typeof window & { capturedIntent?: { directions?: string[]; query_types?: string[]; scopes?: string[]; data_types?: string[] } }).capturedIntent);
-  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: false });
+  expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['overview', 'detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: false });
 });
 
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {

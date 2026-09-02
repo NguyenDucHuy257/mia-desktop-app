@@ -24,7 +24,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from contextlib import closing
-from datetime import date, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 import sys
@@ -78,37 +79,16 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         self._desktop_detail_plan = None
         self._desktop_detail_plan_by_month = None
         self._desktop_current_unit = None
-        overview_commit = None
-        if job.parameters.get("sync_mode") == "new":
-            overview_commit = InvoiceOverviewRepository.commit_overview_refresh_page
-
-            def publish_refresh_page(repository, *args, **kwargs):
-                return self._publish_replacement_page(overview_commit, repository, *args, **kwargs)
-
-            InvoiceOverviewRepository.commit_overview_refresh_page = publish_refresh_page
         originals = self._install_unit_progress_wrappers()
         try:
             return super().run(job, worker_id, lease_token)
         finally:
-            if overview_commit is not None:
-                InvoiceOverviewRepository.commit_overview_refresh_page = overview_commit
             for name, original in originals.items():
                 setattr(self.core, name, original)
             self._desktop_overview_complete = False
             self._desktop_detail_plan = None
             self._desktop_detail_plan_by_month = None
             self._desktop_current_unit = None
-
-    @staticmethod
-    def _publish_replacement_page(original_commit, repository, *args, **kwargs):
-        committed = original_commit(repository, *args, **kwargs)
-        repository.upsert_items(
-            company_tax_code=kwargs["company_tax_code"], direction=kwargs["direction"],
-            query_type=kwargs["query_type"], invoice_category=kwargs["invoice_category"],
-            raw_json_path=kwargs.get("raw_json_path") or "", items=kwargs["items"],
-            timestamp=kwargs["timestamp"],
-        )
-        return committed
 
     def _prepare_full_replacement(self, job):
         parameters = dict(job.parameters)
@@ -134,10 +114,9 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
             job = self.repository.merge_job_parameters(job.job_id, {
                 "replaced_old_count": replaced, "replacement_prepared": False,
             })
-        self._delete_replacement_range(
-            database_path=database_path, company_tax_code=job.company_tax_code,
-            direction=direction, date_from=date_from, date_to=date_to,
-        )
+        # The source Overview repository already stages a forced refresh and
+        # atomically activates it only after every status partition completes.
+        # Do not delete active Overview/Detail rows before that safe commit.
         return self.repository.merge_job_parameters(job.job_id, {
             "replaced_old_count": int(replaced), "replacement_prepared": True,
         })
@@ -348,6 +327,20 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         finally:
             InvoiceDetailRepository.get_detail_by_invoice_key = original_lookup
 
+        refreshed_slices = {
+            (item.direction, item.query_type, item.from_date.isoformat()[:7])
+            for item in coverage.decisions if item.needs_refresh
+        }
+        decisions = tuple(
+            replace(decision, force_refresh=True, action="refresh")
+            if (
+                str(decision.item.get("direction")),
+                str(decision.item.get("query_type")),
+                str(decision.item.get("nlap_date") or "")[:7],
+            ) in refreshed_slices else decision
+            for decision in decisions
+        )
+
         grouped = defaultdict(list)
         for decision in decisions:
             invoice_date = str(decision.item.get("nlap_date") or "")
@@ -386,6 +379,18 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
     def _run_overview(self, job, parameters, coverage):
         storage = self.planner.storage
         verifier = storage.verify_finalized_overview_range
+        detail_repository = InvoiceDetailRepository(
+            Path(self.planner.data_root) / job.company_tax_code / "db" / "invoices.sqlite3"
+        )
+        for decision in coverage.decisions:
+            if decision.needs_refresh:
+                detail_repository.invalidate_detail_checkpoint(
+                    company_tax_code=job.company_tax_code,
+                    direction=decision.direction, query_type=decision.query_type,
+                    from_date=decision.from_date.isoformat(),
+                    to_date=decision.to_date.isoformat(), job_id=job.job_id,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
 
         # run_overview_unit already returns only after each page/checkpoint has
         # been durably committed. The source pipeline then immediately rereads
@@ -403,6 +408,52 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
             if any(decision.needs_refresh for decision in coverage.decisions):
                 self._desktop_detail_plan = None
                 self._desktop_detail_plan_by_month = None
+
+    def _run_detail(self, job, parameters, coverage):
+        database_path = Path(self.planner.data_root) / job.company_tax_code / "db" / "invoices.sqlite3"
+        repository = InvoiceDetailRepository(database_path)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        routes = []
+        for month in self._module_months("detail"):
+            for direction in parameters["directions"]:
+                for query_type in parameters["query_types"]:
+                    route = (direction, query_type, month["from_date"], month["to_date"])
+                    routes.append(route)
+                    with closing(sqlite3.connect(database_path, timeout=30)) as connection:
+                        expected = int(connection.execute(
+                            """SELECT COUNT(*) FROM invoice_overview_items
+                               WHERE company_tax_code=? AND direction=? AND query_type=?
+                                 AND nlap_date BETWEEN ? AND ?""",
+                            (job.company_tax_code, *route),
+                        ).fetchone()[0])
+                    repository.begin_detail_checkpoint(
+                        company_tax_code=job.company_tax_code, direction=direction,
+                        query_type=query_type, from_date=month["from_date"],
+                        to_date=month["to_date"], overview_expected=expected,
+                        job_id=job.job_id, timestamp=timestamp,
+                    )
+        try:
+            result = super()._run_detail(job, parameters, coverage)
+            incomplete = []
+            for direction, query_type, from_date, to_date in routes:
+                outcome = repository.finish_detail_checkpoint(
+                    company_tax_code=job.company_tax_code, direction=direction,
+                    query_type=query_type, from_date=from_date, to_date=to_date,
+                    job_id=job.job_id,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+                if outcome["status"] != "finalized":
+                    incomplete.append((direction, query_type, from_date, to_date))
+            if incomplete:
+                raise RuntimeError("detail coverage incomplete after persisted verification")
+            return result
+        except Exception as error:
+            terminal = "cancelled" if "cancel" in type(error).__name__.casefold() else "failed"
+            repository.mark_detail_checkpoint_status(
+                company_tax_code=job.company_tax_code, job_id=job.job_id,
+                status=terminal, timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+            raise
 
 
 __all__ = ["OptimizedInvoiceCrawlPipeline"]

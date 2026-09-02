@@ -278,6 +278,8 @@ class ProductionBackend(SourceBackend):
                 detail_conditions = ["company_tax_code=?", "direction=?"]
                 if "normalized_ready" in detail_columns:
                     detail_conditions.append("normalized_ready=1")
+                if "detail_outcome" in detail_columns:
+                    detail_conditions.append("detail_outcome IN ('with_lines','valid_empty')")
                 if "error_message" in detail_columns:
                     detail_conditions.append(
                         "(error_message IS NULL OR TRIM(error_message)='')"
@@ -363,7 +365,7 @@ class ProductionBackend(SourceBackend):
             if hasattr(self, "repository"):
                 self.repository.desktop_job_metadata = None
 
-    def sync_states(self, connection_ids, direction):
+    def sync_states(self, connection_ids, direction, date_from=None, date_to=None):
         if direction not in {"purchase", "sold"}:
             raise ValueError("invalid_direction")
         output = []
@@ -378,20 +380,26 @@ class ProductionBackend(SourceBackend):
             state = dict(getattr(job, "progress_state", None) or {}) if job else {}
             overview_module = (state.get("modules") or {}).get("overview")
             overview_complete = isinstance(overview_module, dict) and overview_module.get("status") == "completed"
+            detail_module = (state.get("modules") or {}).get("detail")
+            detail_complete = isinstance(detail_module, dict) and detail_module.get("status") == "completed"
             raw_status = str(getattr(job, "status", "")) if job else ""
             active = {"queued", "starting", "waiting_account", "running", "processing", "downloading", "syncing", "cancelling"}
-            overview_requested = "overview" in set(job.parameters.get("scopes") or ()) if job else False
-            if raw_status in active and overview_complete:
-                status = "completed"
-            elif raw_status in active:
+            selected_from = str(date_from or (job.parameters.get("date_from") if job else "") or "")
+            selected_to = str(date_to or (job.parameters.get("date_to") if job else "") or "")
+            direction_coverage = None
+            if len(selected_from) == 10 and len(selected_to) == 10:
+                from mia_artifact_pipeline import ArtifactInspector
+                direction_coverage = ArtifactInspector(self).vat_return_coverage({
+                    "connection_ids": [str(connection_id)],
+                    "date_from": selected_from, "date_to": selected_to,
+                })["accounts"][0][direction]
+            if raw_status in active:
                 status = "running"
             elif raw_status in {"failed", "abandoned"}:
                 status = "failed"
             elif raw_status == "cancelled":
                 status = "cancelled"
-            elif overview_complete or (raw_status in {"completed", "completed_with_warning"} and overview_requested and not isinstance(overview_module, dict)):
-                status = "completed"
-            elif metrics["invoice_count"] > 0 or metrics["sync_until"]:
+            elif direction_coverage and direction_coverage["ready"]:
                 status = "completed"
             else:
                 status = "not_synced"
@@ -401,13 +409,17 @@ class ProductionBackend(SourceBackend):
                 date_from = str(job.parameters.get("date_from") or "")
                 month_key = date_from[:7] if len(date_from) >= 7 else None
             baseline = job.parameters.get("baseline_invoice_count") if job else None
-            sync_from, sync_until = metrics["sync_from"], metrics["sync_until"]
-            if status == "completed" and job:
-                job_from, job_until = str(job.parameters.get("date_from") or ""), str(job.parameters.get("date_to") or "")
-                sync_from = job_from if len(job_from) == 10 else sync_from
-                sync_until = job_until if len(job_until) == 10 else sync_until
+            sync_from = selected_from if status == "completed" else None
+            sync_until = selected_to if status == "completed" else None
             output.append({
                 "connection_id": str(connection_id), "direction": direction, "status": status,
+                "current_stage": str(state.get("current_stage") or getattr(job, "current_stage", "") or "") or None,
+                "overview_complete": overview_complete,
+                "detail_complete": detail_complete,
+                "overview_ready": bool(direction_coverage and direction_coverage["overview_ready"]),
+                "detail_ready": bool(direction_coverage and direction_coverage["detail_ready"]),
+                "missing_overview_ranges": direction_coverage["missing_overview_ranges"] if direction_coverage else [],
+                "missing_detail_ranges": direction_coverage["missing_detail_ranges"] if direction_coverage else [],
                 "current_month": month_key,
                 "current_until": self._current_processing_until(job, state, month_key) if status == "running" else None,
                 "sync_from": sync_from, "sync_until": sync_until,

@@ -92,6 +92,24 @@
 .artifact-coverage-badge[data-status='not_ready'] { border-color: #ffedd5; background: #fff7ed; color: #ea580c; }
 .artifact-coverage-badge[data-status='checking'] { border-color: #e2e8f0; background: #f8fafc; color: #64748b; }
 .artifact-coverage-badge[data-status='error'] { border-color: #fecaca; background: #fff1f2; color: #b91c1c; }
+
+.vat-return-toolbar { grid-template-columns: minmax(300px, .8fr) minmax(360px, 1.2fr) auto !important; grid-template-rows: auto !important; align-items: center !important; min-height: 0 !important; }
+.vat-return-toolbar .artifact-storage-field { grid-column: auto; }
+.vat-return-toolbar .invoice-export-folder, .vat-return-toolbar .invoice-export-folder input, .vat-return-toolbar .invoice-export-folder button { height: 46px !important; }
+.vat-return-toolbar .artifact-toolbar-actions { grid-column: auto; white-space: nowrap; }
+.vat-export-button { min-width: 236px; }
+.vat-return-table .table-grid { min-width: 1100px; grid-template-columns: 52px 115px minmax(210px, 1fr) minmax(480px, 1.6fr) 145px 130px; }
+.vat-coverage-header { align-self: stretch; display: grid !important; grid-template-rows: 1fr 1fr; padding: 8px 0 0; text-align: center; }
+.vat-coverage-header > span, .vat-direction-coverages { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.vat-coverage-header b { padding-top: 5px; border-top: 1px solid #e2e8f0; font-size: 10px; }
+.vat-direction-coverages { min-width: 0; padding-right: 8px; overflow: visible !important; }
+.vat-direction-coverages .artifact-coverage-badge { width: 100%; }
+.vat-direction-coverages .artifact-coverage-badge small { overflow: visible; text-overflow: clip; white-space: normal; }
+
+@media (max-width: 1280px) {
+  .vat-return-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; grid-template-rows: auto auto !important; }
+  .vat-return-toolbar .artifact-toolbar-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
 .artifact-row-progress { display: flex; align-items: center; gap: 7px; }
 .artifact-row-progress i { min-width: 0; height: 6px; flex: 1; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
 .artifact-row-progress b { display: block; height: 100%; background: #16a34a; }

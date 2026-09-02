@@ -7,7 +7,7 @@ import logsIcon from '../assets/figma/nav-logs.png';
 import settingsIcon from '../assets/figma/nav-settings.png';
 import verifiedBlueIcon from '../assets/figma/verified-blue.png';
 
-export type NavigationKey = 'invoices' | 'xml-html' | 'logs' | 'mvt' | 'settings' | 'guide';
+export type NavigationKey = 'invoices' | 'xml-html' | 'vat-return' | 'logs' | 'mvt' | 'settings' | 'guide';
 
 interface AppShellProps extends PropsWithChildren {
   active: NavigationKey;
@@ -18,6 +18,7 @@ interface AppShellProps extends PropsWithChildren {
 const navigation = [
   ['invoices', 'Quản lý HĐĐT', invoicesIcon],
   ['xml-html', 'XML/HTML/PDF', xmlIcon],
+  ['vat-return', 'Xuất tờ khai thuế GTGT', xmlIcon],
   ['logs', 'Lịch sử tải xuống', logsIcon],
   ['mvt', 'Tra cứu MVT', materialIcon],
   ['settings', 'Cài đặt hệ thống', settingsIcon],
@@ -89,7 +90,7 @@ function AccountPopover({ onToast }: {
       <code title={visible ? displayKey : undefined}>{displayKey}</code>
       <div><button type="button" onClick={() => void reveal()}>{visible ? 'Ẩn' : 'Hiện'}</button><button type="button" onClick={() => void copyKey()}>Sao chép</button></div>
     </div>
-    <span className="account-version">Phiên bản: <strong>MIA 4.0.1</strong></span>
+    <span className="account-version">Phiên bản: <strong>MIA 4.0.5</strong></span>
   </div>;
 }
 
@@ -123,7 +124,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
           <div><strong>Hỗ trợ tận tâm</strong><span>Chúng tôi luôn sẵn sàng<br />hỗ trợ bạn</span></div>
           <button type="button" onClick={() => void window.miaRuntime?.external?.open('https://chat.zalo.me/')}>Liên hệ ngay</button>
         </section>
-        <footer className="sidebar-footer"><span>© 2026 Wetech JSC.</span><span>Phiên bản MIA 4.0.1</span></footer>
+        <footer className="sidebar-footer"><span>© 2026 Wetech JSC.</span><span>Phiên bản MIA 4.0.5</span></footer>
       </div>
     </aside>
     <main className="workspace" data-topbar={showTopbar}>

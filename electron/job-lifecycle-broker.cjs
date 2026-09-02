@@ -88,7 +88,7 @@ function createJobLifecycleBroker(
     }),
     resumeAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.resume_all')),
     latestAll: () => runBrokerCommand(async () => getRuntime().invoke('source.jobs.latest')),
-    syncStates: (connectionIds, direction) => runBrokerCommand(async () => {
+    syncStates: (connectionIds, direction, dateFrom, dateTo) => runBrokerCommand(async () => {
       if (!Array.isArray(connectionIds) || connectionIds.length > 500 || new Set(connectionIds).size !== connectionIds.length) throw new JobInputError();
       const validatedIds = connectionIds.map((value) => {
         const id = validateConnectionId(value);
@@ -96,7 +96,8 @@ function createJobLifecycleBroker(
         return id;
       });
       if (!DIRECTIONS.has(direction)) throw new JobInputError();
-      return getRuntime().invoke('source.sync.states', { connection_ids: validatedIds, direction });
+      if ((dateFrom !== undefined || dateTo !== undefined) && (!DATE_PATTERN.test(dateFrom) || !DATE_PATTERN.test(dateTo) || dateFrom > dateTo)) throw new JobInputError();
+      return getRuntime().invoke('source.sync.states', { connection_ids: validatedIds, direction, date_from: dateFrom ?? null, date_to: dateTo ?? null });
     }),
     start: (rawIntent) => runBrokerCommand(async () => {
       const intent = validateIntent(rawIntent);

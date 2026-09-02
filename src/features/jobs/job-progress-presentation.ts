@@ -63,8 +63,13 @@ export function formatSourceJobProgress(job?: JobProgressView | null) {
   if (job.status === 'cancelling') return 'Đang dừng tác vụ đồng bộ';
   if (job.status === 'cancelled') return 'Đã dừng';
   if (job.status === 'completed' || job.status === 'completed_with_warning') {
-    const total = job.progress_totals?.overview;
-    const suffix = total ? ` - ${total.total}/${total.total} hóa đơn` : '';
+    const overview = job.progress_totals?.overview;
+    const detail = job.progress_totals?.detail;
+    const totals = [
+      overview ? `Tổng quan ${overview.total}/${overview.total}` : null,
+      detail ? `Chi tiết ${detail.total}/${detail.total} hóa đơn` : null,
+    ].filter(Boolean);
+    const suffix = totals.length > 0 ? ` - ${totals.join(' · ')}` : '';
     return `${job.status === 'completed' ? 'Đã tải xong' : 'Đã tải xong, có cảnh báo'}${suffix}`;
   }
   if (job.status === 'failed') return job.error?.message || 'Job xử lý thất bại';

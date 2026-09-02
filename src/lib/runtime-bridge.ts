@@ -63,7 +63,7 @@ export interface MiaRuntimeBridge {
     resume(): Promise<PersistedJob | null>;
     resumeAll(): Promise<PersistedJob[]>;
     latestAll(): Promise<PersistedJob[]>;
-    syncStates(connectionIds: string[], direction: InvoiceDirection): Promise<InvoiceSyncState[]>;
+    syncStates(connectionIds: string[], direction: InvoiceDirection, dateFrom?: string, dateTo?: string): Promise<InvoiceSyncState[]>;
     start(intent: CreateJobRequest): Promise<{ record: PersistedJob; accepted: JobAccepted }>;
     status(jobId: string): Promise<JobStatusResponse>;
     summary(jobId: string): Promise<JobSummaryResponse>;
@@ -77,6 +77,8 @@ export interface MiaRuntimeBridge {
     targets(request: ArtifactExportRequest): Promise<{ keys: string[]; total: number }>;
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     coverage(request: ArtifactSnapshotRequest): Promise<ArtifactCoverage>;
+    vatReturnCoverage(request: VatReturnCoverageRequest): Promise<VatReturnCoverage>;
+    vatReturnExport(request: VatReturnExportRequest): Promise<VatReturnExportResult>;
     snapshot(request: ArtifactSnapshotRequest): Promise<ArtifactSnapshot>;
     startBatch(request: ArtifactBatchRequest): Promise<{ task_id: string; status: string }>;
     batchStatus(request: { task_id: string }): Promise<ArtifactBatchStatus>;
@@ -145,6 +147,30 @@ export interface ArtifactSnapshotRequest { connection_ids: string[]; directions:
 export interface ArtifactAccountSnapshot { connection_id: string; ready: boolean; missing_ranges: Array<{ date_from: string; date_to: string }>; total: number; cached: Record<InvoiceArtifactKind, number> }
 export interface ArtifactCoverageAccount { connection_id: string; ready: boolean; missing_ranges: Array<{ date_from: string; date_to: string }> }
 export interface ArtifactCoverage extends ArtifactSnapshotRequest { accounts: ArtifactCoverageAccount[] }
+export type VatReturnCoverageScope = 'overview' | 'details';
+export interface VatReturnMissingRange { scope: VatReturnCoverageScope; date_from: string; date_to: string }
+export interface VatReturnDirectionCoverage { direction: InvoiceDirection; overview_ready: boolean; detail_ready: boolean; ready: boolean; missing_overview_ranges: Array<{ date_from: string; date_to: string }>; missing_detail_ranges: Array<{ date_from: string; date_to: string }>; missing: VatReturnMissingRange[] }
+export interface VatReturnCoverageAccount { connection_id: string; purchase: VatReturnDirectionCoverage; sold: VatReturnDirectionCoverage }
+export interface VatReturnCoverageRequest { connection_ids: string[]; date_from: string; date_to: string }
+export interface VatReturnCoverage extends VatReturnCoverageRequest { accounts: VatReturnCoverageAccount[] }
+export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string }
+export interface VatReturnReductionAnomaly {
+  canonical_invoice_identity: string;
+  line_identity: string;
+  source_tax_rate: string;
+  base: string;
+  actual_tax: string;
+  actual_rate_percent: string;
+  reason: string;
+}
+export interface VatReturnExportResult {
+  count: number;
+  files: string[];
+  audit?: {
+    reduction_anomaly_count: number;
+    reduction_anomalies: VatReturnReductionAnomaly[];
+  };
+}
 export interface ArtifactSnapshot extends ArtifactSnapshotRequest { accounts: ArtifactAccountSnapshot[] }
 export interface ArtifactFormatProgress { status: 'preparing' | 'running' | 'stopping' | 'stopped' | 'completed' | 'failed'; processed: number; total: number; percent: number; current_invoice: string | null; failed: number; skipped?: number }
 export interface ArtifactAccountProgress extends ArtifactAccountSnapshot { status: 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped'; error?: string; failure_count?: number }

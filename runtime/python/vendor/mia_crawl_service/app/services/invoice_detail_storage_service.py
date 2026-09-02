@@ -105,33 +105,18 @@ class InvoiceDetailStorageService:
             self._write_json_atomically(raw_detail_path, document)
             self._progress('raw_detail_written')
             resolved_path = raw_detail_path.resolve()
-        if not self.capabilities.retain_raw_artifacts:
-            normalized_lines = InvoiceDetailExcelRowBuilder().build_rows(
-                document, {
-                    **keys, 'nlap': source_date,
-                    'material_codes_json': None,
-                },
-            )
-            self.repository.replace_normalized_detail_success(
-                company_tax_code=company_tax_code, direction=direction,
-                query_type=query_type, invoice_category=invoice_category,
-                **keys, nlap=self._optional_text(source_date), nlap_date=nlap_date,
-                raw_detail_path='', http_status=http_status,
-                fetched_at=fetched_at, lines=normalized_lines,
-            )
-            self._progress('detail_database_upserted')
-            self._progress('overview_detail_link_updated')
-            verified = self.repository.get_detail_by_invoice_key(
-                company_tax_code, direction, query_type,
-                keys['nbmst'], keys['khhdon'], keys['shdon'], keys['khmshdon'],
-            )
-            if not verified or not verified.get('normalized_ready'):
-                raise RuntimeError('Persisted normalized invoice detail verification failed')
-            self._progress('persisted_result_verified')
-            logger.info('Saved normalized invoice detail invoice=%s', keys['shdon'])
-            return ''
-
-        self.repository.upsert_detail_success(
+        normalized_lines, detail_outcome = InvoiceDetailExcelRowBuilder().build_rows_with_outcome(
+            document, {
+                **keys, 'nlap': source_date,
+                'material_codes_json': None,
+            },
+        )
+        if detail_outcome == 'incomplete':
+            raise ValueError('Invoice detail response does not contain a usable hdhhdvu result')
+        # Raw retention and normalized persistence are complementary.  The old
+        # branch stored one or the other, allowing UI coverage to finalize from
+        # a raw path while VAT export had no invoice_detail_lines to consume.
+        self.repository.replace_normalized_detail_success(
             company_tax_code=company_tax_code,
             direction=direction,
             query_type=query_type,
@@ -142,29 +127,21 @@ class InvoiceDetailStorageService:
             raw_detail_path=resolved_path,
             http_status=http_status,
             fetched_at=fetched_at,
+            lines=normalized_lines,
+            detail_outcome=detail_outcome,
         )
         self._progress('detail_database_upserted')
-        updated_rows = self.repository.mark_overview_detail_fetched(
-            company_tax_code=company_tax_code,
-            direction=direction,
-            query_type=query_type,
-            **keys,
-            raw_detail_path=resolved_path,
-            updated_at=fetched_at,
-        )
-        if updated_rows != 1:
-            raise RuntimeError(
-                f'Expected one overview row while saving detail, updated={updated_rows}'
-            )
         self._progress('overview_detail_link_updated')
         verified = self.repository.get_detail_by_invoice_key(
             company_tax_code, direction, query_type,
             keys['nbmst'], keys['khhdon'], keys['shdon'], keys['khmshdon'],
         )
-        if not Path(resolved_path).is_file() or not verified:
+        if not verified or not verified.get('normalized_ready'):
             raise RuntimeError('Persisted invoice detail verification failed')
+        if resolved_path and not Path(resolved_path).is_file():
+            raise RuntimeError('Persisted raw invoice detail verification failed')
         self._progress('persisted_result_verified')
-        logger.info('Saved raw invoice detail path=%s', raw_detail_path)
+        logger.info('Saved invoice detail invoice=%s', keys['shdon'])
         return str(resolved_path)
 
     def _progress(self, event: str) -> None:

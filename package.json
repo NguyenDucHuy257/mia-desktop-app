@@ -1,6 +1,6 @@
 {
   "name": "mia-desktop-app",
-  "version": "4.0.3",
+  "version": "4.0.5",
   "private": true,
   "author": "Nguyễn Đức Huy",
   "description": "MIA WT local desktop client for mia-crawl-service",

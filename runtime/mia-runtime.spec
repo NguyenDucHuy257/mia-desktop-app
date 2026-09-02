@@ -25,7 +25,7 @@ a = Analysis(
         (str(vendor_root / "VENDOR-MANIFEST.json"), "vendor/mia_crawl_service"),
         (str(vendor_root / "VENDOR-TRANSPORT.json"), "vendor/mia_crawl_service"),
     ],
-    hiddenimports=[],
+    hiddenimports=["mia_vat_return_export"],
     hookspath=[],
     runtime_hooks=[str(runtime_root / "torch_runtime_hook.py")],
     excludes=[
