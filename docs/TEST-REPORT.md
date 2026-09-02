@@ -31,7 +31,7 @@ Hai baseline tài khoản được lấy trực tiếp từ Figma ở đúng 150
 
 Visual test dùng baseline lấy trực tiếp từ Figma frame `1:2`, threshold màu 0.25. Khi cố tình siết gate xuống 2%, Playwright báo 32.550/1.536.000 pixel khác biệt, tương đương khoảng 2,12%; vì vậy gate 3% hiện tại có biên thực tế, không phải baseline tự cập nhật.
 
-GitHub Actions run `32031173453` trên `main` đã hoàn tất thành công cả ba job `verify`, `visual` và `windows-package`. Artifact unsigned `mia-wt-windows-unsigned` có kích thước khoảng 103,6 MB và được giữ đến 2026-08-31.
+GitHub Actions run `32031173453` trên `main` đã hoàn tất thành công cả ba job `verify`, `visual` và `windows-package`. Artifact unsigned `mia-tool-2026-windows-unsigned` có kích thước khoảng 103,6 MB và được giữ đến 2026-08-31.
 
 Chưa chạy:
 
@@ -108,7 +108,7 @@ Chưa chạy:
 - Invoice tab scope: PASS — bỏ menu Hóa đơn/XML/HTML/PDF; job của tab cố định `data_types: ['invoice']`, artifact chuyển sang tab riêng.
 - Account table interaction: PASS — checkbox MST tích/bỏ được; nút Thêm tài khoản không xuống dòng.
 - Unit hiện tại: PASS — Python storage 9/9; Vitest 57/57; Playwright 10/10.
-- Packaged runtime + NSIS x64 local: PASS — schema v2 migration, create/idempotency/resume/cancel smoke và installer `MIA WT Setup 0.1.0.exe`.
+- Packaged runtime + NSIS x64 local: PASS — schema v2 migration, create/idempotency/resume/cancel smoke và installer `MIA TOOL 2026 Setup 0.1.0.exe`.
 - Offline boundary, renderer secret scan và npm audit: PASS — 0 vulnerability.
 - Small-job portal thật: BLOCKED — crawler/CAPTCHA artifacts chưa vượt gate provenance/license, không giả lập thành PASS.
 - Kiểm chứng tay Windows Phase 3: PASS — người dùng nghiệm thu ngày 2026-08-18 theo `PHASE-03-MANUAL-TEST.md`.

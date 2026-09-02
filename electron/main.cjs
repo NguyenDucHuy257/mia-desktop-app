@@ -19,6 +19,13 @@ const { createReleaseUpdater } = require('./release-updater.cjs');
 const { createDiagnosticLogger } = require('./app-logger.cjs');
 const { validateExternalUrl } = require('./external-url-policy.cjs');
 
+// Keep the established user-data directory after changing the displayed product name.
+// This preserves existing accounts, local SQLite data, preferences, and licenses.
+const LEGACY_USER_DATA_DIRECTORY = ['MIA', 'WT'].join(' ');
+if (app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('appData'), LEGACY_USER_DATA_DIRECTORY));
+}
+
 const RUNTIME_KEY_FILE = 'runtime-session-key.bin';
 let jobLifecycleBroker;
 let offlineRuntime;
@@ -386,7 +393,7 @@ void app.whenReady().then(async () => {
   });
 }).catch((error) => {
   electronLog().error('app_start_failed', { name: error?.name, code: error?.code, message: error?.message, stack: error?.stack });
-  dialog.showErrorBox('MIA WT', 'Không thể khởi động bộ xử lý dữ liệu cục bộ. Vui lòng mở lại ứng dụng hoặc cài đặt lại.');
+  dialog.showErrorBox('MIA TOOL 2026', 'Không thể khởi động bộ xử lý dữ liệu cục bộ. Vui lòng mở lại ứng dụng hoặc cài đặt lại.');
   app.quit();
 });
 

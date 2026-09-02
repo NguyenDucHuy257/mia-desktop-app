@@ -1,4 +1,4 @@
-# MIA WT Desktop
+# MIA TOOL 2026 Desktop
 
 Ứng dụng Electron + React + TypeScript đang được chuyển sang kiến trúc chạy crawler cục bộ. Kiến trúc mục tiêu không gọi HTTP API nghiệp vụ:
 

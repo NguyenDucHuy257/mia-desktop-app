@@ -52,7 +52,7 @@ jobs:
       - run: npm run package:win
       - uses: actions/upload-artifact@v4
         with:
-          name: mia-wt-windows-unsigned
+          name: mia-tool-2026-windows-unsigned
           path: |
             release/*.exe
             release/*.yml

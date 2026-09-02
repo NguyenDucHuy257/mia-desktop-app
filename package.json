@@ -3,7 +3,7 @@
   "version": "4.0.5",
   "private": true,
   "author": "Nguyễn Đức Huy",
-  "description": "MIA WT local desktop client for mia-crawl-service",
+  "description": "MIA TOOL 2026 local desktop client for mia-crawl-service",
   "main": "electron/main.cjs",
   "type": "module",
   "engines": {
@@ -56,7 +56,7 @@
   },
   "build": {
     "appId": "vn.wetech.mia.desktop",
-    "productName": "MIA WT",
+    "productName": "MIA TOOL 2026",
     "asar": true,
     "files": [
       "dist/**/*",
@@ -104,10 +104,16 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "MIA TOOL 2026",
       "installerIcon": "icon.ico",
       "uninstallerIcon": "icon.ico",
       "installerHeaderIcon": "icon.ico",
-      "artifactName": "MIA-WT-Setup-${version}.${ext}"
+      "installerSidebar": "installer-resources/installerSidebar.bmp",
+      "uninstallerSidebar": "installer-resources/installerSidebar.bmp",
+      "installerHeader": "installer-resources/installerHeader.bmp",
+      "include": "installer-resources/installer.nsh",
+      "license": "installer-resources/installer-license.txt",
+      "artifactName": "MIA-TOOL-2026-Setup-${version}.${ext}"
     }
   }
 }

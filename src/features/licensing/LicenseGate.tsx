@@ -33,7 +33,7 @@ function LicenseFrame({ state, onRetry }: { state: LicenseStateResponse; onRetry
   return <main className="license-gate-page">
     <section className="license-gate-card" role="status" aria-live="polite">
       <img src={logo} alt="" className="license-gate-logo" />
-      <strong className="license-gate-brand">MIA WT</strong>
+      <strong className="license-gate-brand">MIA TOOL 2026</strong>
       <h1>{content.title}</h1>
       <p>{content.description}</p>
       {state.state === 'checking' || state.state === 'migrating' ? <div className="license-progress" aria-hidden="true"><span /></div> : null}
@@ -62,7 +62,7 @@ function PhoneForm({ legacy = false, onSubmit }: { legacy?: boolean; onSubmit(ph
   }
   return <main className="license-gate-page"><form className="license-gate-card" onSubmit={(event) => void submit(event)}>
     <img src={logo} alt="" className="license-gate-logo" />
-    <strong className="license-gate-brand">MIA WT</strong>
+    <strong className="license-gate-brand">MIA TOOL 2026</strong>
     <h1>{legacy ? 'Bổ sung số điện thoại' : 'Số điện thoại'}</h1>
     <p>{legacy
       ? 'MIA đã nhận diện bản quyền hiện tại trên thiết bị này. Vui lòng bổ sung số điện thoại để hoàn tất nâng cấp bản quyền. Bạn không cần cấp lại key.'
@@ -85,7 +85,7 @@ function ActivationPage({ state, onRetry }: { state: LicenseStateResponse; onRet
   }
   return <main className="license-gate-page"><section className="license-gate-card">
     <img src={logo} alt="" className="license-gate-logo" />
-    <strong className="license-gate-brand">MIA WT</strong>
+    <strong className="license-gate-brand">MIA TOOL 2026</strong>
     <h1>Thiết bị chưa được kích hoạt</h1>
     <p>Gửi mã dưới đây cho bộ phận hỗ trợ. Mã này được giữ ổn định khi bạn mở lại ứng dụng.</p>
     <div className="license-activation-key"><span>Mã kích hoạt</span><code>{key || 'Đang tạo mã...'}</code></div>

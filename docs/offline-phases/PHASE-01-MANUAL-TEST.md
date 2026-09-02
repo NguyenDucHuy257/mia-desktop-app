@@ -17,7 +17,7 @@ Kỳ vọng:
 
 - Node từ 24 trở lên.
 - `packaged Python runtime smoke: PASS`.
-- Có `release\MIA WT Setup 0.1.0.exe`.
+- Có `release\MIA TOOL 2026 Setup 0.1.0.exe`.
 - Có `runtime\dist\mia-runtime\mia-runtime.exe` trong workspace build; thư mục này không commit Git.
 
 ## 2. Kiểm tra runtime độc lập
@@ -31,7 +31,7 @@ Kỳ vọng `PASS`, không xuất hiện cửa sổ console Python và không c�
 ## 3. Cài trên Windows sạch
 
 1. Copy installer sang Windows VM chưa cài Python.
-2. Cài ứng dụng và mở MIA WT.
+2. Cài ứng dụng và mở MIA TOOL 2026.
 3. Xác nhận UI mở bình thường.
 4. Mở Task Manager → Details, xác nhận đúng một `mia-runtime.exe` khi app chạy.
 5. Đóng app; chờ tối đa 3 giây và xác nhận `mia-runtime.exe` biến mất.
@@ -39,7 +39,7 @@ Kỳ vọng `PASS`, không xuất hiện cửa sổ console Python và không c�
 
 ## 4. Kiểm tra SQLite và phục hồi
 
-Trong `%APPDATA%`/thư mục user-data của MIA WT, tìm `offline-runtime\mia.sqlite3`:
+Trong `%APPDATA%`/thư mục user-data của MIA TOOL 2026, tìm `offline-runtime\mia.sqlite3`:
 
 - file tồn tại sau lần mở đầu;
 - đóng/mở app không tạo database thứ hai;

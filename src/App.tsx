@@ -193,7 +193,7 @@ function WorkspaceApp() {
           />
         ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} coverageRevision={invoiceJobs.coverageRevision} pdfConcurrency={pdfConcurrency} />
           : active === 'vat-return' ? <VatReturnExportPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} selection={vatReturnSelection} onSelectionChange={setVatReturnSelection} coverageRevision={invoiceJobs.coverageRevision} />
-          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'guide' ? '' : active === 'logs' ? 'Theo dõi lịch sử tải xuống và hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA WT.'} onPdfConcurrencyChange={setPdfConcurrency} />}
+          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'guide' ? '' : active === 'logs' ? 'Theo dõi lịch sử tải xuống và hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA TOOL 2026.'} onPdfConcurrencyChange={setPdfConcurrency} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />
     </>
