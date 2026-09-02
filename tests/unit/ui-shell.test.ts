@@ -8,7 +8,7 @@ describe('MIA desktop shell', () => {
   it('renders the production shell without synthetic customer rows', () => {
     const html = renderToStaticMarkup(createElement(App));
 
-    expect(html).toContain('MIA WT');
+    expect(html).toContain('MIA TOOL 2026');
     expect(html).toContain('Quản lý HĐĐT');
     expect(html).toContain('Đồng bộ dữ liệu');
     expect(html).not.toContain('0101234567');
@@ -42,6 +42,6 @@ describe('MIA desktop shell', () => {
     expect(html).toContain('0383.466.992 - 0865.219.286');
     expect(html).toContain('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
     expect(html).toContain('Giải pháp tải HDDT hàng loạt');
-    expect(html).toContain('Phiên bản MIA 4.0.5');
+    expect(html).toContain('Phiên bản MIA TOOL 2026 4.0.5');
   });
 });

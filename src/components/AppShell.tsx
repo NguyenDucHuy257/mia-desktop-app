@@ -90,7 +90,7 @@ function AccountPopover({ onToast }: {
       <code title={visible ? displayKey : undefined}>{displayKey}</code>
       <div><button type="button" onClick={() => void reveal()}>{visible ? 'Ẩn' : 'Hiện'}</button><button type="button" onClick={() => void copyKey()}>Sao chép</button></div>
     </div>
-    <span className="account-version">Phiên bản: <strong>MIA 4.0.5</strong></span>
+    <span className="account-version">Phiên bản: <strong>MIA TOOL 2026 4.0.5</strong></span>
   </div>;
 }
 
@@ -116,7 +116,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
 
   return <div className="app-frame">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-row"><img src={logo} alt="" className="brand-logo" /><strong>MIA WT</strong></div><span>Giải pháp tải HDDT hàng loạt</span></div>
+      <div className="brand"><div className="brand-row"><img src={logo} alt="" className="brand-logo" /><strong>MIA TOOL 2026</strong></div><span>Giải pháp tải HDDT hàng loạt</span></div>
       <nav className="app-navigation" aria-label="Chức năng chính">{navigation.map((item) => <NavigationButton key={item[0]} item={item} active={active} onNavigate={onNavigate} />)}</nav>
       <div className="sidebar-bottom">
         <section className="support-card" aria-label="Hỗ trợ khách hàng">
@@ -124,7 +124,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
           <div><strong>Hỗ trợ tận tâm</strong><span>Chúng tôi luôn sẵn sàng<br />hỗ trợ bạn</span></div>
           <button type="button" onClick={() => void window.miaRuntime?.external?.open('https://chat.zalo.me/')}>Liên hệ ngay</button>
         </section>
-        <footer className="sidebar-footer"><span>© 2026 Wetech JSC.</span><span>Phiên bản MIA 4.0.5</span></footer>
+        <footer className="sidebar-footer"><span>© 2026 Wetech JSC.</span><span>Phiên bản MIA TOOL 2026 4.0.5</span></footer>
       </div>
     </aside>
     <main className="workspace" data-topbar={showTopbar}>

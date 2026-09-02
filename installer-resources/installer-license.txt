@@ -1,0 +1,31 @@
+ĐIỀU KHOẢN SỬ DỤNG MIA TOOL 2026
+
+Vui lòng đọc kỹ các điều khoản dưới đây trước khi cài đặt và sử dụng MIA TOOL 2026. Việc tiếp tục cài đặt đồng nghĩa với việc bạn đồng ý tuân thủ các điều khoản này.
+
+1. MỤC ĐÍCH SỬ DỤNG
+
+MIA TOOL 2026 là công cụ hỗ trợ tải, quản lý và tổng hợp dữ liệu hóa đơn điện tử; đồng thời tạo các file Excel tham khảo phục vụ công việc kế toán và kê khai thuế. Người dùng có trách nhiệm kiểm tra, đối chiếu số liệu với chứng từ và quy định hiện hành trước khi kê khai chính thức.
+
+2. QUYỀN SỬ DỤNG
+
+Người dùng chỉ được sử dụng phần mềm theo phạm vi giấy phép hợp lệ đã được cấp. Không được tự ý sao chép, phân phối, bán lại, cho thuê, dịch ngược, sửa đổi cơ chế bảo vệ hoặc sử dụng phần mềm cho mục đích trái pháp luật.
+
+3. DỮ LIỆU VÀ BẢO MẬT
+
+Người dùng chịu trách nhiệm bảo vệ thông tin đăng nhập, dữ liệu hóa đơn, file kết quả và bản sao lưu của mình. Chỉ cấp quyền truy cập cần thiết cho phần mềm và lựa chọn thư mục lưu trữ phù hợp. Không chia sẻ tài khoản hoặc dữ liệu nhạy cảm cho người không có thẩm quyền.
+
+4. KIỂM TRA SỐ LIỆU
+
+Kết quả do phần mềm tạo phụ thuộc vào dữ liệu nguồn, phạm vi đồng bộ và các thiết lập người dùng lựa chọn. MIA TOOL 2026 là công cụ hỗ trợ, không thay thế trách nhiệm kiểm tra nghiệp vụ của kế toán, tư vấn thuế hoặc quyết định của cơ quan có thẩm quyền. Người dùng phải đối chiếu kết quả trước khi ký, nộp hoặc sử dụng cho báo cáo chính thức.
+
+5. CẬP NHẬT VÀ HỖ TRỢ
+
+Phần mềm có thể được cập nhật để cải thiện tính năng, độ ổn định hoặc đáp ứng thay đổi kỹ thuật và nghiệp vụ. Người dùng nên sử dụng phiên bản được hỗ trợ và cung cấp thông tin chẩn đoán đã loại bỏ dữ liệu nhạy cảm khi yêu cầu trợ giúp.
+
+6. GIỚI HẠN TRÁCH NHIỆM
+
+Trong phạm vi pháp luật cho phép, đơn vị cung cấp không chịu trách nhiệm đối với thiệt hại phát sinh do dữ liệu nguồn sai hoặc thiếu, người dùng không đối chiếu kết quả, sử dụng sai mục đích, mất thông tin đăng nhập, hoặc các sự cố ngoài khả năng kiểm soát hợp lý.
+
+7. CHẤP NHẬN
+
+Nếu không đồng ý với các điều khoản trên, vui lòng hủy quá trình cài đặt. Nếu tiếp tục, bạn xác nhận đã đọc, hiểu và đồng ý với Điều khoản sử dụng MIA TOOL 2026.
