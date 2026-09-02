@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest } = require('../../electron/artifact-file-broker.cjs');
+const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest, validateVatReturnCoverageRequest, validateVatReturnExportRequest } = require('../../electron/artifact-file-broker.cjs');
 
 describe('artifact filesystem boundary', () => {
   it.each(['../escape.xml', 'C:\\escape.xml', 'CON.pdf', 'name.exe', 'a/b.html'])('rejects unsafe name %s', (name) => {
@@ -223,6 +223,24 @@ describe('artifact filesystem boundary', () => {
     const request = { connection_ids: ['conn_1'], directions: ['purchase'], date_from: '2026-02-01', date_to: '2026-05-31' };
     await expect(broker.coverage(request)).resolves.toMatchObject({ ok: true, data: { accounts: [] } });
     expect(runtime.invoke).toHaveBeenCalledWith('artifacts.coverage', request);
+  });
+
+  it('validates and forwards the dedicated VAT return coverage contract', async () => {
+    const request = { connection_ids: ['conn_1'], date_from: '2026-01-01', date_to: '2026-03-31' };
+    expect(validateVatReturnCoverageRequest(request)).toEqual(request);
+    expect(() => validateVatReturnCoverageRequest({ ...request, directions: ['purchase'] })).toThrow();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ ...request, accounts: [] }) };
+    await expect(createArtifactBroker(() => runtime).vatReturnCoverage(request)).resolves.toMatchObject({ ok: true });
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.vat_return.coverage', request);
+  });
+
+  it('validates and forwards one VAT return workbook export', async () => {
+    const request = { destination: path.resolve(tmpdir(), 'vat'), connection_ids: ['conn_1'], date_from: '2026-01-01', date_to: '2026-03-31' };
+    expect(validateVatReturnExportRequest(request)).toEqual(request);
+    expect(() => validateVatReturnExportRequest({ ...request, connection_ids: ['conn_1', 'conn_2'] })).toThrow();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ count: 1, files: ['result.xlsx'] }) };
+    await expect(createArtifactBroker(() => runtime).vatReturnExport(request)).resolves.toMatchObject({ ok: true, data: { count: 1 } });
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.vat_return.export', request, { timeoutMs: 300000 });
   });
 
   it('validates unified coverage and batch DTOs including PDF concurrency', () => {

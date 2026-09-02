@@ -10,6 +10,7 @@ import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import type { ArtifactAccountSnapshot, ArtifactCoverageAccount, ArtifactFailureRecord, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
 import type { ArtifactDownloadLifecycle } from './use-artifact-download-lifecycle';
+import { CoverageBadge, formatDate } from './ArtifactCoverageBadge';
 import '../../styles/xml-html.css';
 import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
@@ -46,44 +47,9 @@ function SelectionBox({ checked, indeterminate = false }: { checked: boolean; in
   return <span className="selection-box" data-checked={checked || indeterminate}>{indeterminate ? '−' : checked ? '✓' : ''}</span>;
 }
 
-function formatDate(value: string) {
-  const [year, month, day] = value.split('-');
-  return year && month && day ? `${day}/${month}/${year}` : value;
-}
-
 function Quantity({ snapshot }: { snapshot?: ArtifactAccountSnapshot }) {
   const total = snapshot?.total ?? 0;
   return <span className="artifact-quantity" aria-label="Số lượng hóa đơn theo định dạng">{(['xml', 'html', 'pdf'] as const).map((kind) => <span className="artifact-quantity-value" data-kind={kind} key={kind}>{(snapshot?.cached[kind] ?? 0).toLocaleString('vi-VN')}/{total.toLocaleString('vi-VN')}</span>)}</span>;
-}
-
-function missingCoverageText(snapshot: ArtifactAccountSnapshot | undefined, dateFrom: string, dateTo: string) {
-  const ranges = snapshot?.missing_ranges ?? [];
-  if (!ranges.length) return `${formatDate(dateFrom)} - ${formatDate(dateTo)}`;
-  const first = `${formatDate(ranges[0].date_from)} - ${formatDate(ranges[0].date_to)}`;
-  return ranges.length === 1 ? first : `${first} (+${ranges.length - 1} khoảng)`;
-}
-
-function coverageTitle(snapshot: ArtifactAccountSnapshot | undefined, dateFrom: string, dateTo: string) {
-  const ranges = snapshot?.missing_ranges ?? [];
-  if (!ranges.length) return `${formatDate(dateFrom)} - ${formatDate(dateTo)}`;
-  return ranges.map((range) => `${formatDate(range.date_from)} - ${formatDate(range.date_to)}`).join(', ');
-}
-
-function CoverageBadge({ snapshot, state, dateFrom, dateTo }: {
-  snapshot?: ArtifactAccountSnapshot;
-  state: 'loading' | 'ready' | 'error';
-  dateFrom: string;
-  dateTo: string;
-}) {
-  const status = state === 'loading' ? 'checking' : state === 'error' ? 'error' : snapshot?.ready ? 'ready' : 'not_ready';
-  const label = status === 'checking' ? 'Đang kiểm tra' : status === 'error' ? 'Không thể kiểm tra' : status === 'ready' ? 'Đã đồng bộ' : 'Chưa đồng bộ';
-  const detail = status === 'ready'
-    ? `${formatDate(dateFrom)} - ${formatDate(dateTo)}`
-    : status === 'not_ready' ? missingCoverageText(snapshot, dateFrom, dateTo) : '';
-  return <span className="artifact-coverage-badge" data-status={status} title={coverageTitle(snapshot, dateFrom, dateTo)}>
-    <span className="artifact-coverage-heading"><i aria-hidden="true">{status === 'ready' ? '✓' : status === 'not_ready' ? '!' : '…'}</i><strong>{label}</strong></span>
-    {detail ? <small>{detail}</small> : null}
-  </span>;
 }
 
 function FormatIcon({ kind }: { kind: InvoiceArtifactKind }) {

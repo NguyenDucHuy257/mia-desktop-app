@@ -243,6 +243,16 @@ ipcMain.handle('mia:artifacts:coverage', (event, request) => {
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
   return artifactBroker.coverage(request);
 });
+ipcMain.handle('mia:artifacts:vat-return-coverage', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.vatReturnCoverage(request);
+});
+ipcMain.handle('mia:artifacts:vat-return-export', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.vatReturnExport(request);
+});
 ipcMain.handle('mia:artifacts:batch-start', (event, request) => {
   assertTrustedSender(event);
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);

@@ -12,6 +12,7 @@ from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
 from app.repositories.invoice_package_repository import InvoicePackageRepository
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
+from app.worker_runtime.coverage_planner import DetailDecision
 
 
 class _Planner:
@@ -36,7 +37,7 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         pipeline._desktop_detail_plan_by_month = None
         return pipeline
 
-    def test_new_preflight_deletes_only_selected_direction_and_range(self):
+    def test_new_preflight_preserves_active_rows_until_staged_refresh_activation(self):
         with tempfile.TemporaryDirectory() as directory:
             data_root = Path(directory)
             tax_code = "0100000000"
@@ -65,18 +66,7 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
             self.assertTrue(prepared.parameters["replacement_prepared"])
             with closing(sqlite3.connect(database)) as connection:
                 remaining = connection.execute("SELECT direction, shdon FROM invoice_overview_items ORDER BY direction, shdon").fetchall()
-            self.assertEqual(remaining, [("purchase", "2"), ("sold", "3")])
-
-    def test_replacement_page_is_published_only_after_durable_commit(self):
-        repository = Mock()
-        original = Mock(return_value=7)
-        values = {"company_tax_code": "0100000000", "direction": "purchase", "query_type": "sco-query", "invoice_category": "invoice", "raw_json_path": "", "items": [{"shdon": "1"}], "timestamp": "2026-08-01T00:00:00+00:00"}
-        self.assertEqual(OptimizedInvoiceCrawlPipeline._publish_replacement_page(original, repository, **values), 7)
-        repository.upsert_items.assert_called_once_with(**values)
-        repository.reset_mock()
-        with self.assertRaises(RuntimeError):
-            OptimizedInvoiceCrawlPipeline._publish_replacement_page(Mock(side_effect=RuntimeError("stage failed")), repository, **values)
-        repository.upsert_items.assert_not_called()
+            self.assertEqual(remaining, [("purchase", "1"), ("purchase", "2"), ("sold", "3")])
 
     @staticmethod
     def _parameters():
@@ -160,6 +150,22 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         )
         self.assertEqual(planner.calls, 1)
 
+    def test_supplement_refreshes_detail_only_for_overview_slices_that_changed(self):
+        decisions = [
+            DetailDecision(item={"direction": "purchase", "query_type": "query", "nlap_date": "2025-05-10"}, force_refresh=False, action="skip_verified"),
+            DetailDecision(item={"direction": "purchase", "query_type": "query", "nlap_date": "2025-06-10"}, force_refresh=False, action="skip_verified"),
+        ]
+        planner = _Planner(decisions)
+        pipeline = self._pipeline(planner)
+        coverage = SimpleNamespace(cutoff_date=date(2025, 7, 1), decisions=(
+            SimpleNamespace(direction="purchase", query_type="query", from_date=date(2025, 5, 1), to_date=date(2025, 5, 31), needs_refresh=True),
+            SimpleNamespace(direction="purchase", query_type="query", from_date=date(2025, 6, 1), to_date=date(2025, 6, 30), needs_refresh=False),
+        ))
+        parameters = {**self._parameters(), "sync_mode": "supplement"}
+        planned = pipeline._ensure_detail_plan(SimpleNamespace(company_tax_code="0100000000"), parameters, coverage)
+        self.assertEqual((planned[0].action, planned[0].force_refresh), ("refresh", True))
+        self.assertEqual((planned[1].action, planned[1].force_refresh), ("skip_verified", False))
+
     def test_overview_skips_only_post_commit_verification_and_restores_verifier(self):
         calls = []
 
@@ -168,9 +174,18 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
             return False
 
         storage = SimpleNamespace(verify_finalized_overview_range=real_verifier)
-        planner = SimpleNamespace(storage=storage)
+        temp_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_directory.cleanup)
+        planner = SimpleNamespace(storage=storage, data_root=Path(temp_directory.name))
         pipeline = self._pipeline(planner)
-        coverage = SimpleNamespace(decisions=(SimpleNamespace(needs_refresh=True),))
+        coverage = SimpleNamespace(decisions=(SimpleNamespace(
+            needs_refresh=True,
+            direction="purchase",
+            query_type="query",
+            from_date=date(2025, 1, 1),
+            to_date=date(2025, 1, 31),
+        ),))
+        job = SimpleNamespace(company_tax_code="0100000000", job_id="job-overview")
 
         def source_overview(instance, _job, _parameters, _coverage):
             # This simulates the source's defensive reread after its normal
@@ -183,7 +198,7 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
             return 4
 
         with patch.object(InvoiceCrawlPipeline, "_run_overview", new=source_overview):
-            self.assertEqual(pipeline._run_overview(object(), {}, coverage), 4)
+            self.assertEqual(pipeline._run_overview(job, {}, coverage), 4)
 
         self.assertTrue(pipeline._desktop_overview_complete)
         self.assertEqual(calls, [])

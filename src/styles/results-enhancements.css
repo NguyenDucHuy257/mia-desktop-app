@@ -1,7 +1,10 @@
 .results-page.results-page--figma {
+  --results-page-inset-top: 6px;
+  --results-back-height: 22px;
+  --results-back-title-gap: 8px;
   height: 100%;
   min-height: 0;
-  padding: 6px 24px 8px;
+  padding: var(--results-page-inset-top) 24px 8px;
   gap: 0;
   overflow: hidden;
   color: #1a1c1b;
@@ -17,29 +20,35 @@
 
 .results-back {
   width: max-content;
-  height: 22px;
-  margin: 0 0 4px;
+  height: var(--results-back-height);
+  margin: 0 0 var(--results-back-title-gap);
   padding: 0;
   border: 0;
   background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: #166534;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
 
-.results-header--figma {
+.results-header.results-header--figma {
   min-height: 44px;
-  margin-bottom: 1px;
+  margin-bottom: 6px;
+  align-items: flex-start;
   justify-content: space-between;
 }
 
 .results-header--figma > div:first-child {
   min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
 .results-header--figma h1 {
-  margin: 0 0 2px;
+  margin: 0;
   font-size: 22px;
   line-height: 25px;
 }

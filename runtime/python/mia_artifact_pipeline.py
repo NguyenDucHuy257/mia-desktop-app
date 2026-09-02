@@ -18,6 +18,7 @@ from urllib.parse import unquote, urlsplit
 
 
 QUERY_TYPES = ("query", "sco-query")
+DIRECTIONS = ("purchase", "sold")
 KINDS = ("xml", "html", "pdf")
 TERMINAL_FORMAT_STATES = {"completed", "failed", "stopped"}
 REQUIRED_HTML_ASSETS = ("sign-check.jpg", "viewinvoice-bg.jpg")
@@ -158,6 +159,18 @@ def _missing_intervals(
     if cursor <= requested_to:
         missing.append((cursor, requested_to))
     return missing
+
+
+def _intersect_interval_sets(
+    left: list[tuple[date, date]], right: list[tuple[date, date]],
+) -> list[tuple[date, date]]:
+    intersections = []
+    for left_from, left_to in left:
+        for right_from, right_to in right:
+            begin, end = max(left_from, right_from), min(left_to, right_to)
+            if begin <= end:
+                intersections.append((begin, end))
+    return _merge_intervals(intersections)
 
 
 class _HtmlReferenceParser(HTMLParser):
@@ -419,6 +432,179 @@ class ArtifactInspector:
             "date_to": value["date_to"],
             "directions": value["directions"],
         }
+
+    def vat_return_coverage(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Coverage contract for the future single VAT-return workbook.
+
+        Unlike artifact coverage, this contract is direction- and scope-aware.
+        It only trusts finalized Overview checkpoints and successfully completed
+        persisted Detail months. Row counts are deliberately irrelevant so a
+        finalized empty period remains covered.
+        """
+        value = _validate_request({**dict(raw), "directions": list(DIRECTIONS)}, destination=False)
+        accounts = []
+        for connection_id in value["connection_ids"]:
+            tax_code = self.backend.connection_tax_code(connection_id)
+            database = self.data_root / tax_code / "db" / "invoices.sqlite3"
+            directions = {}
+            for direction in DIRECTIONS:
+                requested_from = date.fromisoformat(value["date_from"])
+                requested_to = date.fromisoformat(value["date_to"])
+                missing_overview = _missing_intervals(
+                    requested_from, requested_to,
+                    self._vat_overview_intervals(database, tax_code, direction),
+                )
+                missing_detail = _missing_intervals(
+                    requested_from, requested_to,
+                    self._vat_detail_intervals(database, tax_code, direction),
+                )
+                overview_ranges = [{"date_from": begin.isoformat(), "date_to": end.isoformat()} for begin, end in missing_overview]
+                detail_ranges = [{"date_from": begin.isoformat(), "date_to": end.isoformat()} for begin, end in missing_detail]
+                missing = [
+                    *({"scope": "overview", **item} for item in overview_ranges),
+                    *({"scope": "details", **item} for item in detail_ranges),
+                ]
+                directions[direction] = {
+                    "direction": direction,
+                    "overview_ready": not overview_ranges,
+                    "detail_ready": not detail_ranges,
+                    "ready": not missing,
+                    "missing_overview_ranges": overview_ranges,
+                    "missing_detail_ranges": detail_ranges,
+                    "missing": missing,
+                }
+            accounts.append({"connection_id": connection_id, **directions})
+        return {
+            "accounts": accounts, "date_from": value["date_from"],
+            "date_to": value["date_to"],
+        }
+
+    @staticmethod
+    def _vat_overview_intervals(database: Path, tax_code: str, direction: str) -> list[tuple[date, date]]:
+        if not database.is_file():
+            return []
+        try:
+            with closing(sqlite3.connect(database, timeout=5)) as connection:
+                connection.row_factory = sqlite3.Row
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='invoice_overview_checkpoints'"
+                ).fetchone() is None:
+                    return []
+                rows = [dict(row) for row in connection.execute(
+                    """SELECT query_type,status_filter,from_date,to_date,checkpoint_status,
+                              fetched_count,expected_total,page_number
+                       FROM invoice_overview_checkpoints
+                       WHERE company_tax_code=? AND direction=?""",
+                    (tax_code, direction),
+                ).fetchall()]
+        except sqlite3.Error:
+            return []
+        # These are the source crawler's persisted query scopes: three normal
+        # e-invoice status partitions and one cash-register partition.
+        required_sources = (("query", "5"), ("query", "6"), ("query", "8"), ("sco-query", "all"))
+        source_intervals = []
+        for query_type, status_filter in required_sources:
+            source_intervals.append(_merge_intervals([
+                (date.fromisoformat(row["from_date"]), date.fromisoformat(row["to_date"]))
+                for row in rows
+                if row["query_type"] == query_type
+                and str(row.get("status_filter") or "") == status_filter
+                and row["checkpoint_status"] == "finalized"
+                and (row.get("expected_total") is None or int(row.get("fetched_count") or 0) == int(row["expected_total"]))
+                and (int(row.get("fetched_count") or 0) == 0 or int(row.get("page_number") or 0) >= 1)
+            ]))
+        if not all(source_intervals):
+            return []
+        covered = source_intervals[0]
+        for intervals in source_intervals[1:]:
+            covered = _intersect_interval_sets(covered, intervals)
+        return covered
+
+    @staticmethod
+    def _vat_detail_intervals(database: Path, tax_code: str, direction: str) -> list[tuple[date, date]]:
+        if not database.is_file():
+            return []
+        try:
+            with closing(sqlite3.connect(database, timeout=5)) as connection:
+                connection.row_factory = sqlite3.Row
+                if connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='invoice_detail_checkpoints'"
+                ).fetchone() is None:
+                    return []
+                rows = [dict(row) for row in connection.execute(
+                    """SELECT query_type,from_date,to_date,checkpoint_status,
+                              overview_expected,detail_succeeded,detail_failed
+                       FROM invoice_detail_checkpoints
+                       WHERE company_tax_code=? AND direction=?""",
+                    (tax_code, direction),
+                ).fetchall()]
+                from app.utils.invoice_identity import (canonical_invoice_identity,
+                                                        invoice_status_is_excluded)
+
+                has_attributes = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='invoice_overview_attributes'"
+                ).fetchone() is not None
+
+                def eligible_overview(items):
+                    for item in items:
+                        if not has_attributes:
+                            yield item
+                            continue
+                        status_row = connection.execute(
+                            "SELECT value_json FROM invoice_overview_attributes WHERE invoice_item_id=? AND field_name='tthai'",
+                            (item['id'],),
+                        ).fetchone()
+                        raw_status = status_row[0] if status_row else None
+                        if raw_status is not None:
+                            try:
+                                raw_status = json.loads(raw_status)
+                            except (TypeError, json.JSONDecodeError):
+                                pass
+                        if not invoice_status_is_excluded(raw_status):
+                            yield item
+
+                def invoice_complete(row):
+                    overview = connection.execute(
+                        """SELECT * FROM invoice_overview_items
+                           WHERE company_tax_code=? AND direction=? AND query_type=?
+                             AND nlap_date BETWEEN ? AND ?""",
+                        (tax_code, direction, row['query_type'], row['from_date'], row['to_date']),
+                    ).fetchall()
+                    expected = {
+                        canonical_invoice_identity(tax_code, direction, dict(item))
+                        for item in eligible_overview(overview)
+                    }
+                    details = connection.execute(
+                        """SELECT * FROM invoice_detail_items
+                           WHERE company_tax_code=? AND direction=?
+                             AND nlap_date BETWEEN ? AND ? AND normalized_ready=1
+                             AND detail_outcome IN ('with_lines','valid_empty')
+                             AND (error_message IS NULL OR TRIM(error_message)='')""",
+                        (tax_code, direction, row['from_date'], row['to_date']),
+                    ).fetchall()
+                    completed = {
+                        canonical_invoice_identity(tax_code, direction, dict(item))
+                        for item in details
+                    }
+                    return expected <= completed
+                for row in rows:
+                    row['_invoice_complete'] = invoice_complete(row)
+        except sqlite3.Error:
+            return []
+        per_query = []
+        for query_type in QUERY_TYPES:
+            per_query.append(_merge_intervals([
+                (date.fromisoformat(row["from_date"]), date.fromisoformat(row["to_date"]))
+                for row in rows
+                if row["query_type"] == query_type
+                and row["checkpoint_status"] == "finalized"
+                and int(row.get("overview_expected") or 0) == int(row.get("detail_succeeded") or 0)
+                and int(row.get("detail_failed") or 0) == 0
+                and row.get('_invoice_complete', False)
+            ]))
+        if not all(per_query):
+            return []
+        return _intersect_interval_sets(per_query[0], per_query[1])
 
     def _account_snapshot(self, connection_id: str, value: dict[str, Any]) -> dict[str, Any]:
         tax_code = self.backend.connection_tax_code(connection_id)

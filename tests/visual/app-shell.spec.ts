@@ -21,8 +21,8 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await page.goto('/');
 
   const menu = page.locator('.app-navigation .nav-button');
-  await expect(menu).toHaveCount(6);
-  await expect(menu).toHaveText(['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng']);
+  await expect(menu).toHaveCount(7);
+  await expect(menu).toHaveText(['Quản lý HĐĐT', 'XML/HTML/PDF', 'Xuất tờ khai thuế GTGT', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng']);
   await expect(page.locator('.sidebar')).not.toContainText('Danh sách MST');
   await expect(page.locator('.brand > span')).toHaveText('Giải pháp tải HDDT hàng loạt');
   await expect(page.locator('.topbar-company h1')).toHaveText('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
@@ -45,7 +45,7 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await expect(popup).not.toContainText('MST:');
   await expect(popup).not.toContainText('SĐT:');
   await expect(popup).not.toContainText('Đăng xuất');
-  await expect(popup).toContainText('MIA 4.0.1');
+  await expect(popup).toContainText('MIA 4.0.5');
   await expect(popup.locator('code')).not.toContainText('20cd0a15');
   await popup.getByRole('button', { name: 'Hiện' }).click();
   await expect(popup.locator('code')).toHaveText('KEYV2-20cd0a15bc1ab172b385707877c0f82b-0987654321');

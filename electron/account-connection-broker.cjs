@@ -51,6 +51,48 @@ function localErrorMessage(code) {
   if (code === 'artifact_write_failed' || code === 'invalid_artifact_directory') return 'Không thể ghi file vào thư mục lưu trữ.';
   if (code === 'invalid_result_export_range') return 'Khoảng ngày xuất Excel không hợp lệ.';
   if (code === 'result_export_failed') return 'Không thể dựng file Excel từ dữ liệu đã lưu.';
+  if (String(code).startsWith('vat_return_unknown_tax_rate:')) return `Không thể xuất tờ khai vì có ${String(code).split(':')[1] || '?'} hóa đơn chứa thuế suất chưa phân loại được.`;
+  if (code.startsWith('vat_return_detail_missing:')) {
+    try {
+      const detail = JSON.parse(code.slice('vat_return_detail_missing:'.length));
+      const side = detail.direction === 'sold' ? 'Bán ra' : 'Mua vào';
+      const formatDate = (value) => String(value || '').split('-').reverse().join('/');
+      const examples = (detail.examples || []).map((item) => item.shdon_masked).filter(Boolean).join(', ');
+      return `Không thể xuất tờ khai vì còn ${detail.count} hóa đơn ${side} chưa có dữ liệu Chi tiết trong khoảng ${formatDate(detail.date_from)}–${formatDate(detail.date_to)}.${examples ? ` Ví dụ số hóa đơn: ${examples}.` : ''} Hãy chạy Đồng bộ bổ sung Chi tiết.`;
+    } catch {}
+  }
+  if (code === 'vat_return_detail_missing') return 'Không thể xuất tờ khai vì còn hóa đơn Bán ra chưa có dữ liệu Chi tiết. Hãy chạy Đồng bộ bổ sung Chi tiết.';
+  if (code.startsWith('vat_return_purchase_invalid:')) {
+    try {
+      const detail = JSON.parse(code.slice('vat_return_purchase_invalid:'.length));
+      const examples = (detail.examples || []).map((item) => {
+        const fields = (item.missing || []).join(', ');
+        return `${item.invoice_number_masked || item.identity}${fields ? ` (thiếu ${fields})` : ''}`;
+      }).join('; ');
+      return `Không thể xuất tờ khai vì còn ${detail.count} hóa đơn Mua vào thiếu dữ liệu Tổng quan bắt buộc.${examples ? ` Ví dụ: ${examples}.` : ''} Hãy chạy Đồng bộ bổ sung Tổng quan.`;
+    } catch {}
+  }
+  if (code.startsWith('vat_return_purchase_reduction_invalid:')) {
+    try {
+      const detail = JSON.parse(code.slice('vat_return_purchase_reduction_invalid:'.length));
+      const examples = (detail.examples || []).map((item) => {
+        const fields = (item.missing || []).join(', ');
+        return `${item.line_identity}${fields ? ` (thiếu ${fields})` : ''}`;
+      }).join('; ');
+      return `Không thể xuất tờ khai vì còn ${detail.count} dòng Chi tiết Mua vào 8% thiếu dữ liệu bắt buộc.${examples ? ` Ví dụ: ${examples}.` : ''} Hãy chạy Đồng bộ bổ sung Chi tiết.`;
+    } catch {}
+  }
+  if (code === 'vat_return_company_name_missing') return 'Không thể xuất tờ khai vì tài khoản chưa có tên doanh nghiệp.';
+  if (code === 'vat_return_template_missing') return 'Không tìm thấy workbook mẫu tờ khai thuế GTGT.';
+  if (code.startsWith('vat_return_destination_file_locked:')) {
+    try {
+      const detail = JSON.parse(code.slice('vat_return_destination_file_locked:'.length));
+      return `Không thể ghi đè tờ khai thuế GTGT vì file đang được mở. Vui lòng đóng file:\n${detail.filename}\nSau đó thử xuất lại.${detail.path ? `\nĐường dẫn:\n${detail.path}` : ''}`;
+    } catch {}
+    return 'Không thể ghi đè tờ khai thuế GTGT vì file đang được mở. Vui lòng đóng file và thử lại.';
+  }
+  if (code === 'vat_return_destination_not_writable') return 'Không thể lưu tờ khai vào thư mục đã chọn. Vui lòng kiểm tra quyền ghi hoặc chọn thư mục khác.';
+  if (String(code).startsWith('vat_return_coverage_missing:')) return 'Chưa đủ coverage Tổng quan và Chi tiết cho toàn bộ khoảng xuất tờ khai.';
   if (code === 'artifact_cancelled') return 'Đã dừng tải XML/HTML.';
   if (code === 'artifact_task_active') return 'Đang có một lượt tải XML/HTML khác.';
   if (code === 'artifact_batch_empty') return 'Không có artifact XML/HTML phù hợp để tải.';
@@ -75,7 +117,7 @@ function serializeError(error) {
     'runtime_timeout', 'runtime_not_running', 'runtime_write_failed',
   ]);
   const runtimeMessage = String(error?.message || '');
-  if (publicCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_')) {
+  if (publicCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_') || runtimeMessage.startsWith('vat_return_unknown_tax_rate:') || runtimeMessage.startsWith('vat_return_coverage_missing:') || runtimeMessage.startsWith('vat_return_detail_missing:') || runtimeMessage.startsWith('vat_return_purchase_invalid:') || runtimeMessage.startsWith('vat_return_purchase_reduction_invalid:') || runtimeMessage.startsWith('vat_return_destination_file_locked:') || ['vat_return_detail_missing', 'vat_return_company_name_missing', 'vat_return_template_missing', 'vat_return_destination_not_writable'].includes(runtimeMessage)) {
     return { code: runtimeMessage, message: localErrorMessage(runtimeMessage) };
   }
   if (error instanceof BrokerInputError) {

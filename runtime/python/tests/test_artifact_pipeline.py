@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 VENDOR_ROOT = Path(__file__).resolve().parents[1] / "vendor" / "mia_crawl_service"
 sys.path.insert(0, str(VENDOR_ROOT))
 from app.services.overview_downloader import ELECTRONIC_STATUSES
+from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from mia_artifact_pipeline import (
     ArtifactBatchCoordinator,
     ArtifactInspector,
@@ -38,6 +39,12 @@ class FakeBackend:
 
     def connection_tax_code(self, _connection_id: str) -> str:
         return self.tax_code
+
+
+class VatBackend(FakeBackend):
+    def __init__(self, root: Path, jobs=()) -> None:
+        super().__init__(root)
+        self.repository = SimpleNamespace(invoice_jobs_for_account=lambda _connection_id: list(jobs))
 
 
 class MappingBackend:
@@ -97,6 +104,107 @@ class ArtifactPipelineTests(unittest.TestCase):
             "connection_ids": ["conn_1"], "directions": ["purchase"],
             "date_from": "2026-01-01", "date_to": "2026-03-31",
         })["accounts"][0]
+
+    def _detail_checkpoint(self, database: Path, month: int, direction="purchase", status="finalized"):
+        repository = InvoiceDetailRepository(database)
+        begin = date(2026, month, 1)
+        following = date(2026, month + 1, 1) if month < 12 else date(2027, 1, 1)
+        end = date.fromordinal(following.toordinal() - 1)
+        for query_type in ("query", "sco-query"):
+            repository.begin_detail_checkpoint(
+                company_tax_code="0101234567", direction=direction,
+                query_type=query_type, from_date=begin.isoformat(),
+                to_date=end.isoformat(), overview_expected=0,
+                job_id="job_detail", timestamp="2026-01-01T00:00:00+00:00",
+            )
+            if status == "finalized":
+                repository.finish_detail_checkpoint(
+                    company_tax_code="0101234567", direction=direction,
+                    query_type=query_type, from_date=begin.isoformat(),
+                    to_date=end.isoformat(), job_id="job_detail",
+                    timestamp="2026-01-01T00:00:01+00:00",
+                )
+            else:
+                repository.mark_detail_checkpoint_status(
+                    company_tax_code="0101234567", job_id="job_detail",
+                    status=status, timestamp="2026-01-01T00:00:01+00:00",
+                )
+
+    @staticmethod
+    def _detail_job(direction="purchase", status="completed", months=(1, 2, 3)):
+        month_rows = []
+        for month in months:
+            begin = date(2026, month, 1)
+            following = date(2026, month + 1, 1) if month < 12 else date(2027, 1, 1)
+            month_rows.append({"from_date": begin.isoformat(), "to_date": date.fromordinal(following.toordinal() - 1).isoformat(), "status": "completed"})
+        return SimpleNamespace(status=status, parameters={"directions": [direction], "result_scope": "detail"}, progress_state={"modules": {"detail": {"status": "completed", "months": month_rows}}})
+
+    def test_vat_coverage_requires_overview_and_detail_for_each_direction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            for direction in ("purchase", "sold"):
+                for month in (1, 2, 3):
+                    self._checkpoint_month(database, month, direction=direction)
+                    self._detail_checkpoint(database, month, direction=direction)
+            account = ArtifactInspector(VatBackend(root, [self._detail_job("purchase"), self._detail_job("sold")])).vat_return_coverage({"connection_ids": ["conn_1"], "date_from": "2026-01-01", "date_to": "2026-03-31"})["accounts"][0]
+            self.assertTrue(account["purchase"]["ready"])
+            self.assertTrue(account["sold"]["ready"])
+
+    def test_vat_coverage_reports_scope_gap_and_rejects_failed_detail_job(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            for month in (1, 3):
+                self._checkpoint_month(database, month, direction="purchase")
+            self._detail_checkpoint(database, 1, direction="purchase", status="failed")
+            account = ArtifactInspector(VatBackend(root, [self._detail_job("purchase", status="failed")])).vat_return_coverage({"connection_ids": ["conn_1"], "date_from": "2026-01-01", "date_to": "2026-03-31"})["accounts"][0]["purchase"]
+            self.assertIn({"scope": "overview", "date_from": "2026-02-01", "date_to": "2026-02-28"}, account["missing"])
+            self.assertIn({"scope": "details", "date_from": "2026-01-01", "date_to": "2026-03-31"}, account["missing"])
+
+    def test_vat_finalized_zero_invoice_period_is_ready(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            self._checkpoint_month(database, 1, direction="purchase")
+            self._detail_checkpoint(database, 1, direction="purchase")
+            account = ArtifactInspector(VatBackend(root, [self._detail_job("purchase", months=(1,))])).vat_return_coverage({"connection_ids": ["conn_1"], "date_from": "2026-01-01", "date_to": "2026-01-31"})["accounts"][0]["purchase"]
+            self.assertTrue(account["ready"])
+
+    def test_vat_stale_finalized_checkpoint_does_not_hide_missing_invoice_detail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            self._checkpoint_month(database, 1, direction="sold")
+            self._detail_checkpoint(database, 1, direction="sold")
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute(
+                    """INSERT INTO invoice_overview_items(
+                           company_tax_code,direction,query_type,nbmst,khhdon,shdon,
+                           khmshdon,nlap_date) VALUES(?,?,?,?,?,?,?,?)""",
+                    ("0101234567", "sold", "query", "0200000000", "AA/26E",
+                     "1", "1", "2026-01-10"),
+                )
+                connection.commit()
+            account = ArtifactInspector(VatBackend(root)).vat_return_coverage({
+                "connection_ids": ["conn_1"], "date_from": "2026-01-01",
+                "date_to": "2026-01-31",
+            })["accounts"][0]["sold"]
+            self.assertFalse(account["detail_ready"])
+            self.assertIn({"scope": "details", "date_from": "2026-01-01",
+                           "date_to": "2026-01-31"}, account["missing"])
+
+    def test_vat_overview_requires_every_normal_and_cash_register_source_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = self._database(root)
+            self._checkpoint_month(database, 1, direction="purchase")
+            self._detail_checkpoint(database, 1, direction="purchase")
+            with closing(sqlite3.connect(database)) as connection:
+                connection.execute("DELETE FROM invoice_overview_checkpoints WHERE query_type='query' AND status_filter='8'")
+                connection.commit()
+            account = ArtifactInspector(VatBackend(root, [self._detail_job("purchase", months=(1,))])).vat_return_coverage({"connection_ids": ["conn_1"], "date_from": "2026-01-01", "date_to": "2026-01-31"})["accounts"][0]["purchase"]
+            self.assertIn({"scope": "overview", "date_from": "2026-01-01", "date_to": "2026-01-31"}, account["missing"])
 
     def test_middle_month_gap_is_not_covered(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -48,9 +48,13 @@ describe('source job progress presentation', () => {
     })).toBe('Đang xử lý dữ liệu hóa đơn');
   });
 
-  it('shows the final cumulative overview invoice total', () => {
+  it('shows final cumulative overview and detail invoice totals', () => {
     expect(formatSourceJobProgress({
-      status: 'completed', progress_totals: { overview: { processed: 600, total: 600 } },
-    })).toBe('Đã tải xong - 600/600 hóa đơn');
+      status: 'completed',
+      progress_totals: {
+        overview: { processed: 600, total: 600 },
+        detail: { processed: 600, total: 600 },
+      },
+    })).toBe('Đã tải xong - Tổng quan 600/600 · Chi tiết 600/600 hóa đơn');
   });
 });

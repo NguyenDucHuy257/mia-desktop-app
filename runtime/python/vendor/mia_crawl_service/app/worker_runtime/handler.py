@@ -477,7 +477,9 @@ class InvoiceCrawlTaskHandler:
         if not self._is_safe_company_artifact(path, job.company_tax_code):
             return None
         try:
-            document = json.loads(path.read_text(encoding='utf-8'))
+            # Keep JSON decimal lexemes exact until the row builder converts them
+            # to Decimal; the default json decoder would introduce binary floats.
+            document = json.loads(path.read_text(encoding='utf-8'), parse_float=str)
         except (OSError, UnicodeError, json.JSONDecodeError):
             return None
         if not isinstance(document, dict) or not isinstance(document.get('detail'), dict):
@@ -898,13 +900,35 @@ class InvoiceCrawlTaskHandler:
             if (
                 not self.runtime_capabilities.retain_raw_artifacts
                 and existing.get('normalized_ready')
+                and existing.get('detail_outcome') in {'with_lines', 'valid_empty'}
             ):
                 self.metrics.increment('detail_reconciled_without_http')
                 return
             raw_path = existing.get('raw_detail_path')
             if raw_path and Path(raw_path).is_file():
-                self.metrics.increment('detail_reconciled_without_http')
-                return
+                try:
+                    with Path(raw_path).open('r', encoding='utf-8') as stream:
+                        persisted = json.load(stream, parse_float=str)
+                    persisted_detail = persisted.get('detail', persisted)
+                    InvoiceDetailStorageService(
+                        self.data_root, detail_repository,
+                        progress_callback=progress_callback,
+                        capabilities=self.runtime_capabilities,
+                    ).save_invoice_detail(
+                        company_tax_code=job.company_tax_code,
+                        direction=payload['direction'], query_type=payload['query_type'],
+                        invoice_category=query_type_to_category(payload['query_type']),
+                        overview_item=payload, detail=persisted_detail,
+                        from_date=payload['date_from'], to_date=payload['date_to'],
+                        http_status=existing.get('http_status') or 200,
+                    )
+                except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+                    # Invalid legacy raw data is not a successful result; fall
+                    # through to the portal fetch for this one invoice.
+                    pass
+                else:
+                    self.metrics.increment('detail_reconciled_without_http')
+                    return
 
         portal = self._build_portal(payload['session_hash'], lease, endpoint='detail')
         crawler = InvoiceDetailCrawler(

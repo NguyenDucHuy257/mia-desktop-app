@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 
 from app.services.overview_downloader import INVOICE_STATUS_LABELS
@@ -54,7 +54,7 @@ def resolve_tax_rate(
     sp: Mapping[str, Any],
     data_ct: Mapping[str, Any],
     overview_item: Mapping[str, Any] | None = None,
-) -> str | float:
+) -> str:
     tax_kind = str(sp.get('ltsuat') or '').strip().upper()
     raw_rate = sp.get('tsuat')
     if tax_kind in {'KCT', 'KKKNT'}:
@@ -85,8 +85,8 @@ def resolve_tax_amount(
     data_ct: Mapping[str, Any],
     row_index_in_invoice: int,
     total_rows_in_invoice: int,
-    accumulated_tax: float,
-) -> float | int | str:
+    accumulated_tax: Decimal,
+) -> Decimal | str:
     explicit_tax = sp.get('tthue')
     explicit_number = _to_number(explicit_tax)
     if explicit_number is not None:
@@ -192,7 +192,7 @@ class InvoiceDetailExcelRowBuilder:
             data_ct,
             ('url', 'URL', 'urltracuu', 'url_tra_cuu', 'linktracuu', 'linkTraCuu'),
         )
-        accumulated_tax = 0.0
+        accumulated_tax = Decimal(0)
         rows: list[dict[str, Any]] = []
         for row_index, product_value in enumerate(products):
             if not isinstance(product_value, Mapping):
@@ -256,6 +256,21 @@ class InvoiceDetailExcelRowBuilder:
             })
         return rows
 
+    def build_rows_with_outcome(
+        self,
+        detail_payload: dict[str, Any],
+        detail_record: Mapping[str, Any],
+    ) -> tuple[list[dict[str, Any]], str]:
+        """Keep a valid empty result distinct from a missing/malformed result."""
+        data_ct = self._unwrap_detail(detail_payload)
+        products = data_ct.get('hdhhdvu')
+        if not isinstance(products, list):
+            return [], 'incomplete'
+        rows = self.build_rows(detail_payload, detail_record)
+        if products and not rows:
+            return [], 'incomplete'
+        return rows, ('with_lines' if rows else 'valid_empty')
+
     @staticmethod
     def _material_codes_by_index(value: Any) -> dict[int, str]:
         if value in (None, ''):
@@ -313,40 +328,40 @@ def _find_other_tax_rate(
     return None
 
 
-def _numeric_tax_fraction(sp: Mapping[str, Any]) -> float | None:
+def _numeric_tax_fraction(sp: Mapping[str, Any]) -> Decimal | None:
     tax_kind = str(sp.get('ltsuat') or '').strip().upper()
     if tax_kind in {'KCT', 'KKKNT'}:
         return None
     numeric = _to_number(sp.get('tsuat'))
     if numeric is None or numeric in {121, 122}:
         return None
-    return numeric / 100 if abs(numeric) > 1 else numeric
+    return numeric / Decimal(100) if abs(numeric) > 1 else numeric
 
 
-def _to_number(value: Any) -> float | int | None:
+def _to_number(value: Any) -> Decimal | None:
     if isinstance(value, bool) or value in (None, ''):
         return None
+    if isinstance(value, Decimal):
+        return Decimal(0) if value == 0 else value
     if isinstance(value, (int, float)):
-        if isinstance(value, float) and not math.isfinite(value):
-            return None
-        return value
+        value = str(value)
     try:
         text = str(value).strip().replace(',', '')
         if text.endswith('%'):
             text = text[:-1]
-        number = float(text)
-    except (TypeError, ValueError):
+        number = Decimal(text)
+    except (TypeError, ValueError, InvalidOperation):
         return None
-    return int(number) if number.is_integer() else number
+    return Decimal(0) if number == 0 else number
 
 
-def _format_number(value: float | int) -> str:
-    return str(int(value)) if float(value).is_integer() else f'{value:g}'
+def _format_number(value: Decimal) -> str:
+    return format(value, 'f').rstrip('0').rstrip('.') if value != value.to_integral() else format(value, '.0f')
 
 
 def _integer_code(value: Any) -> int | None:
     number = _to_number(value)
-    return int(number) if number is not None and float(number).is_integer() else None
+    return int(number) if number is not None and number == number.to_integral() else None
 
 
 def _mapped_status(value: Any, labels: Mapping[int, str]) -> Any:

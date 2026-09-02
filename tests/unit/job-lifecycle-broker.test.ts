@@ -28,8 +28,8 @@ describe('local source job lifecycle IPC broker', () => {
   it('validates direction-specific sync state reads before crossing IPC', async () => {
     const invoke = vi.fn().mockResolvedValue([]);
     const broker = createJobLifecycleBroker(() => ({ invoke }));
-    await expect(broker.syncStates(['conn_123456'], 'purchase')).resolves.toMatchObject({ ok: true, data: [] });
-    expect(invoke).toHaveBeenCalledWith('source.sync.states', { connection_ids: ['conn_123456'], direction: 'purchase' });
+    await expect(broker.syncStates(['conn_123456'], 'purchase', '2026-01-01', '2026-01-31')).resolves.toMatchObject({ ok: true, data: [] });
+    expect(invoke).toHaveBeenCalledWith('source.sync.states', { connection_ids: ['conn_123456'], direction: 'purchase', date_from: '2026-01-01', date_to: '2026-01-31' });
     await expect(broker.syncStates(['../bad'], 'purchase')).resolves.toMatchObject({ ok: false, error: { code: 'invalid_connection_id' } });
     await expect(broker.syncStates(['conn_123456'], 'both')).resolves.toMatchObject({ ok: false, error: { code: 'invalid_job_input' } });
   });

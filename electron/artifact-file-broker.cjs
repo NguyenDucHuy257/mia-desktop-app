@@ -127,6 +127,20 @@ function validateArtifactBatchRequest(value) {
   return { ...snapshot, destination: path.resolve(value.destination), kinds: [...value.kinds], pdf_concurrency: value.pdf_concurrency };
 }
 
+function validateVatReturnCoverageRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_vat_return_coverage');
+  if (Object.keys(value).some((key) => !['connection_ids', 'date_from', 'date_to'].includes(key))) throw new TypeError('invalid_vat_return_coverage');
+  const snapshot = validateArtifactSnapshotRequest({ ...value, directions: ['purchase', 'sold'] });
+  return { connection_ids: snapshot.connection_ids, date_from: snapshot.date_from, date_to: snapshot.date_to };
+}
+
+function validateVatReturnExportRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['destination', 'connection_ids', 'date_from', 'date_to'].includes(key))) throw new TypeError('invalid_vat_return_export');
+  const coverage = validateVatReturnCoverageRequest({ connection_ids: value.connection_ids, date_from: value.date_from, date_to: value.date_to });
+  if (coverage.connection_ids.length !== 1 || typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_vat_return_export');
+  return { ...coverage, destination: path.resolve(value.destination) };
+}
+
 function checkedExportResult(result) {
   if (result && typeof result === 'object' && typeof result.error_code === 'string' && result.error_code) {
     const error = new Error(result.error_code);
@@ -154,6 +168,8 @@ function createArtifactBroker(getRuntime) {
   let latestTaskId = null;
   return Object.freeze({
     coverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.coverage', validateArtifactSnapshotRequest(value))),
+    vatReturnCoverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.vat_return.coverage', validateVatReturnCoverageRequest(value))),
+    vatReturnExport: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.vat_return.export', validateVatReturnExportRequest(value), { timeoutMs: 5 * 60 * 1000 })),
     snapshot: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.snapshot', validateArtifactSnapshotRequest(value))),
     startBatch: (value) => runBrokerCommand(async () => {
       const started = await getRuntime().invoke('artifacts.batch.start', validateArtifactBatchRequest(value));
@@ -223,4 +239,4 @@ function createArtifactBroker(getRuntime) {
   });
 }
 
-module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest };
+module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest, validateVatReturnCoverageRequest, validateVatReturnExportRequest };

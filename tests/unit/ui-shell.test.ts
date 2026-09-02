@@ -35,13 +35,13 @@ describe('MIA desktop shell', () => {
     const html = renderToStaticMarkup(createElement(AppShell, {
       active: 'invoices', onNavigate: () => undefined, children: createElement('main'),
     }));
-    const labels = ['Quản lý HĐĐT', 'XML/HTML/PDF', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng'];
+    const labels = ['Quản lý HĐĐT', 'XML/HTML/PDF', 'Xuất tờ khai thuế GTGT', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng'];
     expect(labels.map((label) => html.indexOf(label))).toEqual([...labels.map((label) => html.indexOf(label))].sort((a, b) => a - b));
     expect(html).not.toContain('Danh sách MST');
     expect(html).toContain('Hỗ trợ tận tâm');
     expect(html).toContain('0383.466.992 - 0865.219.286');
     expect(html).toContain('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
     expect(html).toContain('Giải pháp tải HDDT hàng loạt');
-    expect(html).toContain('Phiên bản MIA 4.0.1');
+    expect(html).toContain('Phiên bản MIA 4.0.5');
   });
 });

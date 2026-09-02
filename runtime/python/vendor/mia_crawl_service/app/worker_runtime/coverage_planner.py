@@ -210,18 +210,13 @@ class CoveragePlanner:
     def _valid_detail(existing: dict | None) -> bool:
         if not existing or existing.get('error_message'):
             return False
-        if existing.get('normalized_ready'):
+        if (existing.get('normalized_ready') and
+                existing.get('detail_outcome') in {'with_lines', 'valid_empty'}):
             return True
-        raw_path = existing.get('raw_detail_path')
-        if not raw_path:
-            return False
-        path = Path(raw_path)
-        try:
-            with path.open('r', encoding='utf-8') as stream:
-                value = json.load(stream)
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            return False
-        return isinstance(value, (dict, list))
+        # A readable raw response is recoverable input, not completed normalized
+        # Detail coverage. The generated task lets the handler normalize it
+        # locally without HTTP; malformed raw data falls through to refetch.
+        return False
 
     def _classify(
         self,

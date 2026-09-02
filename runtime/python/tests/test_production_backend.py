@@ -189,11 +189,13 @@ class ProductionBackendTests(unittest.TestCase):
         new_body = backend.service.create_job.call_args.args[0]
         self.assertTrue(new_body.force_refresh)
         self.assertFalse(new_body.refresh_latest_month)
+        self.assertEqual(new_body.result_scope, "detail")
 
         backend.start({**base, "intent": {**base["intent"], "sync_mode": "supplement"}})
         supplement_body = backend.service.create_job.call_args.args[0]
         self.assertFalse(supplement_body.force_refresh)
         self.assertTrue(supplement_body.refresh_latest_month)
+        self.assertEqual(supplement_body.result_scope, "detail")
 
         with self.assertRaisesRegex(ValueError, "invalid_sync_mode"):
             backend.start({**base, "intent": {**base["intent"], "sync_mode": "replace"}})

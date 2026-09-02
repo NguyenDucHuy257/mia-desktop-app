@@ -218,7 +218,9 @@ class InvoiceOverviewStorageService:
                     status_filter=status_filter,
                     page_number=page_number,
                 )
-                document = json.loads(raw_page_path.read_text(encoding='utf-8'))
+                document = json.loads(
+                    raw_page_path.read_text(encoding='utf-8'), parse_float=str
+                )
                 if document.get('page_number') != page_number:
                     raise ValueError(
                         f'raw page number mismatch path={raw_page_path}'
@@ -377,7 +379,9 @@ class InvoiceOverviewStorageService:
                     status_filter=status_filter,
                     page_number=page_number,
                 )
-                document = json.loads(page_path.read_text(encoding='utf-8'))
+                document = json.loads(
+                    page_path.read_text(encoding='utf-8'), parse_float=str
+                )
                 if document.get('page_number') != page_number:
                     return False
                 datas = document.get('datas')
@@ -388,7 +392,9 @@ class InvoiceOverviewStorageService:
                 self.data_root / company_tax_code / 'raw' / 'invoice_lists'
                 / direction / query_type / f'{from_date}_{to_date}.json'
             )
-            batch = json.loads(batch_path.read_text(encoding='utf-8'))
+            batch = json.loads(
+                batch_path.read_text(encoding='utf-8'), parse_float=str
+            )
         except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
             return False
         return (

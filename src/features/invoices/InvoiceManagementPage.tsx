@@ -111,18 +111,26 @@ function monthEndIso(value: string | null | undefined, selectedUntil?: string) {
 }
 
 function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
-  const label = !state || state.status === 'not_synced' ? 'Chưa đồng bộ'
+  const label = !state ? 'Chưa đồng bộ'
+    : state.status === 'not_synced' && state.overview_ready ? 'Chưa đồng bộ đầy đủ'
+    : state.status === 'not_synced' ? 'Chưa đồng bộ'
     : state.status === 'queued' ? 'Chờ đồng bộ'
-      : state.status === 'running' ? 'Đang đồng bộ'
+      : state.status === 'running' && state.current_stage === 'detail' ? 'Đang đồng bộ Chi tiết'
+      : state.status === 'running' ? 'Đang đồng bộ Tổng quan'
+        : state.status === 'failed' && state.overview_ready ? 'Đồng bộ Chi tiết thất bại'
         : state.status === 'failed' ? 'Đồng bộ lỗi'
           : state.status === 'cancelled' ? 'Đồng bộ bị hủy'
             : 'Đã đồng bộ';
   const processingLabel = dateLabel(state?.current_until ?? monthEndIso(state?.current_month));
   const from = dateLabel(state?.sync_from);
   const until = dateLabel(state?.sync_until);
+  const missingDetail = state?.missing_detail_ranges?.[0];
+  const missingOverview = state?.missing_overview_ranges?.[0];
+  const missing = missingOverview ?? missingDetail;
   const detail = state?.status === 'running' && processingLabel
     ? `Đang xử lý đến ${processingLabel}`
-    : state?.status === 'completed' && from && until ? `Từ ${from} đến ${until}` : null;
+    : state?.status === 'completed' && from && until ? `Từ ${from} đến ${until}`
+    : missing ? `Thiếu ${missingOverview ? 'Tổng quan' : 'Chi tiết'}: ${dateLabel(missing.date_from)} - ${dateLabel(missing.date_to)}` : null;
   return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
@@ -149,7 +157,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
 }) {
   const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | null>(null);
-  const [scopes, setScopes] = useState<Array<'overview' | 'detail'>>(['overview']);
+  const [resultScopes, setResultScopes] = useState<Array<'overview' | 'detail'>>(['overview']);
   const [direction, setDirection] = useState<InvoiceDirection>(initialDirection);
   const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
   const [syncStates, setSyncStates] = useState<Record<string, InvoiceSyncState>>({});
@@ -196,7 +204,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
         return;
       }
       try {
-        const values = await window.miaRuntime.jobs.syncStates(ids, direction);
+        const values = await window.miaRuntime.jobs.syncStates(ids, direction, dateFrom, dateTo);
         if (!disposed) setSyncStates(Object.fromEntries(values.map((value) => [value.connection_id, value])));
       } catch (error) {
         diagnosticLog('sync_states_refresh_failed', { code: (error as { code?: string })?.code }, 'warn');
@@ -205,7 +213,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
     };
     void refresh();
     return () => { disposed = true; if (timer) clearTimeout(timer); };
-  }, [accounts, batchActive, direction]);
+  }, [accounts, batchActive, dateFrom, dateTo, direction]);
 
   async function chooseExportFolder() {
     const folder = await window.miaRuntime?.artifacts?.selectDirectory();
@@ -222,13 +230,13 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       return;
     }
 
-    const resultScopes = scopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
+    const exportScopes = resultScopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
     const resultDirection = direction;
     diagnosticLog('bulk_result_export_requested', {
       account_count: selectedAccountIds.length,
       date_from: dateFrom,
       date_to: dateTo,
-      scopes: resultScopes,
+      scopes: exportScopes,
       direction: resultDirection,
     });
 
@@ -236,7 +244,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       destination: exportFolder,
       connection_ids: [connection_id],
       kinds: ['excel'],
-      result_scopes: resultScopes,
+      result_scopes: exportScopes,
       date_from: dateFrom,
       date_to: dateTo,
       direction: resultDirection,
@@ -255,27 +263,24 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       } else if (summary.count > 0) {
         setSelectionError(`Đã xuất ${summary.count} file Excel; ${summary.failures.length}/${selectedAccountIds.length} tài khoản không có hoặc không thể tạo kết quả.`);
       } else {
-        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo, resultScopes));
+        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo, exportScopes));
       }
     } catch (error) {
       diagnosticLog('bulk_result_export_failed', { code: (error as { code?: string })?.code }, 'error');
-      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo, resultScopes));
+      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo, exportScopes));
     }
   }
 
   function startJob(syncMode: 'new' | 'supplement') {
     if (batchActive) return;
     if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
-    if (scopes.length === 0) {
-      setSelectionError('Vui lòng chọn ít nhất một phạm vi dữ liệu trước khi đồng bộ.');
-      return;
-    }
+    const syncScopes = ['overview', 'detail'] as const;
     diagnosticLog('sync_clicked', {
       account_count: selectedAccountIds.length,
       date_from: dateFrom,
       date_to: dateTo,
       directions: [direction],
-      scopes,
+      scopes: syncScopes,
       sync_mode: syncMode,
     });
     setSelectionError(null);
@@ -286,7 +291,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
       date_to: dateTo,
       directions: [direction],
       query_types: ['query', 'sco-query'],
-      scopes,
+      scopes: [...syncScopes],
       data_types: ['invoice'],
       force_refresh: syncMode === 'new',
       refresh_latest_month: false,
@@ -296,7 +301,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
   }
 
   function toggleScope(value: 'overview' | 'detail') {
-    setScopes((current) => current.includes(value)
+    setResultScopes((current) => current.includes(value)
       ? current.filter((item) => item !== value)
       : [...current, value]);
   }
@@ -422,12 +427,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
             <DateRangePicker dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày đồng bộ" toLabel="Đến ngày đồng bộ" onChange={(from, to) => { setDateFrom(from); setDateTo(to); onDateRangeChange?.(from, to); }} />
           </div>
           <div className="invoice-toolbar-field invoice-scope-field">
-            <label>3. Loại bảng kê</label>
+            <label>3. Loại bảng kê xuất Excel</label>
             <div className="select-wrap">
-              <button className="compact-select compact-select--detail" type="button" aria-expanded={menu === 'scope'} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}><InvoiceScopeIcon /> <span>{scopes.length === 2 ? 'Tổng quan + Chi tiết' : scopes[0] === 'detail' ? 'Chi tiết' : 'Tổng quan'}</span> <i className="chevron" /></button>
+              <button className="compact-select compact-select--detail" type="button" aria-expanded={menu === 'scope'} onClick={() => setMenu(menu === 'scope' ? null : 'scope')}><InvoiceScopeIcon /> <span>{resultScopes.length === 2 ? 'Tổng quan + Chi tiết' : resultScopes[0] === 'detail' ? 'Chi tiết' : 'Tổng quan'}</span> <i className="chevron" /></button>
               {menu === 'scope' ? <div className="figma-option-menu figma-scope-menu" data-node-id="4:654">
-                <OptionCheck checked={scopes.includes('overview')} label="Tổng quan" onChange={() => toggleScope('overview')} />
-                <OptionCheck checked={scopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
+                <OptionCheck checked={resultScopes.includes('overview')} label="Tổng quan" onChange={() => toggleScope('overview')} />
+                <OptionCheck checked={resultScopes.includes('detail')} label="Chi tiết" onChange={() => toggleScope('detail')} />
               </div> : null}
             </div>
           </div>

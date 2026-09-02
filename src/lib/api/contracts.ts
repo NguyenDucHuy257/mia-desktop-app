@@ -42,6 +42,13 @@ export interface InvoiceSyncState {
   connection_id: string;
   direction: InvoiceDirection;
   status: 'not_synced' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  current_stage?: string | null;
+  overview_complete?: boolean;
+  detail_complete?: boolean;
+  overview_ready?: boolean;
+  detail_ready?: boolean;
+  missing_overview_ranges?: Array<{ date_from: string; date_to: string }>;
+  missing_detail_ranges?: Array<{ date_from: string; date_to: string }>;
   current_month: string | null;
   current_until?: string | null;
   sync_from: string | null;

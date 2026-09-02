@@ -37,6 +37,8 @@ playwright-report/
 test-results/
 coverage/
 htmlcov/
+/outputs/
+/tmp/
 
 # Local configuration and logs
 .env

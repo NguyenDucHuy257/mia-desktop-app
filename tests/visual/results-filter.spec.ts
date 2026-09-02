@@ -84,14 +84,15 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
       tableTop: table.top,
     };
   });
-  expect(compactLayout.backTitleGap).toBeLessThanOrEqual(12);
-  expect(compactLayout.descriptionTabsGap).toBeGreaterThanOrEqual(4);
-  expect(compactLayout.descriptionTabsGap).toBeLessThanOrEqual(10);
+  expect(compactLayout.backTitleGap).toBeGreaterThanOrEqual(8);
+  expect(compactLayout.backTitleGap).toBeLessThanOrEqual(10);
+  expect(compactLayout.descriptionTabsGap).toBeGreaterThanOrEqual(12);
+  expect(compactLayout.descriptionTabsGap).toBeLessThanOrEqual(16);
   expect(compactLayout.tabsFilterGap).toBeLessThanOrEqual(4);
   expect(compactLayout.tabsHeight).toBeLessThanOrEqual(40);
   expect(compactLayout.filtersHeight).toBeLessThanOrEqual(48);
   expect(compactLayout.filterTableGap).toBeLessThanOrEqual(5);
-  expect(compactLayout.tableTop).toBeLessThanOrEqual(200);
+  expect(compactLayout.tableTop).toBeLessThanOrEqual(230);
   const overviewTableBox = await page.locator('.results-table').boundingBox();
   expect(overviewTableBox).not.toBeNull();
   await resultTabs.nth(1).click();
