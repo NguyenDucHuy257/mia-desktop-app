@@ -50,7 +50,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run package:win
-      - uses: actions/upload-artifact@v4
+      - name: Upload unsigned Windows package
+        id: windows_artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
           name: mia-tool-2026-windows-unsigned
           path: |
@@ -59,4 +62,8 @@ jobs:
             release/*.blockmap
           if-no-files-found: error
           retention-days: 14
+      - name: Report artifact storage warning
+        if: steps.windows_artifact.outcome == 'failure'
+        shell: pwsh
+        run: Write-Warning 'Windows package passed, but GitHub could not retain the CI artifact. Use the published GitHub Release asset or free Actions artifact storage.'
 
