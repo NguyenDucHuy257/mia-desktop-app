@@ -107,6 +107,27 @@ describe('invoice result control presentation', () => {
     expect(addAccount).not.toContain('Quay lại Quản lý tải');
   });
 
+  it('uses the shared accessible password control and exposes all three result source modes', async () => {
+    const [accountPage, passwordInput, resultsPage, styles] = await Promise.all([
+      source('src/features/accounts/AddAccountPage.tsx'),
+      source('src/components/PasswordInput.tsx'),
+      source('src/features/results/ResultsPage.tsx'),
+      source('src/styles/global.css'),
+    ]);
+    expect(accountPage).toContain('<PasswordInput');
+    expect(passwordInput).toContain("type={showPassword ? 'text' : 'password'}");
+    expect(passwordInput).toContain("aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}");
+    expect(passwordInput).toContain('aria-pressed={showPassword}');
+    expect(passwordInput).toContain('type="button"');
+    expect(passwordInput).toContain('event.preventDefault()');
+    expect(styles).toContain('.account-field .password-input-control input { padding-right: 48px; }');
+    expect(styles).toContain('.account-field > span:not(.password-input-control)');
+    expect(resultsPage).toContain('<option value="query">Hóa đơn điện tử</option>');
+    expect(resultsPage).toContain('<option value="sco-query">Máy tính tiền</option>');
+    expect(resultsPage).toContain('<option value="combined">HĐĐT &amp; Máy tính tiền</option>');
+    expect(resultsPage).toContain("query_types: ['query', 'sco-query']");
+  });
+
   it('reuses the invoice-management action button for XML HTML downloads', async () => {
     const [results, page, artifactStyles, invoiceStyles] = await Promise.all([
       source('src/features/results/ResultsPage.tsx'),

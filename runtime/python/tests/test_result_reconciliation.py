@@ -214,6 +214,24 @@ class ResultReconciliationTests(unittest.TestCase):
         self.assertEqual(result["reconciliation"]["issue_count"], 0)
         self.assertEqual(result["items"], [])
 
+    def test_canonical_detail_decimal_text_is_not_scaled_as_thousands(self):
+        overview = self.overview(1)
+        overview.update({"tgtcthue": 1000000, "tgtthue": 10760000})
+        details = self.detail_lines(1, count=2)
+        details[0].update({"thtien": "400000.000", "tthue": "76800.000"})
+        details[1].update({"thtien": "600000.000", "tthue": "10683200.000"})
+        result = self.reconcile([overview], details)
+        self.assertEqual(result["reconciliation"]["money_mismatch_count"], 0)
+        self.assertEqual(result["items"], [])
+
+        _RECONCILIATION_CACHE.clear()
+        mismatch = self.reconcile(
+            [{**overview, "tgtthue": 10760001}], details,
+        )
+        fields = mismatch["items"][0]["fields"]
+        self.assertEqual(fields["detail_tthue"], 10760000)
+        self.assertEqual(fields["difference_tgtthue"], 1)
+
     def test_all_cursor_pages_are_reconciled_before_ui_pagination(self):
         overview = [self.overview(index) for index in range(1, 206)]
         first = self.reconcile(overview, [])

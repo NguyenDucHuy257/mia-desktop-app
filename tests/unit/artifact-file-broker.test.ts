@@ -49,6 +49,15 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-08-01', date_to: '2026-08-31', query_type: 'bad' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+    expect(validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'],
+      date_from: '2026-08-01', date_to: '2026-08-31',
+      query_types: ['query', 'sco-query'],
+    })).toMatchObject({ query_type: null, query_types: ['query', 'sco-query'] });
+    expect(() => validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'],
+      date_from: '2026-08-01', date_to: '2026-08-31', query_types: ['combined'],
+    })).toThrow('invalid_result_export_query_type');
   });
 
   it('preserves allowlisted XML/HTML invoice filters', () => {
@@ -299,6 +308,24 @@ describe('artifact filesystem boundary', () => {
     });
     await expect(broker.batchStatus({ task_id: 'artifact_done' })).resolves.toMatchObject({ ok: true });
     await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { cancelled: false } });
+  });
+
+  it('rejects a second artifact writer while a unified batch is active', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-exclusive-task');
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_busy', status: 'running' };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'], kinds: ['xml'],
+      date_from: '2026-01-01', date_to: '2026-09-03', pdf_concurrency: 5,
+    });
+
+    await expect(broker.vatReturnExport({
+      destination, connection_ids: ['conn_1'], date_from: '2026-01-01', date_to: '2026-09-03',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'artifact_task_active' } });
+    expect(runtime.invoke).toHaveBeenCalledTimes(1);
   });
 
   it('returns a validated paged structured failure list for the latest batch', async () => {

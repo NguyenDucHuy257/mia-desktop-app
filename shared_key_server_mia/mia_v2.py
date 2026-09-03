@@ -179,11 +179,13 @@ def _binding(device_id: str, phone: str, hardware: Dict[str, str], source: str, 
     }
 
 
-def _response(key: str, line: str, binding: dict, hardware: Dict[str, str], now: datetime, *, migrated=False, recovered=False, reason="ok") -> dict:
+def _response(key: str, line: str, binding: dict, hardware: Dict[str, str], now: datetime, *, migrated=False, recovered=False) -> dict:
     expiry = _expiry(line)
     is_expired = _expired(expiry, now)
     ok, ratio, matches = _hardware_match(dict(binding.get("hardware") or {}), hardware)
-    final_reason = "expired" if is_expired else reason if ok else "hardware_mismatch_below_50_percent"
+    # Successful verification has one canonical authorization reason. Migration
+    # and recovery remain explicit boolean metadata, not alternate allow reasons.
+    final_reason = "expired" if is_expired else "ok" if ok else "hardware_mismatch_below_50_percent"
     return {
         "valid": ok and not is_expired,
         "key": key,
@@ -265,7 +267,7 @@ def verify_mia_key_v2(
             if len(recovery) > 1 and recovery[0][:2] == recovery[1][:2]:
                 return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "expired": False, "migrated": False, "reason": "recovery_ambiguous"}
             _, _, canonical_key, line, saved = recovery[0]
-            return _response(canonical_key, line, saved, current_hardware, now, recovered=True, reason="recovered_existing_device")
+            return _response(canonical_key, line, saved, current_hardware, now, recovered=True)
 
         legacy_map = {
             line.split("|", 1)[0].strip(): line
@@ -282,7 +284,7 @@ def verify_mia_key_v2(
                 previous_line = _find_key_line(vip_lines, previous_key)
                 previous_binding = dict(bindings.get(previous_key) or {})
                 if previous_line and previous_binding:
-                    return _response(previous_key, previous_line, previous_binding, current_hardware, now, migrated=True, reason="legacy_already_migrated")
+                    return _response(previous_key, previous_line, previous_binding, current_hardware, now, migrated=True)
                 return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "expired": False, "migrated": False, "reason": "legacy_migration_record_incomplete"}
             expiry = _expiry(legacy_line)
             if _expired(expiry, now):
@@ -301,7 +303,7 @@ def verify_mia_key_v2(
             }
             _atomic_json(paths["bindings"], bindings)
             _atomic_json(paths["migrations"], migrations)
-            return _response(expected_key, new_line, saved, current_hardware, now, migrated=True, reason="legacy_migrated")
+            return _response(expected_key, new_line, saved, current_hardware, now, migrated=True)
 
         return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "phone_status": "verified", "expired": False, "migrated": False, "reason": "key_not_activated"}
 

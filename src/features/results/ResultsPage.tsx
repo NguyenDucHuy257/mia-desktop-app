@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DateRangePicker } from '../../components/DateRangePicker';
-import { readLastSyncDateRange } from '../../components/date-input-utils';
+import { currentYearDateRange } from '../../components/date-input-utils';
 import { paginationTokens } from '../../components/pagination-utils';
 import previousIcon from '../../assets/figma/artifact-previous.svg';
 import nextIcon from '../../assets/figma/artifact-next.svg';
@@ -8,6 +8,7 @@ import backIcon from '../../assets/figma/back.png';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { ColumnFilters, DetailResult, LocalResultPage, OverviewResult, ReconciliationResult, ReconciliationSummary, ResultExclusion, ResultFilterState, ResultQuery } from '../../lib/runtime-bridge';
 import type { InvoiceQueryType } from '../../lib/api/contracts';
+import { workspaceTaskConflictMessage, type WorkspaceTask } from '../../lib/workspace-task';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from './result-export-errors';
@@ -23,28 +24,32 @@ import '../../styles/results-luxury.css';
 type ResultMode = 'overview' | 'details' | 'reconciliation';
 type ResultExportScope = 'overview' | 'details' | 'reconciliation';
 type ResultItem = OverviewResult | DetailResult | ReconciliationResult;
+type ResultQueryTypeSelection = InvoiceQueryType | 'combined';
 
-const DEFAULT_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const PAGE_SIZE = 50;
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
 
-export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, crawlItem, resultExports, onBack }: {
+export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, crawlItem, resultExports, activeWorkspaceTask, onBack }: {
   connectionId: string;
   exportFolder: string;
   initialDateFrom?: string;
   initialDateTo?: string;
   crawlItem?: BatchItem;
   resultExports: ResultExportLifecycle;
+  activeWorkspaceTask?: WorkspaceTask | null;
   onBack(): void;
 }) {
   const initialRange = useRef(
     initialDateFrom && initialDateTo
       ? { dateFrom: initialDateFrom, dateTo: initialDateTo }
-      : readLastSyncDateRange() ?? DEFAULT_RANGE,
+      : currentYearDateRange(),
   ).current;
   const [mode, setMode] = useState<ResultMode>('overview');
   const [direction, setDirection] = useState<'purchase' | 'sold' | ''>('');
-  const [queryType, setQueryType] = useState<InvoiceQueryType>('query');
+  const [queryType, setQueryType] = useState<ResultQueryTypeSelection>('query');
+  const queryTypeContract = useMemo(() => queryType === 'combined'
+    ? { query_type: null, query_types: ['query', 'sco-query'] as InvoiceQueryType[] }
+    : { query_type: queryType, query_types: undefined }, [queryType]);
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [filtersByMode, setFiltersByMode] = useState<Record<ResultMode, ResultFilterState>>({
@@ -54,6 +59,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   });
   const search = filtersByMode[mode].search;
   const columnFilters = filtersByMode[mode].column_filters;
+  const resultSort = filtersByMode[mode].sort;
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [items, setItems] = useState<ResultItem[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
@@ -121,10 +127,10 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       limit: PAGE_SIZE,
       search: debouncedSearch,
       column_filters: columnFilters,
-      sort: filtersByMode[mode].sort,
+      sort: resultSort,
       exclusion,
       direction: direction || null,
-      query_type: queryType,
+      ...queryTypeContract,
       date_from: dateFrom,
       date_to: dateTo,
     };
@@ -157,7 +163,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         },
       )
     ));
-  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, filtersByMode, mode, queryType]);
+  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, mode, queryType, queryTypeContract, resultSort]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
     setItems(result.items);
@@ -257,7 +263,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       search: '',
       column_filters: {},
       direction: direction || null,
-      query_type: queryType,
+      ...queryTypeContract,
       date_from: dateFrom,
       date_to: dateTo,
     }).then(result => {
@@ -266,7 +272,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       if (active) setReconciliation(null);
     });
     return () => { active = false; };
-  }, [connectionId, crawlActive, dateFrom, dateTo, direction, queryType]);
+  }, [connectionId, crawlActive, dateFrom, dateTo, direction, queryType, queryTypeContract]);
 
   // The result view is allowed while the source job is still running. Refresh
   // from persisted SQLite whenever the polled source progress changes so rows
@@ -305,7 +311,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       : [...current, scope]);
   }
 
-  function changeQueryType(value: InvoiceQueryType) {
+  function changeQueryType(value: ResultQueryTypeSelection) {
     setQueryType(value);
     if (value === 'sco-query' && direction === '') setDirection('purchase');
   }
@@ -341,10 +347,10 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     column_filters: filtersByMode[scope].column_filters,
     sort: filtersByMode[scope].sort,
     direction: direction || null,
-    query_type: queryType,
+    ...queryTypeContract,
     date_from: dateFrom,
     date_to: dateTo,
-  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, queryType]);
+  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, queryType, queryTypeContract]);
 
   const loadFacet = useCallback(async (column: string) => {
     const bridge = window.miaRuntime?.results;
@@ -364,6 +370,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     const requestedScopes: ResultExportScope[] = mode === 'reconciliation'
       ? ['reconciliation'] : exportScopes;
     if (!connectionId || requestedScopes.length === 0) return;
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'result-export');
+    if (conflict) { setFeedback(conflict); setExportOpen(false); return; }
     if (!exportFolder.trim()) {
       setFeedback('Vui lòng chọn thư mục lưu trữ ở tab Hóa đơn trước khi tải kết quả.');
       setExportOpen(false);
@@ -395,7 +403,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
             column_filters: filtersByMode[scope].column_filters,
             exclusion,
             direction: direction || null,
-            query_type: queryType,
+            ...queryTypeContract,
             date_from: dateFrom,
             date_to: dateTo,
           }) as LocalResultPage<ResultItem>;
@@ -434,7 +442,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         date_from: dateFrom,
         date_to: dateTo,
         direction: direction || null,
-        query_type: queryType,
+        ...queryTypeContract,
         search: exportSearch,
         result_filters: Object.fromEntries(
           requestedScopes.map(scope => [scope, filtersByMode[scope]])
@@ -492,7 +500,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           className="results-export-trigger primary-download-button"
           type="button"
           aria-expanded={exportOpen}
-          disabled={resultExports.active || (mode === 'reconciliation' && (!reconciliation?.coverage_ranges.length || !reconciliation.issue_count))}
+          disabled={resultExportWorking || (mode === 'reconciliation' && (!reconciliation?.coverage_ranges.length || !reconciliation.issue_count))}
           title={resultExports.active && resultExports.owner === 'bulk' ? 'Đang tải kết quả tất cả ở màn Hóa đơn.' : undefined}
           onClick={() => mode === 'reconciliation' ? void exportResults() : setExportOpen((value) => !value)}
         >
@@ -506,7 +514,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           <label><input type="checkbox" checked={exportScopes.includes('overview')} disabled={resultExports.active} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
           <label><input type="checkbox" checked={exportScopes.includes('details')} disabled={resultExports.active} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
           <small>Lưu tại: {exportFolder || 'Chưa chọn thư mục'}</small>
-          <button type="button" disabled={resultExports.active || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? `Đang tạo Excel... ${Math.round(resultExports.percent)}%` : 'Tải xuống'}</button>
+          <button type="button" disabled={resultExportWorking || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? `Đang tạo Excel... ${Math.round(resultExports.percent)}%` : 'Tải xuống'}</button>
           {resultExportWorking ? <ResultExportProgressBar lifecycle={resultExports} /> : null}
         </div> : null}
       </div>
@@ -533,9 +541,10 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         </div> : null}
       </div> : null}
       <DateRangePicker className="results-date-range" dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
-      <select aria-label="Loại hóa đơn" value={queryType} onChange={(event) => changeQueryType(event.target.value as InvoiceQueryType)}>
+      <select className="results-query-type-select" aria-label="Loại hóa đơn" value={queryType} onChange={(event) => changeQueryType(event.target.value as ResultQueryTypeSelection)}>
         <option value="query">Hóa đơn điện tử</option>
         <option value="sco-query">Máy tính tiền</option>
+        <option value="combined">HĐĐT &amp; Máy tính tiền</option>
       </select>
       <select aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}>
         <option value="" disabled={queryType === 'sco-query'}>Mua vào và bán ra</option>

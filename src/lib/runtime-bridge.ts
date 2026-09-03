@@ -8,6 +8,8 @@ export type LicenseStateName =
 export interface LicenseStateResponse {
   state: LicenseStateName;
   active: boolean;
+  valid?: boolean;
+  expired?: boolean;
   mode?: string;
   reason?: string | null;
   activation_key?: string | null;
@@ -187,6 +189,7 @@ export interface ArtifactExportRequest {
   date_to?: string;
   direction?: InvoiceDirection | null;
   query_type?: InvoiceQueryType | null;
+  query_types?: InvoiceQueryType[];
   search?: string;
   result_filters?: Partial<Record<'overview' | 'details' | 'reconciliation', ResultFilterState>>;
   exclusion?: ResultExclusion;
@@ -201,6 +204,7 @@ export interface ResultQuery {
   search?: string;
   direction?: InvoiceDirection | null;
   query_type?: InvoiceQueryType | null;
+  query_types?: InvoiceQueryType[];
   date_from?: string;
   date_to?: string;
   column_filters?: ColumnFilters;

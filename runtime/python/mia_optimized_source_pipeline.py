@@ -27,8 +27,10 @@ from contextlib import closing
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+import logging
 import sqlite3
 import sys
+import time
 
 
 VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
@@ -41,6 +43,26 @@ from app.repositories.invoice_package_repository import InvoicePackageRepository
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
 
+logger = logging.getLogger("mia.desktop_source_pipeline")
+
+
+def prepare_invoice_database(database_path: Path | str) -> None:
+    """Upgrade an existing company DB and enable reader/writer coexistence."""
+    database_path = Path(database_path)
+    InvoiceOverviewRepository(database_path).init_db()
+    InvoiceDetailRepository(database_path).init_db()
+    InvoicePackageRepository(database_path).init_db()
+    with closing(sqlite3.connect(database_path, timeout=30)) as connection:
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA foreign_keys = ON")
+        # Results/search are read concurrently with the one sequential source
+        # writer. WAL prevents those bounded reads from blocking crawler
+        # commits; NORMAL retains SQLite's WAL durability contract without a
+        # full fsync for every small transaction.
+        connection.execute("PRAGMA journal_mode = WAL").fetchone()
+        connection.execute("PRAGMA synchronous = NORMAL")
+
+
 def _detail_key(company_tax_code, direction, query_type, nbmst, khhdon, shdon, khmshdon):
     return (
         str(company_tax_code), str(direction), str(query_type), str(nbmst),
@@ -50,6 +72,9 @@ def _detail_key(company_tax_code, direction, query_type, nbmst, khhdon, shdon, k
 
 class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
     """One-worker source pipeline with redundant local verification/scans removed."""
+
+    SOURCE_TIMEOUT_RETRY_BASE_SECONDS = 15.0
+    SOURCE_TIMEOUT_RETRY_MAX_SECONDS = 60.0
 
     def _latest_month_force_slices(self, parameters):
         if parameters.get("sync_mode") != "supplement":
@@ -72,7 +97,19 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         return frozenset(slices)
 
     def run(self, job, worker_id: str, lease_token: str):
-        job = self._prepare_full_replacement(job)
+        database_path = (
+            Path(self.planner.data_root) / job.company_tax_code
+            / "db" / "invoices.sqlite3"
+        )
+        try:
+            prepare_invoice_database(database_path)
+            job = self._prepare_full_replacement(job)
+        except Exception as error:
+            logger.exception(
+                "desktop_source_database_prepare_failed job_id=%s error_type=%s",
+                job.job_id, type(error).__name__,
+            )
+            raise
         # The pipeline object is reused by the single local supervisor, so all
         # cached planning/presentation state is explicitly job-scoped.
         self._desktop_overview_complete = False
@@ -80,8 +117,39 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         self._desktop_detail_plan_by_month = None
         self._desktop_current_unit = None
         originals = self._install_unit_progress_wrappers()
+        timeout_attempt = 0
         try:
-            return super().run(job, worker_id, lease_token)
+            while True:
+                try:
+                    return super().run(job, worker_id, lease_token)
+                except Exception as error:
+                    if str(getattr(error, "code", "")) != "source_timeout":
+                        # Preserve source classification while retaining the
+                        # stack needed to diagnose non-transient failures.
+                        logger.exception(
+                            "desktop_source_pipeline_failed job_id=%s error_type=%s",
+                            job.job_id, type(error).__name__,
+                        )
+                        raise
+                    timeout_attempt += 1
+                    delay = min(
+                        self.SOURCE_TIMEOUT_RETRY_BASE_SECONDS
+                        * (2 ** min(timeout_attempt - 1, 2)),
+                        self.SOURCE_TIMEOUT_RETRY_MAX_SECONDS,
+                    )
+                    logger.warning(
+                        "desktop_source_timeout_wait job_id=%s attempt=%s retry_in_seconds=%s",
+                        job.job_id, timeout_attempt, int(delay),
+                    )
+                    self._wait_before_source_retry(job.job_id, delay)
+                    # Reload durable progress/checkpoints before restarting.
+                    # This resumes the missing unit instead of replaying rows
+                    # that the source already committed before timing out.
+                    job = self.repository.get_job(job.job_id)
+                    self._desktop_overview_complete = False
+                    self._desktop_detail_plan = None
+                    self._desktop_detail_plan_by_month = None
+                    self._desktop_current_unit = None
         finally:
             for name, original in originals.items():
                 setattr(self.core, name, original)
@@ -89,6 +157,16 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
             self._desktop_detail_plan = None
             self._desktop_detail_plan_by_month = None
             self._desktop_current_unit = None
+
+    def _wait_before_source_retry(self, job_id: str, delay_seconds: float) -> None:
+        """Wait for the portal without making cancellation wait for backoff."""
+        deadline = time.monotonic() + max(0.0, delay_seconds)
+        while True:
+            self._check_interrupted(job_id)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.25, remaining))
 
     def _prepare_full_replacement(self, job):
         parameters = dict(job.parameters)
@@ -456,4 +534,4 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
             raise
 
 
-__all__ = ["OptimizedInvoiceCrawlPipeline"]
+__all__ = ["OptimizedInvoiceCrawlPipeline", "prepare_invoice_database"]

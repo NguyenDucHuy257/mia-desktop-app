@@ -13,6 +13,7 @@ from app.repositories.invoice_overview_repository import InvoiceOverviewReposito
 from app.repositories.invoice_package_repository import InvoicePackageRepository
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 from app.worker_runtime.coverage_planner import DetailDecision
+from app.job_engine.interruptions import UserCancellationRequested
 
 
 class _Planner:
@@ -212,6 +213,66 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
             mia_backend.source_backend_module.InvoiceCrawlPipeline,
             OptimizedInvoiceCrawlPipeline,
         )
+
+    def test_source_timeout_waits_and_retries_same_durable_job(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+            pipeline.planner = SimpleNamespace(data_root=Path(directory))
+            pipeline.repository = Mock()
+            pipeline._desktop_overview_complete = False
+            pipeline._desktop_detail_plan = None
+            pipeline._desktop_detail_plan_by_month = None
+            pipeline._desktop_current_unit = None
+            pipeline._prepare_full_replacement = lambda job: job
+            pipeline._install_unit_progress_wrappers = lambda: {}
+            pipeline._wait_before_source_retry = Mock()
+            job = SimpleNamespace(
+                job_id="job-timeout", company_tax_code="0100000000",
+                parameters={"sync_mode": "supplement"},
+            )
+            refreshed = SimpleNamespace(**vars(job))
+            pipeline.repository.get_job.return_value = refreshed
+            timeout = RuntimeError("source timeout")
+            timeout.code = "source_timeout"
+            completed = SimpleNamespace(status="completed")
+
+            with patch.object(
+                InvoiceCrawlPipeline, "run", side_effect=[timeout, completed]
+            ) as source_run:
+                self.assertIs(pipeline.run(job, "worker", "lease"), completed)
+
+            self.assertEqual(source_run.call_count, 2)
+            pipeline._wait_before_source_retry.assert_called_once_with(
+                "job-timeout", 15.0
+            )
+            pipeline.repository.get_job.assert_called_once_with("job-timeout")
+
+    def test_source_timeout_wait_remains_user_cancellable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+            pipeline.planner = SimpleNamespace(data_root=Path(directory))
+            pipeline.repository = Mock()
+            pipeline._desktop_overview_complete = False
+            pipeline._desktop_detail_plan = None
+            pipeline._desktop_detail_plan_by_month = None
+            pipeline._desktop_current_unit = None
+            pipeline._prepare_full_replacement = lambda job: job
+            pipeline._install_unit_progress_wrappers = lambda: {}
+            pipeline._wait_before_source_retry = Mock(
+                side_effect=UserCancellationRequested("cancelled")
+            )
+            job = SimpleNamespace(
+                job_id="job-timeout", company_tax_code="0100000000",
+                parameters={"sync_mode": "supplement"},
+            )
+            timeout = RuntimeError("source timeout")
+            timeout.code = "source_timeout"
+
+            with patch.object(InvoiceCrawlPipeline, "run", side_effect=timeout):
+                with self.assertRaises(UserCancellationRequested):
+                    pipeline.run(job, "worker", "lease")
+
+            pipeline.repository.get_job.assert_not_called()
 
     def test_xml_wrapper_reuses_source_handler_for_xml_and_html(self):
         observed = []

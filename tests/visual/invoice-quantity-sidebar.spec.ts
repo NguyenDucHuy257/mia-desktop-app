@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 
 test('invoice quantities use two real columns and sidebar active state fills its row', async ({ page }) => {
   await page.addInitScript(() => {

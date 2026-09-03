@@ -155,7 +155,9 @@ worker_shim = types.ModuleType("app.job_engine.worker")
 worker_shim.WorkerLoop = LocalWorkerLoop
 sys.modules["app.job_engine.worker"] = worker_shim
 
-from mia_optimized_source_pipeline import OptimizedInvoiceCrawlPipeline
+from mia_optimized_source_pipeline import (
+    OptimizedInvoiceCrawlPipeline, prepare_invoice_database,
+)
 import mia_source_backend as source_backend_module
 
 source_backend_module.WORKER_ID = "desktop-local-worker"
@@ -243,6 +245,18 @@ class ProductionBackend(SourceBackend):
     """One local source worker; no HTTP listener and no worker-slot admission."""
 
     def __init__(self, *args, **kwargs):
+        data_dir = Path(args[0] if args else kwargs["data_dir"])
+        startup_logger = kwargs.get("logger")
+        for database in (data_dir / "source-data").glob("*/db/invoices.sqlite3"):
+            try:
+                prepare_invoice_database(database)
+            except sqlite3.Error as error:
+                if startup_logger is not None:
+                    startup_logger.exception(
+                        "invoice_database_startup_prepare_failed database=%s error_type=%s",
+                        database.name, type(error).__name__,
+                    )
+                raise
         super().__init__(*args, **kwargs)
         # Display-name metadata is desktop-only and its helpers can be nested
         # (_save -> _load/_write). RLock prevents a self-deadlock without
@@ -387,7 +401,16 @@ class ProductionBackend(SourceBackend):
             selected_from = str(date_from or (job.parameters.get("date_from") if job else "") or "")
             selected_to = str(date_to or (job.parameters.get("date_to") if job else "") or "")
             direction_coverage = None
-            if len(selected_from) == 10 and len(selected_to) == 10:
+            # Coverage validation walks persisted invoice identities. It is
+            # useful after a terminal job or when reopening an old range, but
+            # doing that work on every one-second progress poll competes with
+            # the single source writer on large databases. An active job is
+            # unambiguously "running", so defer the read-heavy validation
+            # until the terminal refresh.
+            if (
+                raw_status not in active
+                and len(selected_from) == 10 and len(selected_to) == 10
+            ):
                 from mia_artifact_pipeline import ArtifactInspector
                 direction_coverage = ArtifactInspector(self).vat_return_coverage({
                     "connection_ids": [str(connection_id)],

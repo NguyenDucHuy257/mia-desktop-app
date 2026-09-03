@@ -8,7 +8,9 @@ export default async function warmVisualServer(config: FullConfig) {
     // The dev server URL probe only loads index.html. Render the application
     // once so Vite's module graph is ready before the first timed visual test.
     await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 120_000 });
-    await page.getByRole('button', { name: 'Quản lý HĐĐT', exact: true }).waitFor({ timeout: 120_000 });
+    // A browser without the Electron bridge must now render the fail-closed
+    // license gate, so warming cannot depend on a protected workspace control.
+    await page.locator('#root > *').waitFor({ timeout: 120_000 });
   } finally {
     await browser.close();
   }

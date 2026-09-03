@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from 'react';
 import backIcon from '../../assets/figma/back.png';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { PasswordInput } from '../../components/PasswordInput';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import {
   accountErrorMessage,
@@ -186,10 +187,10 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
               />
               {errors.username ? <small id="account-username-error" className="field-error">{errors.username}</small> : null}
             </label>
-            <label className="account-field">
-              <span>Mật khẩu</span>
-              <input
-                type="password"
+            <div className="account-field">
+              <label htmlFor="account-password">Mật khẩu</label>
+              <PasswordInput
+                id="account-password"
                 value={password}
                 autoComplete="current-password"
                 aria-invalid={Boolean(errors.password)}
@@ -201,7 +202,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
                 }}
               />
               {errors.password ? <small id="account-password-error" className="field-error">{errors.password}</small> : null}
-            </label>
+            </div>
             <SubmitRow submitting={submitting} />
           </form>
         ) : (

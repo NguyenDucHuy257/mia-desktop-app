@@ -1,13 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
-const { randomBytes } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { ensureDeviceIdentity } = require('./device-identity.cjs');
 const { collectDeviceEvidence } = require('./license/hardware-profile.cjs');
 const { createLicenseApi } = require('./license/license-api.cjs');
 const { LicenseManager } = require('./license/license-manager.cjs');
 const { createProtectedLicenseStore } = require('./license/protected-license-store.cjs');
+const { isLicenseAccessGranted, licenseRequiredError } = require('./license/access-control.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
 const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
@@ -18,6 +18,7 @@ const { clearDiagnosticLogs, readPreferences, readSanitizedLogEntries, readSanit
 const { createReleaseUpdater } = require('./release-updater.cjs');
 const { createDiagnosticLogger } = require('./app-logger.cjs');
 const { validateExternalUrl } = require('./external-url-policy.cjs');
+const { loadOrCreateRuntimeSessionKey } = require('./runtime-session-key.cjs');
 
 // Keep the established user-data directory after changing the displayed product name.
 // This preserves existing accounts, local SQLite data, preferences, and licenses.
@@ -26,7 +27,11 @@ if (app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('appData'), LEGACY_USER_DATA_DIRECTORY));
 }
 
-const RUNTIME_KEY_FILE = 'runtime-session-key.bin';
+// Only the primary desktop process may own the local runtime and SQLite store.
+// A second launch should focus the existing window instead of starting another
+// runtime process that would contend for the same local resources.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
 let jobLifecycleBroker;
 let offlineRuntime;
 let localAccountBroker;
@@ -37,6 +42,8 @@ let runtimeShutdownStarted = false;
 let electronLogger;
 let rendererLogger;
 let licenseManagerInstance;
+let licenseSessionActive = false;
+let offlineRuntimeStartPromise;
 
 function diagnosticDirectory() {
   return path.join(app.getPath('userData'), 'logs');
@@ -82,15 +89,18 @@ function securityDirectory() {
 
 function licenses() {
   if (licenseManagerInstance) return licenseManagerInstance;
-  const enabled = process.env.MIA_LICENSE_V2_ENABLED === 'true';
+  // Packaged builds are always protected. Development may explicitly disable
+  // verification, but a disabled manager remains fail-closed.
+  const enabled = app.isPackaged || process.env.MIA_LICENSE_V2_ENABLED !== 'false';
   const protector = secureProtector();
   let api = null;
   if (enabled) {
-    const baseUrl = process.env.MIA_LICENSE_API_URL || process.env.MIA_KEY_SERVER_URL;
-    if (!baseUrl) throw Object.assign(new Error('MIA license API URL is not configured'), { code: 'license_api_not_configured' });
+    const baseUrl = app.isPackaged
+      ? 'https://gotax.vn'
+      : process.env.MIA_LICENSE_API_URL || process.env.MIA_KEY_SERVER_URL || 'https://gotax.vn';
     api = createLicenseApi({
       baseUrl,
-      allowInsecureLocalhost: process.env.MIA_LICENSE_ALLOW_INSECURE_LOCALHOST === 'true',
+      allowInsecureLocalhost: !app.isPackaged && process.env.MIA_LICENSE_ALLOW_INSECURE_LOCALHOST === 'true',
     });
   }
   licenseManagerInstance = new LicenseManager({
@@ -118,7 +128,13 @@ function serializeLicenseError(error) {
 
 async function handleLicense(method, ...args) {
   try {
+    const verifiesAccess = ['initialize', 'submitPhone', 'retry', 'updatePhone'].includes(method);
+    if (verifiesAccess) licenseSessionActive = false;
     const data = await licenses()[method](...args);
+    if (verifiesAccess && isLicenseAccessGranted(data)) {
+      await ensureOfflineRuntimeStarted();
+      licenseSessionActive = true;
+    }
     return { ok: true, data };
   } catch (error) {
     return serializeLicenseError(error);
@@ -126,13 +142,11 @@ async function handleLicense(method, ...args) {
 }
 
 function runtimeSessionKey() {
-  const directory = securityDirectory();
-  const filename = path.join(directory, RUNTIME_KEY_FILE);
-  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  if (fs.existsSync(filename)) return secureProtector().decrypt(fs.readFileSync(filename));
-  const key = randomBytes(32).toString('base64url');
-  fs.writeFileSync(filename, secureProtector().encrypt(key), { mode: 0o600 });
-  return key;
+  return loadOrCreateRuntimeSessionKey({
+    directory: securityDirectory(),
+    protector: secureProtector(),
+    logger: electronLog(),
+  });
 }
 
 function productionEntryUrl() {
@@ -145,7 +159,7 @@ function appIconPath() {
     : path.join(__dirname, '..', 'icon.ico');
 }
 
-function assertTrustedSender(event) {
+function assertTrustedSender(event, { licenseRequired = true } = {}) {
   const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
   if (!isTrustedAppUrl(senderUrl, {
     devServerUrl: process.env.VITE_DEV_SERVER_URL,
@@ -153,6 +167,7 @@ function assertTrustedSender(event) {
   })) {
     throw new Error('untrusted IPC sender');
   }
+  if (licenseRequired && !licenseSessionActive) throw licenseRequiredError();
 }
 
 function createWindow() {
@@ -210,7 +225,7 @@ for (const [channel, method] of [
   ['mia:license:update-phone', 'updatePhone'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
-    assertTrustedSender(event);
+    assertTrustedSender(event, { licenseRequired: false });
     return handleLicense(method, ...args);
   });
 }
@@ -354,48 +369,80 @@ for (const [channel, method] of [['mia:results:overview', 'overview'], ['mia:res
   });
 }
 
-void app.whenReady().then(async () => {
-  Menu.setApplicationMenu(null);
-  electronLog().info('app_ready', {
-    app_version: app.getVersion(),
-    electron_version: process.versions.electron,
-    node_version: process.versions.node,
-    packaged: app.isPackaged,
-    platform: process.platform,
-    arch: process.arch,
-    user_data: app.getPath('userData'),
-  });
-  const { autoUpdater } = require('electron-updater');
-  releaseUpdater = createReleaseUpdater({ isPackaged: app.isPackaged, autoUpdater });
-  offlineRuntime = new OfflineRuntimeManager({
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
-    env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
-    logger: electronLog(),
-    onNotification(method, payload) {
-      const channel = method === 'export.progress'
-        ? 'mia:artifacts:export-progress'
-        : method === 'artifact.progress'
-          ? 'mia:artifacts:invoice-progress'
-          : null;
-      if (!channel) return;
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send(channel, payload);
-      }
-    },
-  });
-  await offlineRuntime.start();
-  electronLog().info('offline_runtime_ready');
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-}).catch((error) => {
-  electronLog().error('app_start_failed', { name: error?.name, code: error?.code, message: error?.message, stack: error?.stack });
-  dialog.showErrorBox('MIA TOOL 2026', 'Không thể khởi động bộ xử lý dữ liệu cục bộ. Vui lòng mở lại ứng dụng hoặc cài đặt lại.');
+function ensureOfflineRuntimeStarted() {
+  if (!offlineRuntime) {
+    offlineRuntime = new OfflineRuntimeManager({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
+      env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
+      logger: electronLog(),
+      onNotification(method, payload) {
+        const channel = method === 'export.progress'
+          ? 'mia:artifacts:export-progress'
+          : method === 'artifact.progress'
+            ? 'mia:artifacts:invoice-progress'
+            : null;
+        if (!channel) return;
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send(channel, payload);
+        }
+      },
+    });
+  }
+  if (!offlineRuntimeStartPromise) {
+    offlineRuntimeStartPromise = offlineRuntime.start()
+      .then((health) => {
+        electronLog().info('offline_runtime_ready');
+        return health;
+      })
+      .catch((error) => {
+        offlineRuntimeStartPromise = undefined;
+        throw error;
+      });
+  }
+  return offlineRuntimeStartPromise;
+}
+
+if (!hasSingleInstanceLock) {
   app.quit();
-});
+} else {
+  app.on('second-instance', () => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+
+  void app.whenReady().then(async () => {
+    Menu.setApplicationMenu(null);
+    electronLog().info('app_ready', {
+      app_version: app.getVersion(),
+      electron_version: process.versions.electron,
+      node_version: process.versions.node,
+      packaged: app.isPackaged,
+      platform: process.platform,
+      arch: process.arch,
+      user_data: app.getPath('userData'),
+    });
+    const { autoUpdater } = require('electron-updater');
+    releaseUpdater = createReleaseUpdater({ isPackaged: app.isPackaged, autoUpdater });
+
+    // The renderer initially contains only the fail-closed activation gate.
+    // Runtime and business IPC remain unavailable until KEYV2 verification
+    // returns the one accepted authorization tuple.
+    createWindow();
+    await handleLicense('initialize');
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  }).catch((error) => {
+    electronLog().error('app_start_failed', { name: error?.name, code: error?.code, message: error?.message, stack: error?.stack });
+    dialog.showErrorBox('MIA TOOL 2026', 'Không thể khởi động bộ xử lý dữ liệu cục bộ. Vui lòng mở lại ứng dụng hoặc cài đặt lại.');
+    app.quit();
+  });
+}
 
 app.on('before-quit', (event) => {
   if (!offlineRuntime || runtimeShutdownStarted) return;

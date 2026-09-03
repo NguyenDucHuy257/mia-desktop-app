@@ -1,4 +1,6 @@
 import json
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -181,6 +183,38 @@ class ResultViewTests(unittest.TestCase):
         self.assertTrue(result["columns"])
         self.assertTrue(result["column_labels"])
         self.assertEqual(result["total_count"], 1)
+
+    def test_combined_results_dedupe_canonical_invoices_before_global_pagination(self):
+        backend, _ = self.backend_with_job()
+
+        class CombinedReader:
+            @staticmethod
+            def overview_page(job, *, limit, cursor):
+                self.assertEqual(job.parameters["query_types"], ["query", "sco-query"])
+                return {
+                    "items": [
+                        {"id": 1, "query_type": "query", "nlap_date": "2026-01-02", "nbmst": "010-001", "khmshdon": "01", "khhdon": " aa/26 ", "shdon": "0002"},
+                        {"id": 2, "query_type": "sco-query", "nlap_date": "2026-01-02", "nbmst": "010001", "khmshdon": "1", "khhdon": "AA26", "shdon": "2"},
+                        {"id": 3, "query_type": "sco-query", "nlap_date": "2026-01-03", "nbmst": "010002", "khmshdon": "1", "khhdon": "BB26", "shdon": "3"},
+                    ],
+                    "pagination": {"has_more": False, "next_cursor": None},
+                }
+
+        with patch("app.external_api.results.JobResultReader", return_value=CombinedReader()):
+            query = {
+                "connection_id": "conn_account_1", "date_from": "2026-01-01",
+                "date_to": "2026-01-31", "direction": "purchase",
+                "query_type": None, "query_types": ["query", "sco-query"], "limit": 1,
+            }
+            first = backend.results("overview", query)
+            second = backend.results("overview", {**query, "cursor": first["pagination"]["next_cursor"]})
+
+        self.assertEqual(first["total_count"], 2)
+        self.assertEqual(len(first["items"]), 1)
+        self.assertTrue(first["pagination"]["has_more"])
+        self.assertEqual(len(second["items"]), 1)
+        self.assertFalse(second["pagination"]["has_more"])
+        self.assertNotEqual(first["items"][0]["invoice_key"], second["items"][0]["invoice_key"])
 
     def test_detail_pages_report_total_display_rows_not_invoice_count(self):
         backend, _ = self.backend_with_job()
@@ -370,7 +404,7 @@ class ResultViewTests(unittest.TestCase):
             detail_repository.get_detail_records_for_export.assert_called_once()
             detail_exporter.export.assert_called_once()
 
-    def test_export_creates_four_direction_scope_workbooks_with_two_category_sheets(self):
+    def test_combined_export_creates_one_sheet_per_direction_and_scope(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             backend, _ = self.backend_with_job(data_root=root / "source-data")
@@ -386,15 +420,31 @@ class ResultViewTests(unittest.TestCase):
                 workbook.close()
 
             def overview_rows(_context, direction, query_type, _search):
-                return [{"marker": f"overview:{direction}:{query_type}"}]
+                return [{
+                    "marker": f"overview:{direction}:{query_type}",
+                    "nbmst": f"tax-{query_type}", "khmshdon": "1",
+                    "khhdon": "AA", "shdon": "1", "nlap_date": "2026-08-02",
+                }]
 
             def overview_writer(rows, **kwargs):
-                write_marker(kwargs["target"], rows[0]["marker"])
+                workbook = Workbook()
+                worksheet = workbook.active
+                worksheet.cell(5, 1).value = "STT"
+                worksheet.cell(5, 2).value = "Marker"
+                for index, row in enumerate(rows, start=6):
+                    worksheet.cell(index, 1).value = index - 5
+                    worksheet.cell(index, 2).value = row["marker"]
+                workbook.save(kwargs["target"])
+                workbook.close()
 
             detail_repository = Mock()
             detail_repository.get_detail_records_for_export.side_effect = (
                 lambda _tax_code, direction, query_type, _from, _to: [
-                    {"marker": f"details:{direction}:{query_type}"}
+                    {
+                        "marker": f"details:{direction}:{query_type}",
+                        "nbmst": f"tax-{query_type}", "khmshdon": "1",
+                        "khhdon": "AA", "shdon": "1", "nlap_date": "2026-08-02",
+                    }
                 ]
             )
 
@@ -403,7 +453,15 @@ class ResultViewTests(unittest.TestCase):
                     pass
 
                 def export(self, *, detail_records, output_path, **_kwargs):
-                    write_marker(Path(output_path), detail_records[0]["marker"])
+                    workbook = Workbook()
+                    worksheet = workbook.active
+                    worksheet.cell(5, 1).value = "STT"
+                    worksheet.cell(5, 2).value = "Marker"
+                    for index, record in enumerate(detail_records, start=6):
+                        worksheet.cell(index, 1).value = index - 5
+                        worksheet.cell(index, 2).value = record["marker"]
+                    workbook.save(output_path)
+                    workbook.close()
 
             with patch(
                 "mia_source_results._all_overview_fields",
@@ -429,6 +487,7 @@ class ResultViewTests(unittest.TestCase):
                     "date_to": "2026-08-22",
                     "direction": None,
                     "query_type": None,
+                    "query_types": ["query", "sco-query"],
                     "search": "",
                 })
 
@@ -440,22 +499,22 @@ class ResultViewTests(unittest.TestCase):
             self.assertEqual(result["count"], 4)
             self.assertEqual({Path(path).name for path in result["files"]}, expected)
 
-            labels = {
-                "Hóa đơn điện tử": "query",
-                "Máy tính tiền": "sco-query",
-            }
             for path_value in result["files"]:
                 path = Path(path_value)
                 scope = "overview" if "Tổng quan" in path.name else "details"
                 direction = "purchase" if "Mua vào" in path.name else "sold"
                 workbook = load_workbook(path, data_only=False)
                 try:
-                    self.assertEqual(workbook.sheetnames, list(labels))
-                    for sheet_name, query_type in labels.items():
-                        self.assertEqual(
-                            workbook[sheet_name].cell(6, 2).value,
-                            f"{scope}:{direction}:{query_type}",
-                        )
+                    self.assertEqual(len(workbook.sheetnames), 1)
+                    sheet = workbook.active
+                    self.assertEqual(sheet.cell(5, 2).value, "Marker")
+                    self.assertEqual(
+                        {sheet.cell(6, 2).value, sheet.cell(7, 2).value},
+                        {
+                            f"{scope}:{direction}:query",
+                            f"{scope}:{direction}:sco-query",
+                        },
+                    )
                 finally:
                     workbook.close()
 
@@ -669,6 +728,70 @@ class ResultViewTests(unittest.TestCase):
                 self.assertEqual(worksheet.cell(header_row + 1, code_column).value, "ABC123")
             finally:
                 detail_workbook.close()
+
+    def test_real_combined_overview_export_has_both_sources_in_one_sheet(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_root = root / "source-data"
+            backend, _ = self.backend_with_job(data_root=data_root)
+            database_path = data_root / "0100000000" / "db" / "invoices.sqlite3"
+            repository = InvoiceOverviewRepository(database_path)
+            timestamp = "2026-08-22T03:00:00+00:00"
+            raw = root / "overview.json"
+            raw.write_text("{}", encoding="utf-8")
+
+            for query_type, shdon, partner in (
+                ("query", "000101", "0300000001"),
+                ("sco-query", "000202", "0300000002"),
+            ):
+                public = {
+                    "khmshdon": "1", "khhdon": "K26T", "shdon": shdon,
+                    "tdlap": "2026-01-10T08:00:00+07:00", "nbmst": partner,
+                    "nbten": f"Nguồn {query_type}", "nmmst": "0100000000",
+                    "nmten": "Công ty kiểm thử", "tgtcthue": 100,
+                    "tgtthue": 10, "tgtttbso": 110, "tthai": 1,
+                }
+                repository.upsert_items(
+                    company_tax_code="0100000000", direction="purchase",
+                    query_type=query_type,
+                    invoice_category="cash_register" if query_type == "sco-query" else "electronic",
+                    raw_json_path=raw,
+                    items=[{
+                        "nbmst": partner, "khhdon": "K26T", "shdon": shdon,
+                        "khmshdon": "1", "nlap": public["tdlap"],
+                        "nlap_date": "2026-01-10", "_public_fields": public,
+                    }],
+                    timestamp=timestamp,
+                )
+
+            result = backend.export_results({
+                "destination": str(root / "export"),
+                "connection_ids": ["conn_account_1"], "result_scopes": ["overview"],
+                "date_from": "2026-01-01", "date_to": "2026-01-31",
+                "direction": "purchase", "query_type": None,
+                "query_types": ["query", "sco-query"], "search": "",
+            })
+            self.assertEqual(result["count"], 1)
+            output = Path(result["files"][0])
+            workbook = load_workbook(output, data_only=False)
+            try:
+                self.assertEqual(len(workbook.sheetnames), 1)
+                worksheet = workbook.active
+                header_row = _find_header_row(worksheet)
+                headers = [worksheet.cell(header_row, column).value for column in range(1, worksheet.max_column + 1)]
+                invoice_column = headers.index("Số hóa đơn") + 1
+                values = {
+                    str(worksheet.cell(row, invoice_column).value)
+                    for row in range(header_row + 1, worksheet.max_row + 1)
+                    if worksheet.cell(row, invoice_column).value is not None
+                }
+                self.assertEqual(values, {"000101", "000202"})
+            finally:
+                workbook.close()
+            fixture_path = os.environ.get("MIA_COMBINED_RESULT_FIXTURE")
+            if fixture_path:
+                Path(fixture_path).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output, fixture_path)
 
     def test_excel_export_keeps_scope_filters_separate_and_forwards_exclusion(self):
         with tempfile.TemporaryDirectory() as directory:

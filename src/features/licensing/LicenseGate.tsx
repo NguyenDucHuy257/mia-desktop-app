@@ -13,6 +13,14 @@ const copy: Record<string, { title: string; description: string }> = {
 };
 
 const reasonCopy: Record<string, { title: string; description: string }> = {
+  hardware_mismatch_below_50_percent: {
+    title: 'Thiết bị không khớp bản quyền',
+    description: 'Thông tin phần cứng khớp dưới 50%. Bản quyền trên thiết bị cũ không thể được sử dụng trên máy này.',
+  },
+  insufficient_hardware: {
+    title: 'Không đủ thông tin thiết bị',
+    description: 'Không thể thu thập tối thiểu 3 thông tin phần cứng hợp lệ. Vui lòng thử lại hoặc liên hệ bộ phận hỗ trợ.',
+  },
   mia_v2_not_deployed: {
     title: 'Máy chủ chưa hỗ trợ MIA V2',
     description: 'Bản mở rộng tool=MIA chưa được triển khai trên máy chủ bản quyền dùng chung. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.',
@@ -26,6 +34,15 @@ const reasonCopy: Record<string, { title: string; description: string }> = {
     description: 'Vui lòng thử lại sau. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.',
   },
 };
+
+export function licenseAllowsWorkspace(state: LicenseStateResponse | null) {
+  return Boolean(state
+    && state.state === 'active'
+    && state.active === true
+    && state.valid === true
+    && state.expired === false
+    && state.reason === 'ok');
+}
 
 function LicenseFrame({ state, onRetry }: { state: LicenseStateResponse; onRetry(): Promise<void> }) {
   const content = reasonCopy[state.reason || ''] || copy[state.state] || copy.error;
@@ -50,7 +67,8 @@ function PhoneForm({ legacy = false, onSubmit }: { legacy?: boolean; onSubmit(ph
   async function submit(event: FormEvent) {
     event.preventDefault();
     const normalizedPhone = phone.trim();
-    if (!/^0[0-9]{9}$/.test(normalizedPhone) || normalizedPhone === '0000000000') {
+    if (!/^0[0-9]{9}$/.test(normalizedPhone)
+      || ['0000000000', '0865219286', '0383466992'].includes(normalizedPhone)) {
       setMessage('Vui lòng nhập số điện thoại hợp lệ gồm 10 chữ số và bắt đầu bằng 0.');
       return;
     }
@@ -63,15 +81,15 @@ function PhoneForm({ legacy = false, onSubmit }: { legacy?: boolean; onSubmit(ph
   return <main className="license-gate-page"><form className="license-gate-card" onSubmit={(event) => void submit(event)}>
     <img src={logo} alt="" className="license-gate-logo" />
     <strong className="license-gate-brand">MIA TOOL 2026</strong>
-    <h1>{legacy ? 'Bổ sung số điện thoại' : 'Số điện thoại'}</h1>
+    <h1>{legacy ? 'Bổ sung số điện thoại' : 'Kích hoạt bản quyền'}</h1>
     <p>{legacy
       ? 'MIA đã nhận diện bản quyền hiện tại trên thiết bị này. Vui lòng bổ sung số điện thoại để hoàn tất nâng cấp bản quyền. Bạn không cần cấp lại key.'
       : 'Số điện thoại được dùng để quản lý bản quyền và hỗ trợ khôi phục thiết bị.'}</p>
-    <label className="license-phone-field">Số điện thoại
+    <label className="license-phone-field">Số điện thoại đăng ký
       <input autoFocus inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="Ví dụ: 0981234567" value={phone} onChange={(event) => setPhone(event.target.value.replace(/\D/g, '').slice(0, 10))} />
     </label>
     {message ? <span className="license-form-error">{message}</span> : null}
-    <button type="submit" className="license-primary-button" disabled={submitting}>{submitting ? 'Đang xử lý...' : 'Tiếp tục'}</button>
+    <button type="submit" className="license-primary-button" disabled={submitting}>{submitting ? 'Đang xử lý...' : 'Tạo mã kích hoạt'}</button>
   </form></main>;
 }
 
@@ -86,8 +104,8 @@ function ActivationPage({ state, onRetry }: { state: LicenseStateResponse; onRet
   return <main className="license-gate-page"><section className="license-gate-card">
     <img src={logo} alt="" className="license-gate-logo" />
     <strong className="license-gate-brand">MIA TOOL 2026</strong>
-    <h1>Thiết bị chưa được kích hoạt</h1>
-    <p>Gửi mã dưới đây cho bộ phận hỗ trợ. Mã này được giữ ổn định khi bạn mở lại ứng dụng.</p>
+    <h1>Mã kích hoạt chưa được cấp quyền</h1>
+    <p>Vui lòng gửi mã bên dưới cho bộ phận hỗ trợ để kích hoạt phần mềm trên thiết bị này.</p>
     <div className="license-activation-key"><span>Mã kích hoạt</span><code>{key || 'Đang tạo mã...'}</code></div>
     <div className="license-gate-actions">
       <button type="button" className="license-secondary-button" disabled={!key} onClick={() => void copyKey()}>{copied ? 'Đã sao chép' : 'Sao chép mã'}</button>
@@ -98,7 +116,7 @@ function ActivationPage({ state, onRetry }: { state: LicenseStateResponse; onRet
 
 export function LicenseGate({ children }: PropsWithChildren) {
   const bridge = typeof window === 'undefined' ? undefined : window.miaRuntime?.license;
-  const [state, setState] = useState<LicenseStateResponse | null>(bridge ? null : { state: 'active', active: true, mode: 'browser' });
+  const [state, setState] = useState<LicenseStateResponse | null>(bridge ? null : { state: 'error', active: false, valid: false, expired: false, reason: 'LICENSE_REQUIRED', mode: 'browser' });
   async function initialize() {
     if (!bridge) return;
     setState((current) => current?.active ? current : { state: 'checking', active: false });
@@ -111,7 +129,7 @@ export function LicenseGate({ children }: PropsWithChildren) {
   }
   useEffect(() => { void initialize(); }, []);
   if (!state || state.state === 'checking' || state.state === 'migrating') return <LicenseFrame state={state || { state: 'checking', active: false }} onRetry={initialize} />;
-  if (state.active) return <>{children}</>;
+  if (licenseAllowsWorkspace(state)) return <>{children}</>;
   if (state.state === 'phone_required' || state.state === 'legacy_phone_required') {
     return <PhoneForm legacy={state.state === 'legacy_phone_required'} onSubmit={submitPhone} />;
   }

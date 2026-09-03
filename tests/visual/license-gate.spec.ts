@@ -27,18 +27,20 @@ test('shows the MIA legacy migration screen without asking for phone', async ({ 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Đang nâng cấp bản quyền' })).toBeVisible();
   await expect(page.getByText('Bạn không cần nhập lại key.')).toBeVisible();
-  await expect(page.getByLabel('Số điện thoại')).toHaveCount(0);
+  await expect(page.getByLabel('Số điện thoại đăng ký')).toHaveCount(0);
 });
 
 test('opens Phone Form only for no-match and keeps the activation action in the same gate', async ({ page }) => {
   await installLicenseBridge(page, { state: 'phone_required', active: false });
   await page.goto('/');
-  const phone = page.getByLabel('Số điện thoại');
+  const phone = page.getByLabel('Số điện thoại đăng ký');
   await expect(phone).toBeVisible();
+  await page.screenshot({ path: 'test-results/license/new-device-phone.png', fullPage: true });
   await phone.fill('0981234567');
-  await page.getByRole('button', { name: 'Tiếp tục' }).click();
-  await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toBeVisible();
+  await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
+  await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toBeVisible();
   await expect(page.getByText('KEYV2-STABLE-TEST-KEY-0981234567')).toBeVisible();
+  await page.screenshot({ path: 'test-results/license/activation-required.png', fullPage: true });
 });
 
 test('asks a detected legacy customer for phone without asking for a new key', async ({ page }) => {
@@ -46,18 +48,18 @@ test('asks a detected legacy customer for phone without asking for a new key', a
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Bổ sung số điện thoại' })).toBeVisible();
   await expect(page.getByText('Bạn không cần cấp lại key.')).toBeVisible();
-  await expect(page.getByLabel('Số điện thoại')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toHaveCount(0);
+  await expect(page.getByLabel('Số điện thoại đăng ký')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/license/legacy-phone-required.png', fullPage: true });
 });
 
 test('rejects dummy phone before calling activation', async ({ page }) => {
   await installLicenseBridge(page, { state: 'phone_required', active: false });
   await page.goto('/');
-  await page.getByLabel('Số điện thoại').fill('0000000000');
-  await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  await page.getByLabel('Số điện thoại đăng ký').fill('0000000000');
+  await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
   await expect(page.getByText(/Vui lòng nhập số điện thoại hợp lệ/)).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Thiết bị chưa được kích hoạt' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toHaveCount(0);
 });
 
 for (const scenario of [
@@ -72,3 +74,19 @@ for (const scenario of [
     await expect(page.getByRole('heading', { name: scenario.heading })).toBeVisible();
   });
 }
+
+test('does not render the workspace for a legacy-shaped active response missing strict KEYV2 fields', async ({ page }) => {
+  await installLicenseBridge(page, { state: 'active', active: true });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Không thể kiểm tra bản quyền' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Quản lý HĐĐT' })).toHaveCount(0);
+});
+
+test('does not accept a support hotline as the registration phone', async ({ page }) => {
+  await installLicenseBridge(page, { state: 'phone_required', active: false });
+  await page.goto('/');
+  await page.getByLabel('Số điện thoại đăng ký').fill('0865219286');
+  await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
+  await expect(page.getByText(/Vui lòng nhập số điện thoại hợp lệ/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toHaveCount(0);
+});

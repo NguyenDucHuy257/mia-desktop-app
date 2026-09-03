@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const { buildDeviceEvidence, hashHardwareSignal } = require('../../electron/license/hardware-profile.cjs');
-const { buildLegacyDetection, normalizePhone } = require('../../electron/license/legacy-detector.cjs');
+const { buildLegacyDetection, normalizePhone, readLegacyPhones } = require('../../electron/license/legacy-detector.cjs');
 const { createLicenseApi, validateServerUrl } = require('../../electron/license/license-api.cjs');
 const { LicenseManager, miaV2Key } = require('../../electron/license/license-manager.cjs');
 const { createProtectedLicenseStore } = require('../../electron/license/protected-license-store.cjs');
@@ -96,7 +96,7 @@ function activeResponse(deviceId: string, overrides: Record<string, any> = {}) {
     migrated: true,
     recovered: false,
     hardware_profile: evidence().hardware,
-    reason: 'legacy_migrated',
+    reason: 'ok',
     ...overrides,
   };
 }
@@ -121,6 +121,17 @@ describe('MIA shared-key-server client', () => {
     expect(result.legacy.exact_key_candidates[0]).toMatch(/^key[a-f0-9]{29}$/);
   });
 
+  it('rejects a device profile with fewer than three valid hardware signals', () => {
+    expect(() => buildDeviceEvidence({
+      system_uuid: 'uuid',
+      bios_serial: 'bios',
+      baseboard_serial: 'UNKNOWN',
+      machine_guid: '',
+      cpu_id: null,
+      disk_serial: 'DEFAULT STRING',
+    })).toThrowError(expect.objectContaining({ code: 'insufficient_hardware' }));
+  });
+
   it('builds phone legacy candidates only from a real phone', () => {
     const base = evidence();
     expect(normalizePhone('0000000000')).toBeNull();
@@ -128,6 +139,18 @@ describe('MIA shared-key-server client', () => {
     const detection = buildLegacyDetection(base, ['0000000000', '0981234567']);
     expect(detection.exact_key_candidates).toContain(`KEY${'b'.repeat(29)}0981234567`);
     expect(JSON.stringify(detection)).not.toContain('0000000000');
+  });
+
+  it('never imports customer-support hotlines as the registration phone', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mia-license-phone-'));
+    directories.push(directory);
+    const phoneFile = path.join(directory, 'phone.txt');
+    fs.writeFileSync(phoneFile, '0865219286', 'utf8');
+    expect(readLegacyPhones(directory)).toEqual([]);
+    fs.writeFileSync(phoneFile, '0383466992', 'utf8');
+    expect(readLegacyPhones(directory)).toEqual([]);
+    expect(normalizePhone('0865219286')).toBeNull();
+    expect(normalizePhone('0383466992')).toBeNull();
   });
 
   it('posts the Taxsoft-compatible payload only to /verify-key-v2 over HTTPS', async () => {

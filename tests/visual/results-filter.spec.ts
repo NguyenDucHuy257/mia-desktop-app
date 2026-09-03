@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 
 test('column filters are nested, interactive, portalled and use the Excel-like workflow', async ({ page }) => {
   test.setTimeout(90_000);
@@ -56,6 +56,20 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
 
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Xem kết quả' }).click();
+  const invoiceType = page.getByLabel('Loại hóa đơn');
+  await expect(invoiceType.locator('option')).toHaveText([
+    'Hóa đơn điện tử', 'Máy tính tiền', 'HĐĐT & Máy tính tiền',
+  ]);
+  await invoiceType.selectOption('combined');
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({
+    query_type: null, query_types: ['query', 'sco-query'], cursor: null,
+  });
+  await expect(page.locator('.results-pager button[data-active="true"]')).toHaveText('1');
+  await page.screenshot({ path: 'test-results/results-combined-dropdown.png', animations: 'disabled' });
+  await invoiceType.selectOption('sco-query');
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ query_type: 'sco-query' });
+  await invoiceType.selectOption('query');
+  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ query_type: 'query' });
   await expect(page.locator('.results-header-slot')).toHaveCount(7);
   await expect(page.locator('.results-header-slot > .result-header-cell > .result-column-filter > .result-column-filter-button')).toHaveCount(7);
   await expect(page.locator('.results-external-link')).toHaveCount(1);

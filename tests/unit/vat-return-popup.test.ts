@@ -5,6 +5,13 @@ import { NoticeDialog } from '../../src/components/NoticeDialog';
 import { vatReturnExportErrorFeedback } from '../../src/features/artifacts/VatReturnExportPage';
 
 describe('VAT return popup semantics', () => {
+  it('maps the broker writer lock to a warning instead of a database failure', () => {
+    expect(vatReturnExportErrorFeedback({ code: 'artifact_task_active' })).toEqual({
+      kind: 'warning',
+      message: 'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.',
+    });
+  });
+
   it.each([
     ['success', '✓'],
     ['warning', '!'],

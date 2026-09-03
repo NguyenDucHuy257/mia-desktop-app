@@ -51,14 +51,14 @@ async function atomicWrite(directory, filename, content) {
 
 function validateExportRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_artifact_request');
-  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'query_type', 'search', 'result_filters', 'exclusion']);
+  const allowed = new Set(['destination', 'connection_ids', 'kinds', 'result_scopes', 'date_from', 'date_to', 'direction', 'query_type', 'query_types', 'search', 'result_filters', 'exclusion']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_artifact_request');
   if (typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_artifact_directory');
   if (!Array.isArray(value.connection_ids) || value.connection_ids.length < 1 || value.connection_ids.length > 50 || new Set(value.connection_ids).size !== value.connection_ids.length || value.connection_ids.some((id) => typeof id !== 'string' || !CONNECTION_ID.test(id))) throw new TypeError('invalid_artifact_accounts');
   if (!Array.isArray(value.kinds) || value.kinds.length < 1 || value.kinds.length > 4 || new Set(value.kinds).size !== value.kinds.length || value.kinds.some((kind) => !KINDS.has(kind))) throw new TypeError('invalid_artifact_kind');
   const base = { destination: path.resolve(value.destination), connection_ids: [...value.connection_ids], kinds: [...value.kinds] };
   if (value.result_scopes === undefined) {
-    if (value.result_filters !== undefined || value.exclusion !== undefined) throw new TypeError('invalid_artifact_request');
+    if (value.result_filters !== undefined || value.exclusion !== undefined || value.query_types !== undefined) throw new TypeError('invalid_artifact_request');
     if (value.date_from === undefined && value.date_to === undefined && value.direction === undefined && value.query_type === undefined && value.search === undefined) return base;
     const direction = value.direction ?? null;
     const queryType = value.query_type ?? null;
@@ -76,7 +76,10 @@ function validateExportRequest(value) {
   const direction = value.direction ?? null;
   if (direction !== null && !['purchase', 'sold'].includes(direction)) throw new TypeError('invalid_result_export_direction');
   const queryType = value.query_type ?? null;
+  const queryTypes = value.query_types ?? null;
   if (queryType !== null && !['query', 'sco-query'].includes(queryType)) throw new TypeError('invalid_result_export_query_type');
+  if (queryTypes !== null && (!Array.isArray(queryTypes) || queryTypes.length < 1 || queryTypes.length > 2 || new Set(queryTypes).size !== queryTypes.length || queryTypes.some((item) => !['query', 'sco-query'].includes(item)))) throw new TypeError('invalid_result_export_query_type');
+  if (queryType !== null && queryTypes !== null) throw new TypeError('invalid_result_export_query_type');
   const search = value.search ?? '';
   if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_export_search');
   const resultFilters = value.result_filters ?? {};
@@ -89,7 +92,8 @@ function validateExportRequest(value) {
   }
   return {
     ...base, result_scopes: [...value.result_scopes], date_from: value.date_from,
-    date_to: value.date_to, direction, query_type: queryType, search: search.trim(),
+    date_to: value.date_to, direction, query_type: queryType,
+    query_types: queryTypes === null ? null : [...queryTypes], search: search.trim(),
     result_filters: normalizedFilters, exclusion: validateExclusion(value.exclusion),
   };
 }
@@ -166,16 +170,34 @@ function waitForTaskPoll(delayMs = 100) {
 function createArtifactBroker(getRuntime) {
   let activeTaskId = null;
   let latestTaskId = null;
+  const assertIdle = () => {
+    if (activeTaskId) throw new Error('artifact_task_active');
+  };
   return Object.freeze({
     coverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.coverage', validateArtifactSnapshotRequest(value))),
     vatReturnCoverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.vat_return.coverage', validateVatReturnCoverageRequest(value))),
-    vatReturnExport: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.vat_return.export', validateVatReturnExportRequest(value), { timeoutMs: 5 * 60 * 1000 })),
+    vatReturnExport: (value) => runBrokerCommand(async () => {
+      assertIdle();
+      activeTaskId = 'vat-return-starting';
+      try {
+        return await getRuntime().invoke('artifacts.vat_return.export', validateVatReturnExportRequest(value), { timeoutMs: 5 * 60 * 1000 });
+      } finally {
+        activeTaskId = null;
+      }
+    }),
     snapshot: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.snapshot', validateArtifactSnapshotRequest(value))),
     startBatch: (value) => runBrokerCommand(async () => {
-      const started = await getRuntime().invoke('artifacts.batch.start', validateArtifactBatchRequest(value));
-      activeTaskId = started.task_id;
-      latestTaskId = started.task_id;
-      return started;
+      assertIdle();
+      activeTaskId = 'artifact-batch-starting';
+      try {
+        const started = await getRuntime().invoke('artifacts.batch.start', validateArtifactBatchRequest(value));
+        activeTaskId = started.task_id;
+        latestTaskId = started.task_id;
+        return started;
+      } catch (error) {
+        activeTaskId = null;
+        throw error;
+      }
     }),
     batchStatus: (value) => runBrokerCommand(async () => {
       if (!value || typeof value !== 'object' || typeof value.task_id !== 'string' || value.task_id !== activeTaskId) throw new TypeError('invalid_artifact_task');
@@ -201,19 +223,25 @@ function createArtifactBroker(getRuntime) {
     }),
     export: (value) => runBrokerCommand(async () => {
       const request = validateExportRequest(value);
+      assertIdle();
+      activeTaskId = 'result-export-starting';
       const kinds = new Set(request.kinds);
       if (!request.result_scopes && ![...kinds].every((kind) => kind === 'xml' || kind === 'html')) {
-        return invokeArtifactExport(getRuntime, request);
+        try {
+          return await invokeArtifactExport(getRuntime, request);
+        } finally {
+          activeTaskId = null;
+        }
       }
       const runtime = getRuntime();
       // Starting is asynchronous in the Python runtime. Allow enough time for
       // temporary scheduling pressure without losing the task id and falsely
       // reporting failure while the export continues in the background.
-      const started = await runtime.invoke(
-        'artifacts.export.start', request, { timeoutMs: 30_000 },
-      );
-      activeTaskId = started.task_id;
       try {
+        const started = await runtime.invoke(
+          'artifacts.export.start', request, { timeoutMs: 30_000 },
+        );
+        activeTaskId = started.task_id;
         while (true) {
           const task = await runtime.invoke('artifacts.export.status', { task_id: activeTaskId });
           if (task.status === 'completed') return checkedExportResult(task.result);

@@ -1,9 +1,39 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 
 const account = {
   connection_id: 'conn_download', username: '0100000000', company_name: 'Công ty Mẫu',
   status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false,
 };
+
+test('an active invoice sync blocks artifact download with a popup', async ({ page }) => {
+  await page.addInitScript(({ accountValue }) => {
+    const starts: unknown[] = [];
+    Object.defineProperty(window, 'blockedArtifactStarts', { value: starts });
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [accountValue] },
+      jobs: {
+        resumeAll: async () => [{ job_id: 'job_active_sync', connection_id: accountValue.connection_id, status: 'running' }],
+        latestAll: async () => [],
+        status: async () => ({ job_id: 'job_active_sync', status: 'running', overall_percent: 25 }),
+        summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined,
+      },
+      preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      artifacts: {
+        coverage: async (request: unknown) => ({ ...(request as object), accounts: [{ connection_id: accountValue.connection_id, ready: true, missing_ranges: [] }] }),
+        snapshot: async (request: unknown) => ({ ...(request as object), accounts: [{ connection_id: accountValue.connection_id, ready: true, missing_ranges: [], total: 1, cached: { xml: 0, html: 0, pdf: 0 } }] }),
+        startBatch: async (request: unknown) => { starts.push(request); return { task_id: 'must-not-start', status: 'running' }; },
+        batchStatus: async () => ({}), cancelBatch: async () => ({ cancelled: false }), selectDirectory: async () => 'C:\\MIA', openDirectory: async () => true,
+      },
+    } });
+  }, { accountValue: account });
+
+  await page.goto('/', { waitUntil: 'commit' });
+  await page.getByRole('button', { name: 'XML/HTML/PDF', exact: true }).click();
+  await page.getByRole('button', { name: 'Tải xuống', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Đang đồng bộ dữ liệu hóa đơn');
+  await expect(page.getByRole('alertdialog')).toContainText('dừng tiến trình hiện tại');
+  expect(await page.evaluate(() => (window as typeof window & { blockedArtifactStarts: unknown[] }).blockedArtifactStarts)).toHaveLength(0);
+});
 
 test('unified artifact screen uses local coverage and starts one multi-format batch', async ({ page }) => {
   await page.addInitScript(({ accountValue }) => {

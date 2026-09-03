@@ -76,7 +76,7 @@ describe('MIA License V2 full synthetic acceptance', () => {
   });
 
   it('B/D: submits exact KEYV2 plus both exact legacy schemas and persists migration', async () => {
-    const server = new FakeLicenseServer((request) => activeResponse(request, { migrated: true, reason: 'legacy_migrated' }));
+    const server = new FakeLicenseServer((request) => activeResponse(request, { migrated: true, reason: 'ok' }));
     const harness = createHarness({ server });
     await harness.instance.initialize();
     expect((await harness.instance.submitPhone(FIXTURE_PHONE)).state).toBe('active');
@@ -94,7 +94,7 @@ describe('MIA License V2 full synthetic acceptance', () => {
   it('C: silently migrates legacy evidence when a real local phone exists', async () => {
     const phoneFile = path.join(createHarness().directory, 'phone.txt');
     fs.writeFileSync(phoneFile, FIXTURE_PHONE, 'utf8');
-    const server = new FakeLicenseServer((request) => activeResponse(request, { migrated: true, reason: 'legacy_migrated' }));
+    const server = new FakeLicenseServer((request) => activeResponse(request, { migrated: true, reason: 'ok' }));
     const harness = createHarness({ server, legacyPhonePaths: [phoneFile] });
     expect((await harness.instance.initialize()).state).toBe('active');
     expect(server.requests).toHaveLength(1);
@@ -142,7 +142,7 @@ describe('MIA License V2 full synthetic acceptance', () => {
     const canonicalKey = miaV2Key(canonicalDevice, FIXTURE_PHONE);
     const store = memoryStore({ ...savedLicense(), canonical_key: canonicalKey, device_id: canonicalDevice }, null);
     const server = new FakeLicenseServer((request) => activeResponse(request, {
-      recovered: true, reason: 'recovered_existing_device', key: canonicalKey, device_id: canonicalDevice,
+      recovered: true, reason: 'ok', key: canonicalKey, device_id: canonicalDevice,
     }));
     const harness = createHarness({ server, store });
     expect((await harness.instance.initialize()).state).toBe('active');
@@ -170,6 +170,19 @@ describe('MIA License V2 full synthetic acceptance', () => {
       const harness = createHarness({ server, store: memoryStore(null, profile()) });
       expect((await harness.instance.initialize()).state).toBe('expired');
       expect(harness.store.inspect().license).toBeNull();
+    }
+  });
+
+  it('rejects valid=true unless expired=false and reason=ok are both explicit', async () => {
+    for (const response of [
+      { valid: true, expired: false, reason: 'key_not_activated' },
+      { valid: true, expired: true, reason: 'ok' },
+      { valid: true, reason: 'ok' },
+    ]) {
+      const server = new FakeLicenseServer((request) => ({ ...request, ...response }));
+      const store = memoryStore(savedLicense(), profile());
+      const harness = createHarness({ server, store });
+      expect(await harness.instance.initialize()).toMatchObject({ state: 'error', active: false, reason: 'invalid_response' });
     }
   });
 

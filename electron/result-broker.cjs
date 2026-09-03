@@ -54,13 +54,14 @@ function validateSort(value) {
 
 function validateQuery(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_result_query');
-  const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'query_type', 'date_from', 'date_to', 'column_filters', 'exclusion', 'sort']);
+  const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'query_type', 'query_types', 'date_from', 'date_to', 'column_filters', 'exclusion', 'sort']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_result_query');
   const limit = value.limit ?? MAX_RESULT_PAGE_SIZE;
   const cursor = value.cursor ?? null;
   const search = value.search ?? '';
   const direction = value.direction ?? null;
   const queryType = value.query_type ?? null;
+  const queryTypes = value.query_types ?? null;
   const dateFrom = value.date_from ?? null;
   const dateTo = value.date_to ?? null;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RESULT_PAGE_SIZE) throw new TypeError('invalid_result_query');
@@ -71,12 +72,15 @@ function validateQuery(value) {
   if (typeof search !== 'string' || search.length > 200) throw new TypeError('invalid_result_query');
   if (direction !== null && !['purchase', 'sold'].includes(direction)) throw new TypeError('invalid_result_query');
   if (queryType !== null && !['query', 'sco-query'].includes(queryType)) throw new TypeError('invalid_result_query');
+  if (queryTypes !== null && (!Array.isArray(queryTypes) || queryTypes.length < 1 || queryTypes.length > 2 || new Set(queryTypes).size !== queryTypes.length || queryTypes.some((item) => !['query', 'sco-query'].includes(item)))) throw new TypeError('invalid_result_query');
+  if (queryType !== null && queryTypes !== null) throw new TypeError('invalid_result_query');
   if (dateFrom !== null && (typeof dateFrom !== 'string' || !DATE_PATTERN.test(dateFrom))) throw new TypeError('invalid_result_query');
   if (dateTo !== null && (typeof dateTo !== 'string' || !DATE_PATTERN.test(dateTo))) throw new TypeError('invalid_result_query');
   if ((dateFrom === null) !== (dateTo === null) || dateFrom && dateTo && dateFrom > dateTo) throw new TypeError('invalid_result_query');
   return {
     connection_id: validateConnectionId(value.connection_id), cursor, limit,
     search: search.trim(), direction, query_type: queryType,
+    query_types: queryTypes === null ? null : [...queryTypes],
     date_from: dateFrom, date_to: dateTo,
     column_filters: validateColumnFilters(value.column_filters),
     exclusion: validateExclusion(value.exclusion),

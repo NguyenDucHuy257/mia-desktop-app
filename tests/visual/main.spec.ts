@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 
 test('main invoice screen follows the 1500x1024 Figma reference', async ({ page }) => {
   await page.goto('/?figma=1');
@@ -21,6 +21,31 @@ test('single account form follows Figma frame 1:368', async ({ page }) => {
   });
 });
 
+test('password visibility control preserves value, focus and hidden default', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  const password = page.getByLabel('Mật khẩu', { exact: true });
+  const toggle = page.getByRole('button', { name: 'Hiện mật khẩu' });
+  await expect(password).toHaveAttribute('type', 'password');
+  await password.fill('MIA-secret-2026');
+  await password.evaluate((element: HTMLInputElement) => element.setSelectionRange(4, 4));
+  await toggle.click();
+  await expect(password).toHaveAttribute('type', 'text');
+  await expect(password).toHaveValue('MIA-secret-2026');
+  await expect(password).toBeFocused();
+  await expect.poll(() => password.evaluate((element: HTMLInputElement) => element.selectionStart)).toBe(4);
+  await expect(page.getByText('Vui lòng nhập mã số thuế.')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Ẩn mật khẩu' })).toHaveAttribute('aria-pressed', 'true');
+  await page.screenshot({ path: 'test-results/password-visible.png', animations: 'disabled' });
+  await page.getByRole('button', { name: 'Ẩn mật khẩu' }).click();
+  await expect(password).toHaveAttribute('type', 'password');
+  await expect(password).toHaveValue('MIA-secret-2026');
+  await page.screenshot({ path: 'test-results/password-hidden.png', animations: 'disabled' });
+  await page.getByRole('button', { name: /Quay lại/ }).click();
+  await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
+  await expect(page.getByLabel('Mật khẩu', { exact: true })).toHaveAttribute('type', 'password');
+});
+
 test('bulk account form follows Figma frame 60:1182', async ({ page }) => {
   await page.goto('/?figma=1');
   await page.evaluate(() => document.fonts.ready);
@@ -41,12 +66,12 @@ test('account forms validate input and submit through the browser demo adapter',
   await expect(page.getByText('Vui lòng nhập mật khẩu.')).toBeVisible();
 
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await expect(page.getByRole('alertdialog', { name: 'Thông báo thành công' })).toContainText('Đã thêm tài khoản thành công.');
   await expect(page.locator('.notice-icon[data-kind="success"]')).toHaveText('✓');
   await page.getByRole('button', { name: 'Đóng' }).click();
-  await expect(page.getByLabel('Mật khẩu')).toHaveValue('');
+  await expect(page.getByLabel('Mật khẩu', { exact: true })).toHaveValue('');
 
   await page.getByRole('tab', { name: 'Thêm hàng loạt' }).click();
   await page.getByLabel('Nhập danh sách tài khoản (MST|PASSWORD)').fill(
@@ -63,7 +88,7 @@ test('local account list starts empty, persists in the gateway and supports dele
   await expect(page.getByText('Kỳ tải')).toHaveCount(0);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('not-stored-in-renderer');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('not-stored-in-renderer');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
@@ -184,7 +209,7 @@ test('verified runtime account immediately shows portal company information', as
   await page.goto('/');
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0100000000');
-  await page.getByLabel('Mật khẩu').fill('synthetic-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('synthetic-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
@@ -236,7 +261,7 @@ test('creates, polls and cancels a job through the IPC allowlist', async ({ page
   expect(Math.abs((folderBox?.y ?? 0) - (actionBox?.y ?? 0))).toBeLessThanOrEqual(3);
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
@@ -265,7 +290,7 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
@@ -344,7 +369,7 @@ test('shows sanitized job errors in the affected account row', async ({ page }) 
   await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
@@ -380,7 +405,7 @@ test('opens local overview/detail results and paginates by cursor', async ({ pag
   await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();
@@ -406,7 +431,7 @@ test('bulk export uses the selected account without a legacy row action menu', a
   await page.goto('/?demo=1');
   await page.getByRole('button', { name: 'Thêm tài khoản' }).click();
   await page.getByLabel('Mã số thuế (MST)').fill('0101234567');
-  await page.getByLabel('Mật khẩu').fill('portal-password');
+  await page.getByLabel('Mật khẩu', { exact: true }).fill('portal-password');
   await page.getByRole('button', { name: 'Thêm ngay' }).click();
   await page.getByRole('button', { name: 'Đóng' }).click();
   await page.getByRole('button', { name: /Quay lại/ }).click();

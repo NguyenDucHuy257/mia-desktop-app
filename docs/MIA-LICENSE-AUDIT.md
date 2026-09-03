@@ -470,15 +470,17 @@ Packaged Windows matrix:
 
 Current release report still blocks production claims on Windows code signing and clean-VM installer/update coverage.
 
-## 11. Feature flag và rollout
+## 11. Cấu hình và rollout
 
-Use a main-process configuration such as `MIA_LICENSE_V2_ENABLED`, never a renderer `VITE_*` secret. Feature flag disabled means existing desktop startup is unchanged.
+Packaged MIA luôn bật KEYV2, khóa endpoint tại `https://gotax.vn` và fail-closed.
+`MIA_LICENSE_V2_ENABLED`, endpoint override và HTTP localhost chỉ phục vụ development;
+chúng không thể tắt hoặc đổi máy chủ bản quyền của bản đóng gói.
 
 Rollout:
 
 1. audit/server data analyzer;
 2. patch shared `/verify-key-v2` với MIA-only dispatch, giữ nguyên legacy endpoint;
-3. client V2 behind disabled flag;
+3. client V2 fail-closed ở startup, renderer và business IPC;
 4. internal fixtures and clean Windows VM;
 5. pilot verified V1/V2 cohorts;
 6. measure silent/ambiguous/manual/error rates;
@@ -489,7 +491,7 @@ Rollout:
 
 - Không xóa hoặc rewrite legacy row trong `MIA/vip.txt`; migration append canonical row và giữ original row.
 - Backup toàn `/opt/keys_app` và riêng `/opt/keys_app/MIA` trước patch.
-- Client feature flag có thể trả startup về behavior cũ mà không xóa protected profile/customer data.
+- Không rollback bản đóng gói về behavior bỏ qua license; rollback chỉ được dùng một bản KEYV2 đã xác minh khác.
 - Network failure phải hiển thị retry; không được biến thành `no_match` hoặc tự tạo identity/license khác.
 - Rollback restore nguyên shared-server snapshot để code/data nhất quán; không mutate riêng namespace tool khác.
 
@@ -528,6 +530,6 @@ Phần đã triển khai:
 - React license gate cho migration, Phone Form, activation, retry và settings;
 - deployment patch `shared_key_server_mia/` mở rộng `auth.py` cho `tool=MIA`, không tạo service/database/route mới;
 - mọi server operation bắt buộc `tool=MIA`; các namespace MIA2/MIA3/GBOT/IDQUICK/GSOFT không bị mutate;
-- feature flag `MIA_LICENSE_V2_ENABLED` mặc định tắt, nên production startup hiện tại không đổi cho đến khi rollout được phê duyệt.
+- packaged startup luôn xác minh KEYV2; chỉ `valid=true`, `expired=false`, `reason="ok"` mới mở workspace và business IPC.
 
 Trạng thái: **implementation ready; production deployment pending**. Còn cần quyền `/opt/keys_app`, backup/restore rehearsal, authorized four-way smoke fixtures, canonical legacy snapshot trước rollout, code signing và clean Windows VM/NSIS upgrade verification.

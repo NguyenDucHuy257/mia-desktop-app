@@ -5,12 +5,13 @@ import App from '../../src/App';
 import { AppShell } from '../../src/components/AppShell';
 
 describe('MIA desktop shell', () => {
-  it('renders the production shell without synthetic customer rows', () => {
+  it('fails closed without the Electron license bridge', () => {
     const html = renderToStaticMarkup(createElement(App));
 
     expect(html).toContain('MIA TOOL 2026');
-    expect(html).toContain('Quản lý HĐĐT');
-    expect(html).toContain('Đồng bộ dữ liệu');
+    expect(html).toContain('Không thể kiểm tra bản quyền');
+    expect(html).not.toContain('Quản lý HĐĐT');
+    expect(html).not.toContain('Đồng bộ dữ liệu');
     expect(html).not.toContain('0101234567');
     expect(html.match(/class="table-row table-grid"/g)).toBeNull();
   });
