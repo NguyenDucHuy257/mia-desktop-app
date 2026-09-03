@@ -142,7 +142,7 @@ describe('MIA License V2 full synthetic acceptance', () => {
     const canonicalKey = miaV2Key(canonicalDevice, FIXTURE_PHONE);
     const store = memoryStore({ ...savedLicense(), canonical_key: canonicalKey, device_id: canonicalDevice }, null);
     const server = new FakeLicenseServer((request) => activeResponse(request, {
-      recovered: true, reason: 'recovered_existing_device', key: canonicalKey, device_id: canonicalDevice,
+      migrated: false, recovered: true, reason: 'recovered_existing_device', key: canonicalKey, device_id: canonicalDevice,
     }));
     const harness = createHarness({ server, store });
     expect((await harness.instance.initialize()).state).toBe('active');
@@ -170,6 +170,34 @@ describe('MIA License V2 full synthetic acceptance', () => {
       const harness = createHarness({ server, store: memoryStore(null, profile()) });
       expect((await harness.instance.initialize()).state).toBe('expired');
       expect(harness.store.inspect().license).toBeNull();
+    }
+  });
+
+  it('accepts only the documented successful shared-server reasons', async () => {
+    for (const reason of [
+      'ok', 'interim_v2_upgraded', 'recovered_existing_device',
+      'legacy_already_migrated', 'legacy_migrated',
+    ]) {
+      const server = new FakeLicenseServer((request) => activeResponse(request, {
+        migrated: reason.startsWith('legacy_') || reason === 'interim_v2_upgraded',
+        recovered: reason === 'recovered_existing_device',
+        reason,
+      }));
+      const harness = createHarness({ server, store: memoryStore(savedLicense(), profile()) });
+      expect(await harness.instance.initialize()).toMatchObject({ state: 'active', active: true });
+    }
+  });
+
+  it('rejects valid=true for unknown, expired, or incomplete success responses', async () => {
+    for (const response of [
+      { valid: true, expired: false, reason: 'key_not_activated' },
+      { valid: true, expired: true, reason: 'ok' },
+      { valid: true, reason: 'ok' },
+    ]) {
+      const server = new FakeLicenseServer((request) => ({ ...request, ...response }));
+      const store = memoryStore(savedLicense(), profile());
+      const harness = createHarness({ server, store });
+      expect(await harness.instance.initialize()).toMatchObject({ state: 'error', active: false, reason: 'invalid_response' });
     }
   });
 

@@ -36,6 +36,12 @@ describe('MIA TOOL 2026 installer branding', () => {
     expect(terms).toContain('kiểm tra, đối chiếu số liệu');
   });
 
+  it('stores Vietnamese NSIS text as UTF-8 with BOM', () => {
+    for (const path of ['installer-resources/installer.nsh', 'installer-resources/installer-license.txt']) {
+      expect([...readFileSync(path).subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    }
+  });
+
   it('provides NSIS artwork at the required bitmap dimensions', () => {
     expect(bitmapDimensions('installer-resources/installerSidebar.bmp')).toEqual({ width: 164, height: 314 });
     expect(bitmapDimensions('installer-resources/installerHeader.bmp')).toEqual({ width: 150, height: 57 });

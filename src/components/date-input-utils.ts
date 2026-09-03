@@ -5,6 +5,16 @@ export interface StoredDateRange {
   dateTo: string;
 }
 
+export function currentYearDateRange(now = new Date()): StoredDateRange {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return {
+    dateFrom: `${year}-01-01`,
+    dateTo: `${year}-${month}-${day}`,
+  };
+}
+
 export function displayDate(value: string) {
   const [year, month, day] = value.split('-');
   return year && month && day ? `${day}/${month}/${year}` : '';

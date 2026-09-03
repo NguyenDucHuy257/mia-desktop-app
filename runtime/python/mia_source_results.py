@@ -26,6 +26,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
+from mia_export_paths import direction_export_directory, export_direction_label
+
 
 logger = logging.getLogger("mia.excel_export")
 ExportProgressCallback = Callable[[dict[str, Any]], None]
@@ -278,15 +280,14 @@ def _identity_component(value: Any, *, numeric: bool = False) -> str:
 
 
 def _invoice_key(fields: dict[str, Any], direction: str, query_type: str | None = None) -> str:
-    """Stable business identity shared by Overview and every Detail line."""
-    return "|".join((
-        _identity_component(direction),
-        _identity_component(query_type or fields.get("query_type") or "query"),
-        _identity_component(fields.get("nbmst")),
-        _identity_component(fields.get("khhdon")),
-        _identity_component(fields.get("shdon"), numeric=True),
-        _identity_component(fields.get("khmshdon"), numeric=True),
-    ))
+    """Canonical business identity; query type is collection provenance only."""
+    del query_type
+    from app.utils.invoice_identity import canonical_invoice_identity
+
+    identity = canonical_invoice_identity(
+        str(fields.get("company_tax_code") or ""), direction, fields
+    )
+    return "|".join(identity)
 
 
 def _filter_text(value: Any) -> str:
@@ -337,6 +338,28 @@ def _as_decimal(value: Any) -> Decimal | None:
         return Decimal(text)
     except (InvalidOperation, ValueError):
         return None
+
+
+def _as_source_decimal(value: Any) -> Decimal | None:
+    """Parse normalized source/SQLite numbers without locale ambiguity.
+
+    Detail line values are persisted by ``InvoiceDetailRepository`` as
+    canonical Decimal text (for example ``76800.000``).  The presentation
+    parser above intentionally accepts Vietnamese grouping text, where a
+    single three-digit suffix can mean thousands.  Reusing it for persisted
+    source values turned ``76800.000`` into ``76800000``.  Canonical numeric
+    text must therefore be parsed as a decimal first; formatted legacy values
+    still fall back to the tolerant presentation parser.
+    """
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    text = str(value).strip()
+    if re.fullmatch(r"[+-]?[0-9]+(?:\.[0-9]+)?", text):
+        try:
+            return Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None
+    return _as_decimal(value)
 
 
 def _column_filter_matches(value: Any, rule: Any) -> bool:
@@ -472,13 +495,25 @@ def _result_context(backend, query: dict[str, Any]):
         directions = base_directions
 
     selected_query_type = query.get("query_type")
+    selected_query_types = query.get("query_types")
     if selected_query_type not in (None, "query", "sco-query"):
+        raise ValueError("invalid_result_query_type")
+    if selected_query_types is not None and (
+        not isinstance(selected_query_types, list)
+        or not selected_query_types
+        or len(selected_query_types) > 2
+        or len(set(selected_query_types)) != len(selected_query_types)
+        or any(value not in {"query", "sco-query"} for value in selected_query_types)
+        or selected_query_type is not None
+    ):
         raise ValueError("invalid_result_query_type")
     base_query_types = list(
         base_job.parameters.get("query_types") or ("query", "sco-query")
     )
     query_types = (
-        [str(selected_query_type)] if selected_query_type else base_query_types
+        [str(selected_query_type)] if selected_query_type
+        else [str(value) for value in selected_query_types] if selected_query_types
+        else base_query_types
     )
 
     database_path = (
@@ -592,7 +627,6 @@ def _result_schema(kind: str, context) -> tuple[tuple[str, str], ...]:
     from app.config.crawl_config import query_type_to_category
 
     query_type = context["query_types"][0]
-    context["query_types"] = [query_type]
     category = query_type_to_category(query_type)
     direction = context["directions"][0] if context["directions"] else "purchase"
     return _overview_template_schema(category, direction)
@@ -626,7 +660,14 @@ def _project_fields(
     context,
 ) -> dict[str, Any]:
     if kind == "details":
-        return {key: fields.get(key) for key, _ in schema}
+        projected = {key: fields.get(key) for key, _ in schema}
+        for key in NUMBER_RESULT_FIELDS | PERCENT_RESULT_FIELDS:
+            if key not in projected:
+                continue
+            parsed = _as_source_decimal(projected[key])
+            if parsed is not None:
+                projected[key] = _decimal_result(parsed)
+        return projected
 
     from app.config.crawl_config import query_type_to_category
 
@@ -651,6 +692,7 @@ def _iter_matching_rows(kind: str, context, schema, search: str, column_filters:
             for item in page.get("items") or ():
                 safe = _safe_fields(item)
                 safe["direction"] = direction
+                safe.setdefault("company_tax_code", context["base_job"].company_tax_code)
                 projected = _project_fields(kind, safe, schema, context)
                 if _search_matches(safe, search) and _matches_column_filters(projected, column_filters):
                     yield safe, projected, _invoice_key(
@@ -660,6 +702,50 @@ def _iter_matching_rows(kind: str, context, schema, search: str, column_filters:
             if not pagination.get("has_more") or not pagination.get("next_cursor"):
                 break
             cursor = str(pagination["next_cursor"])
+
+
+def _deduplicated_matching_rows(kind: str, context, schema, search: str, column_filters: Any):
+    """Return a globally ordered combined-source dataset without false dedupe.
+
+    Overview duplicates collapse by the project's canonical invoice identity.
+    Detail lines stay intact; only one complete source group is selected when
+    the same canonical parent invoice was returned by both portal endpoints.
+    """
+    rows = list(_iter_matching_rows(kind, context, schema, search, column_filters))
+    if len(context["query_types"]) < 2:
+        return rows
+    if kind == "overview":
+        unique: OrderedDict[str, tuple[dict[str, Any], dict[str, Any], str]] = OrderedDict()
+        for row in rows:
+            unique.setdefault(row[2], row)
+        return sorted(unique.values(), key=_combined_result_sort_key)
+
+    invoice_groups: OrderedDict[str, dict[str, list[tuple[dict[str, Any], dict[str, Any], str]]]] = OrderedDict()
+    for row in rows:
+        source = str(row[0].get("query_type") or "query")
+        invoice_groups.setdefault(row[2], {}).setdefault(source, []).append(row)
+    output = []
+    for sources in invoice_groups.values():
+        source, selected = max(
+            sources.items(), key=lambda entry: (len(entry[1]), entry[0] == "query")
+        )
+        del source
+        output.extend(selected)
+    return sorted(output, key=_combined_result_sort_key)
+
+
+def _combined_result_sort_key(row):
+    safe, _projected, invoice_key = row
+    invoice_number = _as_decimal(safe.get("shdon"))
+    line_number = _as_decimal(safe.get("stt") or safe.get("line_number"))
+    return (
+        str(safe.get("nlap_date") or safe.get("nlap") or safe.get("tdlap") or ""),
+        str(safe.get("direction") or ""),
+        str(safe.get("khhdon") or "").casefold(),
+        (0, invoice_number) if invoice_number is not None else (1, str(safe.get("shdon") or "").casefold()),
+        invoice_key,
+        (0, line_number) if line_number is not None else (1, str(safe.get("id") or "")),
+    )
 
 
 def _result_item(safe: dict[str, Any], projected: dict[str, Any], direction: str, context, excluded_keys) -> dict[str, Any]:
@@ -692,7 +778,7 @@ def _read_sorted_results(kind: str, query: dict[str, Any], context, schema, excl
         raise ValueError("invalid_result_sort")
     search = str(query.get("search") or "").strip().casefold()
     filters = query.get("column_filters") or {}
-    rows = list(_iter_matching_rows(kind, context, schema, search, filters))
+    rows = _deduplicated_matching_rows(kind, context, schema, search, filters)
     raw_populated = [row for row in rows if row[1].get(column) not in (None, "")]
     parsed = [(row, _as_decimal(row[1].get(column))) for row in raw_populated]
     numeric_ratio = sum(value is not None for _row, value in parsed) / max(1, len(parsed))
@@ -790,7 +876,7 @@ def _resolve_excluded_keys(backend, exclusion: Any) -> frozenset[str]:
             schema = _result_schema(str(rule["kind"]), context)
             search = str(query.get("search") or "").strip().casefold()
             except_keys = {str(value) for value in rule.get("except_keys") or ()}
-            for _safe, _fields, invoice_key in _iter_matching_rows(
+            for _safe, _fields, invoice_key in _deduplicated_matching_rows(
                 str(rule["kind"]), context, schema, search, query.get("column_filters")
             ):
                 if invoice_key not in except_keys:
@@ -811,7 +897,7 @@ def _result_analysis(backend, kind: str, context, schema, search: str, column_fi
         row_count = 0
         invoice_keys: set[str] = set()
         totals = {field: Decimal("0") for field in MONETARY_RESULT_FIELDS}
-        for _safe, fields, invoice_key in _iter_matching_rows(
+        for _safe, fields, invoice_key in _deduplicated_matching_rows(
             kind, context, schema, search, column_filters
         ):
             matching_row_count += 1
@@ -866,6 +952,31 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
         return _read_sorted_results(
             kind, query, context, schema, excluded_keys, analysis, limit
         )
+    if len(context["query_types"]) > 1:
+        rows = _deduplicated_matching_rows(kind, context, schema, search, column_filters)
+        offset = _decode_sorted_cursor(query.get("cursor"))
+        page_rows = rows[offset:offset + limit]
+        next_offset = offset + len(page_rows)
+        has_more = next_offset < len(rows)
+        return {
+            "items": [
+                _result_item(safe, fields, safe["direction"], context, excluded_keys)
+                for safe, fields, _invoice_key_value in page_rows
+            ],
+            "columns": columns,
+            "column_labels": column_labels,
+            "column_types": {
+                key: "percent" if key in PERCENT_RESULT_FIELDS else "number"
+                for key in columns if key in NUMBER_RESULT_FIELDS or key in PERCENT_RESULT_FIELDS
+            },
+            "total_count": analysis["matching_row_count"],
+            "aggregate": analysis,
+            "pagination": {
+                "limit": limit,
+                "has_more": has_more,
+                "next_cursor": _encode_sorted_cursor(next_offset) if has_more else None,
+            },
+        }
     direction_index, source_cursor = _decode_page_cursor(query.get("cursor"))
     directions = context["directions"]
 
@@ -898,6 +1009,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
         for item in page.get("items") or ():
             safe = _safe_fields(item)
             safe["direction"] = direction
+            safe.setdefault("company_tax_code", context["base_job"].company_tax_code)
             projected = _project_fields(kind, safe, schema, context)
             if not _search_matches(safe, search) or not _matches_column_filters(projected, column_filters):
                 continue
@@ -986,7 +1098,7 @@ for _overview_field, _detail_field, _label in RECONCILIATION_MONEY_FIELDS:
 
 
 def _decimal_or_zero(value: Any) -> Decimal:
-    return _as_decimal(value) or Decimal("0")
+    return _as_source_decimal(value) or Decimal("0")
 
 
 def _canonical_decimal(value: Decimal) -> Decimal:
@@ -1003,7 +1115,7 @@ def _normalize_reconciliation_money(value: Any) -> Decimal | None:
     performed after both sides are quantized to one đồng, not merely formatted
     that way in React.
     """
-    parsed = _as_decimal(value)
+    parsed = _as_source_decimal(value)
     if parsed is None:
         return None
     return _canonical_decimal(parsed.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
@@ -1498,7 +1610,7 @@ def read_result_facets(backend, query: dict[str, Any]) -> dict[str, Any]:
     limit = max(1, min(500, int(query.get("facet_limit") or 250)))
     values: dict[str, Any] = {}
     truncated = False
-    for _safe, fields, _invoice_key_value in _iter_matching_rows(kind, context, schema, search, filters):
+    for _safe, fields, _invoice_key_value in _deduplicated_matching_rows(kind, context, schema, search, filters):
         value = fields.get(column)
         normalized = _filter_text(value).casefold()
         values.setdefault(normalized, value)
@@ -1535,6 +1647,7 @@ def _all_overview_fields(
         for item in page.get("items") or ():
             fields = _safe_fields(item)
             fields["direction"] = direction
+            fields.setdefault("company_tax_code", context["base_job"].company_tax_code)
             projected = _project_fields("overview", fields, schema, projection_context)
             if (
                 _search_matches(fields, search)
@@ -1606,10 +1719,7 @@ def _grouped_result_filename(
     safe_tax_code = re.sub(r"[^0-9A-Za-z._-]+", "_", company_tax_code).strip("._-")
     if not safe_tax_code:
         safe_tax_code = "MIA"
-    direction_label = (
-        "Mua vào" if direction == "purchase" else
-        "Bán ra" if direction == "sold" else "Mua vào và Bán ra"
-    )
+    direction_label = export_direction_label(direction)
     scope_label = {
         "overview": "Tổng quan", "details": "Chi tiết",
         "reconciliation": "Đối chiếu Tổng quan và Chi tiết",
@@ -1621,20 +1731,9 @@ def _grouped_result_filename(
 
 
 def _result_output_directory(
-    destination: Path, company_tax_code: str, scope: str,
-    date_from: str, date_to: str,
+    destination: Path, company_tax_code: str, direction: str,
 ) -> Path:
-    safe_tax_code = re.sub(
-        r"[^0-9A-Za-z._-]+", "_", company_tax_code
-    ).strip("._-") or "MIA"
-    scope_label = {
-        "overview": "Tổng quan", "details": "Chi tiết",
-        "reconciliation": "Đối chiếu Tổng quan và Chi tiết",
-    }[scope]
-    return (
-        destination / safe_tax_code
-        / f"{scope_label} {date_from}_{date_to}"
-    )
+    return direction_export_directory(destination, company_tax_code, direction)
 
 
 def _database_revision(database_path: Path) -> tuple[tuple[int, int], ...]:
@@ -2314,6 +2413,41 @@ def _write_reconciliation_excel(
         progress("save", 1, 1)
 
 
+def _merge_combined_export_plans(plans: list[dict[str, Any]], company_tax_code: str) -> dict[str, Any]:
+    """Merge both real portal sources into one source-template workbook plan."""
+    if len(plans) == 1:
+        return plans[0]
+    preferred = next((plan for plan in plans if plan["query_type"] == "query"), plans[0])
+    by_invoice: OrderedDict[str, tuple[str, Any]] = OrderedDict()
+    for plan in plans:
+        for record in plan["payload"]:
+            fields = dict(record)
+            fields.setdefault("company_tax_code", company_tax_code)
+            identity = _invoice_key(fields, plan["direction"], plan["query_type"])
+            existing = by_invoice.get(identity)
+            if existing is None or (existing[0] != "query" and plan["query_type"] == "query"):
+                by_invoice[identity] = (plan["query_type"], record)
+
+    def record_sort_key(record: dict[str, Any]):
+        fields = dict(record)
+        fields.setdefault("company_tax_code", company_tax_code)
+        number = _as_decimal(fields.get("shdon"))
+        return (
+            str(fields.get("nlap_date") or fields.get("nlap") or fields.get("tdlap") or ""),
+            str(fields.get("khhdon") or "").casefold(),
+            (0, number) if number is not None else (1, str(fields.get("shdon") or "").casefold()),
+            _invoice_key(fields, preferred["direction"]),
+        )
+
+    return {
+        **preferred,
+        # Use the existing electronic template as the shared column contract;
+        # cash-register rows are appended into the same data region.
+        "query_type": "query",
+        "payload": sorted((item[1] for item in by_invoice.values()), key=record_sort_key),
+    }
+
+
 def _export_results_impl(
     backend,
     value: dict[str, Any],
@@ -2346,6 +2480,7 @@ def _export_results_impl(
         "date_to": str(value["date_to"]),
         "direction": value.get("direction"),
         "query_type": value.get("query_type"),
+        "query_types": value.get("query_types"),
     }
     context_started = time.perf_counter()
     context = _result_context(backend, query)
@@ -2392,7 +2527,7 @@ def _export_results_impl(
         reporter.start_unit("reconciliation")
         output_directory = _result_output_directory(
             destination, context["base_job"].company_tax_code,
-            "reconciliation", context["date_from"], context["date_to"],
+            str(value.get("direction") or "all"),
         )
         target = _available_path(
             output_directory,
@@ -2455,6 +2590,7 @@ def _export_results_impl(
                         search=scope_search, column_filters=scope_columns
                     )
                     for record in payload:
+                        record.setdefault("company_tax_code", context["base_job"].company_tax_code)
                         record_key = _invoice_key(record, direction, query_type)
                         if record_key in excluded_keys:
                             continue
@@ -2488,6 +2624,13 @@ def _export_results_impl(
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for plan in plans:
         groups.setdefault((plan["scope"], plan["direction"]), []).append(plan)
+
+    if len(context["query_types"]) > 1:
+        groups = {
+            key: [_merge_combined_export_plans(group, context["base_job"].company_tax_code)]
+            for key, group in groups.items()
+        }
+        plans = [plan for group in groups.values() for plan in group]
 
     # One unit per rendered source sheet plus one real combine/save unit for
     # each final workbook. Query types no longer imply separate final files.
@@ -2569,9 +2712,7 @@ def _export_results_impl(
             output_directory = _result_output_directory(
                 destination,
                 context["base_job"].company_tax_code,
-                scope,
-                context["date_from"],
-                context["date_to"],
+                str(value.get("direction") or "all"),
             )
             output_directory.mkdir(parents=True, exist_ok=True)
             target = _available_path(

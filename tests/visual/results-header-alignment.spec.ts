@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 
 const viewports = [
   { width: 1920, height: 554 },

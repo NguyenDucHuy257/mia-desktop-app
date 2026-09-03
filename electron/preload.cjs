@@ -1,7 +1,22 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+async function invokeIpc(channel, ...args) {
+  try {
+    return await ipcRenderer.invoke(channel, ...args);
+  } catch (cause) {
+    const message = String(cause?.message || cause || 'MIA IPC request failed');
+    if (message.includes('LICENSE_REQUIRED')) {
+      const error = new Error('LICENSE_REQUIRED');
+      error.name = 'MiaRuntimeError';
+      error.code = 'LICENSE_REQUIRED';
+      throw error;
+    }
+    throw cause;
+  }
+}
+
 async function invokeResult(channel, ...args) {
-  const result = await ipcRenderer.invoke(channel, ...args);
+  const result = await invokeIpc(channel, ...args);
   if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') {
     throw new Error('invalid IPC response');
   }
@@ -47,7 +62,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     clear: () => invokeResult('mia:jobs:clear'),
   }),
   artifacts: Object.freeze({
-    selectDirectory: () => ipcRenderer.invoke('mia:artifacts:select-directory'),
+    selectDirectory: () => invokeIpc('mia:artifacts:select-directory'),
     export: (request) => invokeResult('mia:artifacts:export', request),
     cancel: () => invokeResult('mia:artifacts:cancel'),
     targets: (request) => invokeResult('mia:artifacts:targets', request),
@@ -60,7 +75,7 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     batchStatus: (request) => invokeResult('mia:artifacts:batch-status', request),
     batchFailures: (request) => invokeResult('mia:artifacts:batch-failures', request),
     cancelBatch: () => invokeResult('mia:artifacts:batch-cancel', {}),
-    openDirectory: (directory) => ipcRenderer.invoke('mia:artifacts:open-directory', directory),
+    openDirectory: (directory) => invokeIpc('mia:artifacts:open-directory', directory),
     onExportProgress: (listener) => {
       if (typeof listener !== 'function') throw new TypeError('invalid export progress listener');
       const wrapped = (_event, progress) => listener(progress);
@@ -75,21 +90,21 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     },
   }),
   preferences: Object.freeze({
-    get: () => ipcRenderer.invoke('mia:preferences:get'),
-    set: (value) => ipcRenderer.invoke('mia:preferences:set', value),
+    get: () => invokeIpc('mia:preferences:get'),
+    set: (value) => invokeIpc('mia:preferences:set', value),
   }),
   logs: Object.freeze({
-    list: () => ipcRenderer.invoke('mia:logs:list'),
-    entries: () => ipcRenderer.invoke('mia:logs:entries'),
-    clear: () => ipcRenderer.invoke('mia:logs:clear'),
-    write: (level, event, fields = {}) => ipcRenderer.invoke('mia:logs:write', { level, event, fields }),
+    list: () => invokeIpc('mia:logs:list'),
+    entries: () => invokeIpc('mia:logs:entries'),
+    clear: () => invokeIpc('mia:logs:clear'),
+    write: (level, event, fields = {}) => invokeIpc('mia:logs:write', { level, event, fields }),
   }),
   updates: Object.freeze({
-    status: () => ipcRenderer.invoke('mia:updates:status'),
-    check: () => ipcRenderer.invoke('mia:updates:check'),
-    download: () => ipcRenderer.invoke('mia:updates:download'),
-    install: () => ipcRenderer.invoke('mia:updates:install'),
-    setChannel: (channel) => ipcRenderer.invoke('mia:updates:channel', channel),
+    status: () => invokeIpc('mia:updates:status'),
+    check: () => invokeIpc('mia:updates:check'),
+    download: () => invokeIpc('mia:updates:download'),
+    install: () => invokeIpc('mia:updates:install'),
+    setChannel: (channel) => invokeIpc('mia:updates:channel', channel),
   }),
   results: Object.freeze({
     overview: (query) => invokeResult('mia:results:overview', query),
@@ -98,6 +113,6 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     facets: (query) => invokeResult('mia:results:facets', query),
   }),
   external: Object.freeze({
-    open: (url) => ipcRenderer.invoke('mia:external:open', url),
+    open: (url) => invokeIpc('mia:external:open', url),
   }),
 }));

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
-import { readLastSyncDateRange } from '../../components/date-input-utils';
+import { currentYearDateRange } from '../../components/date-input-utils';
 import { pageBounds, paginationTokens } from '../../components/pagination-utils';
 import addIcon from '../../assets/figma/add.png';
 import searchIcon from '../../assets/figma/search.png';
@@ -16,6 +16,7 @@ import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
 import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
 import type { AccountConnection, InvoiceDirection, InvoiceSyncState } from '../../lib/api/contracts';
+import { workspaceTaskConflictMessage, type WorkspaceTask } from '../../lib/workspace-task';
 import '../../styles/invoice-refresh.css';
 
 type RowStatus = 'completed' | 'failed' | 'processing' | 'pending' | 'stopped' | 'ready';
@@ -31,7 +32,6 @@ interface InvoiceRow {
   syncState?: InvoiceSyncState;
 }
 
-const DEFAULT_SYNC_RANGE = { dateFrom: '2023-10-01', dateTo: '2023-10-31' };
 const ACCOUNT_PAGE_SIZE = 20;
 
 const rows: InvoiceRow[] = [
@@ -136,9 +136,10 @@ function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
 
 const formatInvoiceCount = (value: number) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(value);
 
-export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults, initialDateFrom, initialDateTo, initialDirection = 'purchase', onDateRangeChange, onDirectionChange }: {
+export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorkspaceTask, onAddAccount, accounts, selectedAccountIds, exportFolder, onExportFolder, onDeleteAccount, onSelectAccount, onSelectAccounts, onViewResults, initialDateFrom, initialDateTo, initialDirection = 'purchase', onDateRangeChange, onDirectionChange }: {
   jobLifecycle: BatchJobLifecycle;
   resultExports: ResultExportLifecycle;
+  activeWorkspaceTask?: WorkspaceTask | null;
   onAddAccount(): void;
   connectionId: string;
   selectedAccountIds: string[];
@@ -155,7 +156,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
   onDateRangeChange?(dateFrom: string, dateTo: string): void;
   onDirectionChange?(direction: InvoiceDirection): void;
 }) {
-  const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : readLastSyncDateRange() ?? DEFAULT_SYNC_RANGE).current;
+  const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : currentYearDateRange()).current;
   const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | null>(null);
   const [resultScopes, setResultScopes] = useState<Array<'overview' | 'detail'>>(['overview']);
   const [direction, setDirection] = useState<InvoiceDirection>(initialDirection);
@@ -221,6 +222,8 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
   }
 
   async function exportAllResults() {
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'result-export');
+    if (conflict) { setSelectionError(conflict); return; }
     if (!selectedAccountIds.length) { setSelectionError('Vui lòng chọn ít nhất một tài khoản để tải kết quả.'); return; }
     if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải kết quả.'); return; }
     if (resultExports.active) {
@@ -273,6 +276,8 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
 
   function startJob(syncMode: 'new' | 'supplement') {
     if (batchActive) return;
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'sync');
+    if (conflict) { setSelectionError(conflict); setMenu(null); return; }
     if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
     const syncScopes = ['overview', 'detail'] as const;
     diagnosticLog('sync_clicked', {
@@ -474,7 +479,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, onAddAccoun
                 className="invoice-export-all-button"
                 type="button"
                 data-exporting={bulkExportWorking}
-                disabled={resultExports.active || selectedAccountIds.length === 0}
+                disabled={bulkExportWorking || selectedAccountIds.length === 0}
                 aria-label={bulkExportWorking
                   ? `Tiến trình tải kết quả ${resultExports.accountIndex}/${resultExports.accountTotal}, ${Math.round(resultExports.percent)}%`
                   : 'Tải xuống kết quả'}

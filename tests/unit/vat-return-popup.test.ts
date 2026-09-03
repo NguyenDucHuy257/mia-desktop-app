@@ -1,10 +1,34 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NoticeDialog } from '../../src/components/NoticeDialog';
-import { vatReturnExportErrorFeedback } from '../../src/features/artifacts/VatReturnExportPage';
+import { loadVatReturnCoverage, vatReturnExportErrorFeedback } from '../../src/features/artifacts/VatReturnExportPage';
 
 describe('VAT return popup semantics', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('retries a cold transient coverage timeout without exposing a false error', async () => {
+    const coverage = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('timed out'), { code: 'runtime_timeout' }))
+      .mockResolvedValueOnce({ accounts: [{ connection_id: 'conn_1' }] });
+    vi.stubGlobal('window', {
+      miaRuntime: { artifacts: { vatReturnCoverage: coverage } },
+      setTimeout: globalThis.setTimeout,
+    });
+
+    await expect(loadVatReturnCoverage(['conn_1'], {
+      dateFrom: '2026-01-01', dateTo: '2026-09-03',
+    })).resolves.toEqual([{ connection_id: 'conn_1' }]);
+    expect(coverage).toHaveBeenCalledTimes(2);
+  });
+
+  it('maps the broker writer lock to a warning instead of a database failure', () => {
+    expect(vatReturnExportErrorFeedback({ code: 'artifact_task_active' })).toEqual({
+      kind: 'warning',
+      message: 'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.',
+    });
+  });
+
   it.each([
     ['success', '✓'],
     ['warning', '!'],

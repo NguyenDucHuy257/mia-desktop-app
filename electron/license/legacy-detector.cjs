@@ -2,10 +2,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const PHONE_RE = /^0[0-9]{9}$/;
+const SUPPORT_PHONES = new Set(['0865219286', '0383466992']);
 
 function normalizePhone(value) {
   const normalized = String(value ?? '').trim().replace(/[\s.()-]+/g, '');
-  return PHONE_RE.test(normalized) && normalized !== '0000000000' ? normalized : null;
+  return PHONE_RE.test(normalized) && normalized !== '0000000000' && !SUPPORT_PHONES.has(normalized)
+    ? normalized
+    : null;
 }
 
 function readLegacyPhones(userDataDirectory, additionalPaths = []) {
@@ -20,7 +23,7 @@ function readLegacyPhones(userDataDirectory, additionalPaths = []) {
     try {
       if (!path.isAbsolute(filename) || !fs.existsSync(filename) || fs.statSync(filename).size > 128) continue;
       const phone = normalizePhone(fs.readFileSync(filename, 'utf8'));
-      if (phone && !seen.has(phone)) {
+      if (phone && !SUPPORT_PHONES.has(phone) && !seen.has(phone)) {
         seen.add(phone);
         phones.push(phone);
       }
@@ -51,4 +54,4 @@ function buildLegacyDetection(evidence, phones = []) {
   });
 }
 
-module.exports = { buildLegacyDetection, normalizePhone, readLegacyPhones };
+module.exports = { SUPPORT_PHONES, buildLegacyDetection, normalizePhone, readLegacyPhones };

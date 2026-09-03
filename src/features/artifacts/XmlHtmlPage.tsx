@@ -10,6 +10,7 @@ import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
 import type { AccountConnection, InvoiceDirection } from '../../lib/api/contracts';
 import type { ArtifactAccountSnapshot, ArtifactCoverageAccount, ArtifactFailureRecord, ArtifactSnapshotRequest, InvoiceArtifactKind } from '../../lib/runtime-bridge';
 import type { ArtifactDownloadLifecycle } from './use-artifact-download-lifecycle';
+import { workspaceTaskConflictMessage, type WorkspaceTask } from '../../lib/workspace-task';
 import { CoverageBadge, formatDate } from './ArtifactCoverageBadge';
 import '../../styles/xml-html.css';
 import '../../styles/results-enhancements.css';
@@ -135,7 +136,7 @@ function ArtifactFailureView({ account, lifecycle, onBack }: {
   </section>;
 }
 
-export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, lifecycle, selection, onSelectionChange, coverageRevision, pdfConcurrency }: {
+export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, lifecycle, selection, onSelectionChange, coverageRevision, pdfConcurrency, activeWorkspaceTask }: {
   accounts: AccountConnection[];
   selectedConnectionIds: string[];
   onSelectAccount(id: string): void;
@@ -147,6 +148,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   onSelectionChange(value: ArtifactSelectionState): void;
   coverageRevision: number;
   pdfConcurrency: number;
+  activeWorkspaceTask?: WorkspaceTask | null;
 }) {
   const [menu, setMenu] = useState<'direction' | null>(null);
   const [kinds, setKinds] = useState<InvoiceArtifactKind[]>(['xml', 'html']);
@@ -265,6 +267,8 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   }
   async function chooseFolder() { const selected = await window.miaRuntime?.artifacts.selectDirectory(); if (selected) onFolder(selected); }
   async function startDownload() {
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'artifact-download');
+    if (conflict) { setFeedback(conflict); return; }
     if (!selectedConnectionIds.length) { setFeedback('Vui lòng chọn ít nhất một tài khoản.'); return; }
     if (!kinds.length) { setFeedback('Vui lòng chọn ít nhất một định dạng XML, HTML hoặc PDF.'); return; }
     if (!folder.trim()) { setFeedback('Vui lòng chọn thư mục lưu trữ.'); return; }

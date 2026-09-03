@@ -8,7 +8,7 @@ describe('result IPC broker', () => {
   it('normalizes safe cursor queries and enforces 50 rows per page', () => {
     expect(validateQuery({ connection_id: 'account-1' })).toEqual({
       connection_id: 'account-1', cursor: null, limit: 50, search: '', direction: null,
-      query_type: null, date_from: null, date_to: null,
+      query_type: null, query_types: null, date_from: null, date_to: null,
       column_filters: {}, exclusion: { keys: [], rules: [] }, sort: null,
     });
     expect(validateQuery({ connection_id: 'account-1', limit: 50 }).limit).toBe(50);
@@ -36,6 +36,17 @@ describe('result IPC broker', () => {
     expect(() => validateQuery({ connection_id: 'account-1', query_type: 'bad' })).toThrow();
     expect(() => validateQuery({ connection_id: 'account-1', date_from: '2026-08-01' })).toThrow();
     expect(() => validateQuery({ connection_id: 'account-1', date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+  });
+
+  it('accepts both real query types without inventing a combined backend value', () => {
+    expect(validateQuery({
+      connection_id: 'account-1', query_type: null,
+      query_types: ['query', 'sco-query'],
+    })).toMatchObject({ query_type: null, query_types: ['query', 'sco-query'] });
+    expect(() => validateQuery({ connection_id: 'account-1', query_types: ['all'] })).toThrow();
+    expect(() => validateQuery({
+      connection_id: 'account-1', query_type: 'query', query_types: ['query', 'sco-query'],
+    })).toThrow();
   });
 
   it.each(['overview', 'details', 'reconciliation'])('routes %s only to its allowlisted runtime method', async (method) => {

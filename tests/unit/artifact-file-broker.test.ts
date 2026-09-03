@@ -49,6 +49,15 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-08-01', date_to: '2026-08-31', query_type: 'bad' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: [], date_from: '2026-08-01', date_to: '2026-08-31' })).toThrow();
     expect(() => validateExportRequest({ destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'], date_from: '2026-09-01', date_to: '2026-08-31' })).toThrow();
+    expect(validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'],
+      date_from: '2026-08-01', date_to: '2026-08-31',
+      query_types: ['query', 'sco-query'],
+    })).toMatchObject({ query_type: null, query_types: ['query', 'sco-query'] });
+    expect(() => validateExportRequest({
+      destination, connection_ids: ['conn_1'], kinds: ['excel'], result_scopes: ['overview'],
+      date_from: '2026-08-01', date_to: '2026-08-31', query_types: ['combined'],
+    })).toThrow('invalid_result_export_query_type');
   });
 
   it('preserves allowlisted XML/HTML invoice filters', () => {
@@ -231,16 +240,41 @@ describe('artifact filesystem boundary', () => {
     expect(() => validateVatReturnCoverageRequest({ ...request, directions: ['purchase'] })).toThrow();
     const runtime = { invoke: vi.fn().mockResolvedValue({ ...request, accounts: [] }) };
     await expect(createArtifactBroker(() => runtime).vatReturnCoverage(request)).resolves.toMatchObject({ ok: true });
-    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.vat_return.coverage', request);
+    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.vat_return.coverage', request, { timeoutMs: 30000 });
   });
 
   it('validates and forwards one VAT return workbook export', async () => {
     const request = { destination: path.resolve(tmpdir(), 'vat'), connection_ids: ['conn_1'], date_from: '2026-01-01', date_to: '2026-03-31' };
     expect(validateVatReturnExportRequest(request)).toEqual(request);
     expect(() => validateVatReturnExportRequest({ ...request, connection_ids: ['conn_1', 'conn_2'] })).toThrow();
-    const runtime = { invoke: vi.fn().mockResolvedValue({ count: 1, files: ['result.xlsx'] }) };
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.export.start') return { task_id: 'vat_1', status: 'running' };
+      if (method === 'artifacts.export.status') return {
+        task_id: 'vat_1', status: 'completed', result: { count: 1, files: ['result.xlsx'] },
+      };
+      throw new Error('unexpected method');
+    }) };
     await expect(createArtifactBroker(() => runtime).vatReturnExport(request)).resolves.toMatchObject({ ok: true, data: { count: 1 } });
-    expect(runtime.invoke).toHaveBeenCalledWith('artifacts.vat_return.export', request, { timeoutMs: 300000 });
+    expect(runtime.invoke.mock.calls).toEqual([
+      ['artifacts.export.start', { ...request, kinds: ['excel'], vat_return: true }, { timeoutMs: 30000 }],
+      ['artifacts.export.status', { task_id: 'vat_1' }, { timeoutMs: 30000 }],
+    ]);
+  });
+
+  it('keeps waiting for a VAT workbook after a transient status timeout', async () => {
+    const request = { destination: path.resolve(tmpdir(), 'vat-retry'), connection_ids: ['conn_1'], date_from: '2026-01-01', date_to: '2026-03-31' };
+    let statusAttempts = 0;
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.export.start') return { task_id: 'vat_retry', status: 'running' };
+      if (method === 'artifacts.export.status' && statusAttempts++ === 0) {
+        throw Object.assign(new Error('Runtime request timed out.'), { code: 'runtime_timeout' });
+      }
+      return { task_id: 'vat_retry', status: 'completed', result: { count: 1, files: ['result.xlsx'] } };
+    }) };
+
+    await expect(createArtifactBroker(() => runtime).vatReturnExport(request))
+      .resolves.toMatchObject({ ok: true, data: { count: 1 } });
+    expect(statusAttempts).toBe(2);
   });
 
   it('validates unified coverage and batch DTOs including PDF concurrency', () => {
@@ -299,6 +333,24 @@ describe('artifact filesystem boundary', () => {
     });
     await expect(broker.batchStatus({ task_id: 'artifact_done' })).resolves.toMatchObject({ ok: true });
     await expect(broker.cancelBatch({})).resolves.toMatchObject({ ok: true, data: { cancelled: false } });
+  });
+
+  it('rejects a second artifact writer while a unified batch is active', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-exclusive-task');
+    const runtime = { invoke: vi.fn(async (method) => {
+      if (method === 'artifacts.batch.start') return { task_id: 'artifact_busy', status: 'running' };
+      throw new Error('unexpected method');
+    }) };
+    const broker = createArtifactBroker(() => runtime);
+    await broker.startBatch({
+      destination, connection_ids: ['conn_1'], directions: ['purchase'], kinds: ['xml'],
+      date_from: '2026-01-01', date_to: '2026-09-03', pdf_concurrency: 5,
+    });
+
+    await expect(broker.vatReturnExport({
+      destination, connection_ids: ['conn_1'], date_from: '2026-01-01', date_to: '2026-09-03',
+    })).resolves.toMatchObject({ ok: false, error: { code: 'artifact_task_active' } });
+    expect(runtime.invoke).toHaveBeenCalledTimes(1);
   });
 
   it('returns a validated paged structured failure list for the latest batch', async () => {

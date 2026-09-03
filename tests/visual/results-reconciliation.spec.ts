@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 
 test('reconciliation tab shows full-scope warning data in the compact native result table', async ({ page }) => {
   test.setTimeout(90_000);

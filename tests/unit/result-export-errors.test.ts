@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { resultExportErrorMessage } from '../../src/features/results/result-export-errors';
 
 describe('result export error messages', () => {
+  it('explains that another writer is active', () => {
+    expect(resultExportErrorMessage({ code: 'artifact_task_active' })).toBe(
+      'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.',
+    );
+  });
+
   it('maps an empty date range to the specific invoice notice', () => {
     expect(resultExportErrorMessage(
       { code: 'result_export_empty' },

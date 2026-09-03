@@ -1,5 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './licensed-test';
 import { mkdirSync } from 'node:fs';
+import { currentYearDateRange, displayDate } from '../../src/components/date-input-utils';
 
 const account = { connection_id: 'conn_vat', username: '0101234567', company_name: 'CÔNG TY VAT', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
 
@@ -23,10 +24,10 @@ test.beforeEach(async ({ page }) => {
           return { count: 1, files: [finalPath] };
         },
         vatReturnCoverage: async (request: unknown) => {
-          const value = request as { date_from: string };
+          const value = request as { date_from: string; date_to: string };
           if (value.date_from === '2023-10-01') await new Promise((resolve) => setTimeout(resolve, 250));
           const newer = value.date_from === '2023-11-01';
-          return { ...(request as object), accounts: [{ connection_id: accountValue.connection_id, purchase: { direction: 'purchase', ready: true, missing: [] }, sold: newer ? { direction: 'sold', ready: true, missing: [] } : { direction: 'sold', ready: false, missing: [{ scope: 'details', date_from: '2023-10-15', date_to: '2023-10-31' }] } }] };
+          return { ...(request as object), accounts: [{ connection_id: accountValue.connection_id, purchase: { direction: 'purchase', ready: true, missing: [] }, sold: newer ? { direction: 'sold', ready: true, missing: [] } : { direction: 'sold', ready: false, missing: [{ scope: 'details', date_from: value.date_from, date_to: value.date_to }] } }] };
         },
         coverage: async (request: unknown) => ({ ...(request as object), accounts: [] }), snapshot: async (request: unknown) => ({ ...(request as object), accounts: [] }), selectDirectory: async () => 'C:\\MIA', startBatch: async () => ({}), batchStatus: async () => ({}), cancelBatch: async () => ({ cancelled: false }),
       },
@@ -49,6 +50,7 @@ test('new date coverage wins when the previous response returns late', async ({ 
 });
 
 test('VAT return page has reduced controls, dual coverage and blocks incomplete export', async ({ page }) => {
+  const defaultRange = currentYearDateRange();
   const header = page.locator('.artifact-account-header');
   await expect(header.getByRole('heading')).toHaveText('Hỗ trợ lập tờ khai thuế GTGT');
   await expect(header.locator('p')).toHaveText('Tổng hợp số liệu hóa đơn và tạo file Excel tham khảo. Vui lòng kiểm tra, đối chiếu trước khi kê khai chính thức.');
@@ -63,9 +65,9 @@ test('VAT return page has reduced controls, dual coverage and blocks incomplete 
   await expect(table).not.toContainText('Số lượng hóa đơn');
   await expect(table.locator('.artifact-coverage-badge').nth(0)).toContainText('Đã đồng bộ');
   await expect(table.locator('.artifact-coverage-badge').nth(0).locator('.artifact-coverage-heading i')).toContainText('✓');
-  await expect(table.locator('.artifact-coverage-badge').nth(0)).toContainText('01/10/2023 - 31/10/2023');
+  await expect(table.locator('.artifact-coverage-badge').nth(0)).toContainText(`${displayDate(defaultRange.dateFrom)} - ${displayDate(defaultRange.dateTo)}`);
   await expect(table.locator('.artifact-coverage-badge').nth(1).locator('.artifact-coverage-heading i')).toContainText('!');
-  await expect(table.locator('.artifact-coverage-badge').nth(1)).toContainText('Thiếu Chi tiết: 15/10/2023 - 31/10/2023');
+  await expect(table.locator('.artifact-coverage-badge').nth(1)).toContainText(`Thiếu Chi tiết: ${displayDate(defaultRange.dateFrom)} - ${displayDate(defaultRange.dateTo)}`);
   await page.screenshot({ path: 'test-results/vat-return-page.png', fullPage: true });
   await toolbar.getByRole('button', { name: 'Xuất tờ khai thuế GTGT', exact: true }).click();
   const dialog = page.getByRole('alertdialog');

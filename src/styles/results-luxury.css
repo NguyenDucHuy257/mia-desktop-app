@@ -10,6 +10,11 @@
   flex: 0 0 158px;
 }
 
+.results-page.results-page--figma .results-filters--figma > .results-query-type-select {
+  width: 190px;
+  flex-basis: 190px;
+}
+
 .results-page.results-page--figma .results-search-wrap {
   width: min(330px, 28vw);
 }

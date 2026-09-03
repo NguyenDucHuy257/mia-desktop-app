@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
   adjustDateText,
+  currentYearDateRange,
   datePartAtCaret,
   normalizeDateText,
   parseDateText,
 } from '../../src/components/date-input-utils';
 
 describe('date input helpers', () => {
+  it('uses the first day of the local current year through today as the default range', () => {
+    expect(currentYearDateRange(new Date(2026, 8, 3, 12))).toEqual({
+      dateFrom: '2026-01-01',
+      dateTo: '2026-09-03',
+    });
+  });
+
   it('accepts one digit day and month and normalizes them', () => {
     expect(parseDateText('5/8/2026')).toBe('2026-08-05');
     expect(normalizeDateText('5/8/2026')).toBe('05/08/2026');

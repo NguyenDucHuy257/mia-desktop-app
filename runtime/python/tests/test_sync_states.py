@@ -124,6 +124,34 @@ class SyncStateTests(unittest.TestCase):
         self.assertTrue(state["overview_ready"])
         self.assertTrue(state["detail_ready"])
 
+    def test_completed_legacy_job_restores_coverage_without_detail_checkpoint(self):
+        database = self.root / self.tax_code / "db" / "invoices.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("DELETE FROM invoice_detail_checkpoints")
+            connection.commit()
+        legacy_job = SimpleNamespace(
+            job_id="legacy-completed", status="completed",
+            parameters={
+                "directions": ["purchase"],
+                "query_types": ["query", "sco-query"],
+            },
+            progress_state={"modules": {
+                name: {"status": "completed", "months": [{
+                    "from_date": "2025-01-01", "to_date": "2025-01-31",
+                    "status": "completed",
+                }]}
+                for name in ("overview", "detail")
+            }},
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = legacy_job
+        self.backend.repository.invoice_jobs_for_account.return_value = [legacy_job]
+        state = self.backend.sync_states(
+            ["conn_account"], "purchase", "2025-01-01", "2025-01-31"
+        )[0]
+        self.assertEqual(state["status"], "completed")
+        self.assertTrue(state["overview_ready"])
+        self.assertTrue(state["detail_ready"])
+
     def test_overview_ready_without_detail_checkpoint_is_not_completed(self):
         database = self.root / self.tax_code / "db" / "invoices.sqlite3"
         with closing(sqlite3.connect(database)) as connection:

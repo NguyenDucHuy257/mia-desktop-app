@@ -10,8 +10,10 @@ import { useResultExportLifecycle } from './features/results/use-result-export-l
 import { UtilityPage } from './features/artifacts/ArtifactPages';
 import { XmlHtmlPage, type ArtifactSelectionState } from './features/artifacts/XmlHtmlPage';
 import { useArtifactDownloadLifecycle } from './features/artifacts/use-artifact-download-lifecycle';
-import { VatReturnExportPage, type VatReturnSelectionState } from './features/artifacts/VatReturnExportPage';
+import { VatReturnExportPage } from './features/artifacts/VatReturnExportPage';
 import { LicenseGate } from './features/licensing/LicenseGate';
+import { currentYearDateRange } from './components/date-input-utils';
+import type { WorkspaceTask } from './lib/workspace-task';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
@@ -22,6 +24,7 @@ const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   'xml-html': 'XML/HTML',
   'vat-return': 'Xuất tờ khai thuế GTGT',
+  'pdf-lookup': 'Tra cứu PDF gốc',
   mvt: 'Tra cứu MVT',
   logs: 'Lịch sử tải xuống',
   settings: 'Cài đặt hệ thống',
@@ -55,6 +58,7 @@ function DeleteProgressPopup({ progress }: { progress: DeleteProgress }) {
 }
 
 function WorkspaceApp() {
+  const defaultDateRange = useMemo(() => currentYearDateRange(), []);
   const [active, setActive] = useState<NavigationKey>('invoices');
   const [view, setView] = useState<'navigation' | 'add-account' | 'results'>('navigation');
   const [connectionId, setConnectionId] = useState('');
@@ -62,14 +66,23 @@ function WorkspaceApp() {
   const [accounts, setAccounts] = useState<AccountConnection[] | null>(null);
   const [exportFolder, setExportFolder] = useState(DEFAULT_EXPORT_FOLDER);
   const [pdfConcurrency, setPdfConcurrency] = useState(5);
-  const [artifactSelection, setArtifactSelection] = useState<ArtifactSelectionState>({ dateFrom: '2023-10-01', dateTo: '2023-10-31', direction: 'purchase' });
-  const [vatReturnSelection, setVatReturnSelection] = useState<VatReturnSelectionState>({ dateFrom: '2023-10-01', dateTo: '2023-10-31' });
+  const [artifactSelection, setArtifactSelection] = useState<ArtifactSelectionState>({ ...defaultDateRange, direction: 'purchase' });
   const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
+  const [vatReturnExporting, setVatReturnExporting] = useState(false);
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
   const invoiceJobs = useBatchJobLifecycle();
   const resultExports = useResultExportLifecycle();
   const artifactDownloads = useArtifactDownloadLifecycle();
+  const activeWorkspaceTask: WorkspaceTask | null = invoiceJobs.active
+    ? 'sync'
+    : artifactDownloads.active
+      ? 'artifact-download'
+      : resultExports.active
+        ? 'result-export'
+        : vatReturnExporting
+          ? 'vat-return-export'
+          : null;
   const deleteQueue = useRef<string[]>([]);
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
@@ -169,12 +182,14 @@ function WorkspaceApp() {
             initialDateTo={resultRange?.dateTo}
             crawlItem={invoiceJobs.items[connectionId]}
             resultExports={resultExports}
+            activeWorkspaceTask={activeWorkspaceTask}
             onBack={() => setView('navigation')}
           />
         ) : active === 'invoices' ? (
           <InvoiceManagementPage
             jobLifecycle={invoiceJobs}
             resultExports={resultExports}
+            activeWorkspaceTask={activeWorkspaceTask}
             accounts={accounts}
             connectionId={connectionId}
             selectedAccountIds={selectedAccountIds}
@@ -191,9 +206,9 @@ function WorkspaceApp() {
             onDateRangeChange={(dateFrom, dateTo) => setArtifactSelection((current) => ({ ...current, dateFrom, dateTo }))}
             onDirectionChange={(direction) => setArtifactSelection((current) => ({ ...current, direction }))}
           />
-        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} coverageRevision={invoiceJobs.coverageRevision} pdfConcurrency={pdfConcurrency} />
-          : active === 'vat-return' ? <VatReturnExportPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} selection={vatReturnSelection} onSelectionChange={setVatReturnSelection} coverageRevision={invoiceJobs.coverageRevision} />
-          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'guide' ? '' : active === 'logs' ? 'Theo dõi lịch sử tải xuống và hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA TOOL 2026.'} onPdfConcurrencyChange={setPdfConcurrency} />}
+        ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} coverageRevision={invoiceJobs.coverageRevision} pdfConcurrency={pdfConcurrency} activeWorkspaceTask={activeWorkspaceTask} />
+          : active === 'vat-return' ? <VatReturnExportPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} selection={{ dateFrom: artifactSelection.dateFrom, dateTo: artifactSelection.dateTo }} onSelectionChange={({ dateFrom, dateTo }) => setArtifactSelection((current) => ({ ...current, dateFrom, dateTo }))} coverageRevision={invoiceJobs.coverageRevision} activeWorkspaceTask={activeWorkspaceTask} onExportingChange={setVatReturnExporting} />
+          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'pdf-lookup' || active === 'logs' || active === 'guide' ? '' : 'Thiết lập ứng dụng MIA TOOL 2026.'} onPdfConcurrencyChange={setPdfConcurrency} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />
     </>

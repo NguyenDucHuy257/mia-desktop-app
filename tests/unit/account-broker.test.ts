@@ -56,6 +56,16 @@ describe('account connection IPC broker', () => {
     });
   });
 
+  it('preserves a safe runtime code when the exception message is descriptive', async () => {
+    const result = await runBrokerCommand(async () => {
+      throw Object.assign(new Error('Runtime request timed out.'), { code: 'runtime_timeout' });
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'runtime_timeout', message: 'runtime_timeout' },
+    });
+  });
+
   it('distinguishes an open VAT workbook from a directory permission failure', async () => {
     const code = 'vat_return_destination_file_locked:{"filename":"To_khai_thue_GTGT_0109591907_01-10-2023_31-10-2023.xlsx","path":"D:\\\\KQ\\\\To_khai_thue_GTGT_0109591907_01-10-2023_31-10-2023.xlsx"}';
     const result = await runBrokerCommand(async () => { throw new Error(code); });

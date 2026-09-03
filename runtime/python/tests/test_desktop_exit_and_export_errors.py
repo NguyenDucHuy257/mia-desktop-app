@@ -179,6 +179,44 @@ class ArtifactExportTaskTests(unittest.TestCase):
         finally:
             mia_runtime.storage, mia_runtime.data_directory, mia_runtime._artifact_task = previous
 
+    def test_vat_return_export_runs_through_the_background_task_protocol(self):
+        previous = (
+            mia_runtime.storage,
+            mia_runtime.data_directory,
+            mia_runtime._artifact_task,
+        )
+        backend = Mock()
+        try:
+            mia_runtime.storage = Mock()
+            mia_runtime.data_directory = Path(tempfile.gettempdir())
+            mia_runtime._artifact_task = None
+            with patch.object(mia_runtime, "_production_backend", return_value=backend), patch(
+                "mia_vat_return_export.export_vat_return",
+                return_value={"count": 1, "files": ["vat.xlsx"]},
+            ) as export_vat_return:
+                started, should_stop = mia_runtime.dispatch(
+                    "artifacts.export.start",
+                    {
+                        "destination": str(Path(tempfile.gettempdir())),
+                        "connection_ids": ["conn_1"], "kinds": ["excel"],
+                        "vat_return": True,
+                    },
+                )
+                self.assertFalse(should_stop)
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    task, _ = mia_runtime.dispatch(
+                        "artifacts.export.status", {"task_id": started["task_id"]}
+                    )
+                    if task["status"] == "completed":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(task["status"], "completed")
+                self.assertEqual(task["result"], {"count": 1, "files": ["vat.xlsx"]})
+                export_vat_return.assert_called_once()
+        finally:
+            mia_runtime.storage, mia_runtime.data_directory, mia_runtime._artifact_task = previous
+
     def test_excel_export_task_does_not_block_source_job_cancel(self):
         previous = (
             mia_runtime.storage,

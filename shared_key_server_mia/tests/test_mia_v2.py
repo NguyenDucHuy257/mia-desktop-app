@@ -68,6 +68,7 @@ class SharedMiaV2Tests(unittest.TestCase):
         response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
         self.assertTrue(response["valid"])
         self.assertTrue(response["migrated"])
+        self.assertEqual(response["reason"], "ok")
         self.assertEqual(response["phone_status"], "verified")
         self.assertEqual(response["expires_at"], "31/12/2028")
         lines = (self.base / "MIA" / "vip.txt").read_text(encoding="utf-8").splitlines()
@@ -98,6 +99,8 @@ class SharedMiaV2Tests(unittest.TestCase):
         second = self.verify(device_id)
         self.assertTrue(first["valid"])
         self.assertTrue(second["valid"])
+        self.assertEqual(first["reason"], "ok")
+        self.assertEqual(second["reason"], "ok")
         self.assertEqual(second["device_id"], device_id)
         self.assertEqual(second["key"], key(device_id))
 
@@ -114,6 +117,7 @@ class SharedMiaV2Tests(unittest.TestCase):
         self.assertTrue(three["recovered"])
         self.assertEqual(three["device_id"], canonical)
         self.assertEqual(three["key"], key(canonical))
+        self.assertEqual(three["reason"], "ok")
 
         two = self.verify(
             "temporary-two",
@@ -121,6 +125,13 @@ class SharedMiaV2Tests(unittest.TestCase):
         )
         self.assertFalse(two["valid"])
         self.assertEqual(two["reason"], "key_not_activated")
+
+        copied_profile = self.verify(
+            canonical,
+            signals=hardware(changed=("system_uuid", "bios_serial", "baseboard_serial", "machine_guid")),
+        )
+        self.assertFalse(copied_profile["valid"])
+        self.assertEqual(copied_profile["reason"], "hardware_mismatch_below_50_percent")
 
     def test_hardware_thresholds_six_through_three_pass_and_two_fails(self):
         canonical = "threshold-canonical"

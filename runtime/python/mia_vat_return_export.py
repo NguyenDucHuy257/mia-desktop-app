@@ -21,6 +21,7 @@ from xml.etree import ElementTree as ET
 from openpyxl import load_workbook
 
 from mia_artifact_pipeline import ArtifactInspector
+from mia_export_paths import direction_export_directory
 from app.utils.invoice_identity import (canonical_invoice_identity,
                                         invoice_status_is_excluded,
                                         masked_invoice_identity)
@@ -1217,10 +1218,13 @@ def vat_return_filename(tax_code: str, date_from: str, date_to: str) -> str:
 def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
     connection_ids = list(value.get("connection_ids") or ())
     if len(connection_ids) != 1: raise ValueError("invalid_vat_return_account")
-    destination = Path(str(value.get("destination") or ""))
-    if not destination.is_absolute(): raise ValueError("invalid_artifact_directory")
+    selected_destination = Path(str(value.get("destination") or ""))
+    if not selected_destination.is_absolute(): raise ValueError("invalid_artifact_directory")
     date_from, date_to = str(value["date_from"]), str(value["date_to"])
     connection_id = str(connection_ids[0]); tax_code = backend.connection_tax_code(connection_id)
+    destination = direction_export_directory(
+        selected_destination, tax_code, ("purchase", "sold")
+    )
     coverage = ArtifactInspector(backend).vat_return_coverage({"connection_ids": connection_ids, "date_from": date_from, "date_to": date_to})["accounts"][0]
     missing = []
     # The workbook now consumes purchase Detail in the 8% reduction schedule,

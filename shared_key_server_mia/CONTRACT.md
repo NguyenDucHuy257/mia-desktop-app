@@ -47,12 +47,12 @@ Response:
   "recovered": false,
   "hardware_match": 1.0,
   "hardware_matches": 6,
-  "reason": "legacy_migrated"
+  "reason": "ok"
 }
 ```
 
-Các `reason` presentation cần xử lý: `ok`, `legacy_migrated`,
-`legacy_already_migrated`, `recovered_existing_device`, `phone_required`,
+Kết quả hợp lệ luôn dùng `reason: "ok"`; trạng thái migrate/recovery nằm trong
+`migrated`/`recovered`. Các `reason` từ chối cần xử lý gồm `phone_required`,
 `key_not_activated`, `legacy_key_expired`,
 `hardware_mismatch_below_50_percent`, `recovery_ambiguous` và
 `legacy_migration_record_incomplete`.

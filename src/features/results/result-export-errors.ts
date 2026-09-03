@@ -19,6 +19,9 @@ export function resultExportErrorMessage(
   if (code === 'result_export_runtime_unavailable') {
     return 'Bộ tạo Excel cục bộ chưa sẵn sàng.';
   }
+  if (code === 'artifact_task_active') {
+    return 'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.';
+  }
   if (code === 'result_export_no_overview_data') {
     return `Không có dữ liệu Tổng quan${range} để tạo Excel.`;
   }

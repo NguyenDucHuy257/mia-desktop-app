@@ -151,6 +151,10 @@ class VatReturnExportTests(unittest.TestCase):
             result=export_vat_return(backend,{"connection_ids":["conn"],"destination":str(destination),"date_from":"2023-10-01","date_to":"2023-10-31"})
         self.assertEqual(result["count"],1); self.assertEqual(len(list(destination.iterdir())),1)
         self.assertEqual(Path(result["files"][0]).name,"To_khai_thue_GTGT_0101234567_01-10-2023_31-10-2023.xlsx")
+        self.assertEqual(
+            Path(result["files"][0]).parent.relative_to(destination),
+            Path("0101234567") / "Mua vào & Bán ra",
+        )
         book=load_workbook(result["files"][0],data_only=False); sheet=book.worksheets[0]
         with zipfile.ZipFile(_template_path()) as original_zip, zipfile.ZipFile(result["files"][0]) as output_zip:
             for entry in ("xl/worksheets/sheet5.xml",):
@@ -306,7 +310,7 @@ class VatReturnExportTests(unittest.TestCase):
                 self.export_book("unwritable")
         destination=self.root/"unwritable"
         self.assertTrue(destination.is_dir())
-        self.assertEqual(list(destination.iterdir()),[])
+        self.assertFalse(list(destination.rglob("*.xlsx")))
 
     def test_money_values_are_integer_vnd_with_thousands_format(self):
         self.invoice("purchase","10%","123456789","17543211")

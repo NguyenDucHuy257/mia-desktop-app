@@ -7,6 +7,7 @@ import { pageBounds, paginationTokens } from '../../components/pagination-utils'
 import searchIcon from '../../assets/figma/search.png';
 import type { AccountConnection } from '../../lib/api/contracts';
 import type { VatReturnCoverageAccount, VatReturnMissingRange } from '../../lib/runtime-bridge';
+import { workspaceTaskConflictMessage, type WorkspaceTask } from '../../lib/workspace-task';
 import { CoverageBadge, formatDate } from './ArtifactCoverageBadge';
 import '../../styles/xml-html.css';
 
@@ -26,6 +27,9 @@ function validIsoDate(value: string) {
 export function vatReturnExportErrorFeedback(error: unknown): VatReturnFeedback {
   const runtimeError = error as Error & { code?: string };
   const code = String(runtimeError?.code ?? '');
+  if (code === 'artifact_task_active') {
+    return { kind: 'warning', message: 'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.' };
+  }
   if (code.startsWith('vat_return_destination_file_locked:')) {
     try {
       const detail = JSON.parse(code.slice('vat_return_destination_file_locked:'.length)) as { filename?: string; path?: string };
@@ -43,10 +47,26 @@ export function vatReturnExportErrorFeedback(error: unknown): VatReturnFeedback 
 export async function loadVatReturnCoverage(connectionIds: string[], selection: VatReturnSelectionState) {
   const chunks: string[][] = [];
   for (let index = 0; index < connectionIds.length; index += 50) chunks.push(connectionIds.slice(index, index + 50));
-  const results = await Promise.all(chunks.map((connection_ids) => window.miaRuntime!.artifacts.vatReturnCoverage({
-    connection_ids, date_from: selection.dateFrom, date_to: selection.dateTo,
-  })));
-  return results.flatMap((result) => result.accounts);
+  const transientCodes = new Set(['runtime_timeout', 'runtime_not_running', 'database_locked', 'database_unavailable']);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const accounts: VatReturnCoverageAccount[] = [];
+      // Keep local SQLite reads bounded: chunks are intentionally sequential
+      // so opening the VAT page cannot create competing database scans.
+      for (const connection_ids of chunks) {
+        const result = await window.miaRuntime!.artifacts.vatReturnCoverage({
+          connection_ids, date_from: selection.dateFrom, date_to: selection.dateTo,
+        });
+        accounts.push(...result.accounts);
+      }
+      return accounts;
+    } catch (error) {
+      const code = String((error as Error & { code?: string })?.code || '');
+      if (attempt >= 2 || !transientCodes.has(code)) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  return [];
 }
 
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {
@@ -66,7 +86,7 @@ function accountMissing(account: AccountConnection, coverage?: VatReturnCoverage
   }).join('\n');
 }
 
-export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, selection, onSelectionChange, coverageRevision }: {
+export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, selection, onSelectionChange, coverageRevision, activeWorkspaceTask, onExportingChange }: {
   accounts: AccountConnection[];
   selectedConnectionIds: string[];
   onSelectAccount(id: string): void;
@@ -76,6 +96,8 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
   selection: VatReturnSelectionState;
   onSelectionChange(value: VatReturnSelectionState): void;
   coverageRevision: number;
+  activeWorkspaceTask?: WorkspaceTask | null;
+  onExportingChange?(active: boolean): void;
 }) {
   const [coverage, setCoverage] = useState<Record<string, VatReturnCoverageAccount>>({});
   const [coverageState, setCoverageState] = useState<CoverageState>('loading');
@@ -83,6 +105,7 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('');
   const [page, setPage] = useState(1);
   const [feedback, setFeedback] = useState<VatReturnFeedback | null>(null);
+  const [exporting, setExporting] = useState(false);
   const generation = useRef(0);
   const initialForm = useRef({ selection, folder });
   const accountIds = useMemo(() => accounts.map((account) => account.connection_id), [accounts]);
@@ -119,6 +142,9 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
   async function chooseFolder() { const selected = await window.miaRuntime?.artifacts.selectDirectory(); if (selected) onFolder(selected); }
   function resetForm() { onSelectionChange({ ...initialForm.current.selection }); onFolder(initialForm.current.folder); setFeedback(null); }
   async function prepareExport() {
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'vat-return-export');
+    if (conflict) { setFeedback({ kind: 'warning', message: conflict }); return; }
+    if (exporting) { setFeedback({ kind: 'warning', message: 'Đang xuất tờ khai thuế GTGT. Vui lòng chờ tiến trình hiện tại hoàn tất.' }); return; }
     if (selectedConnectionIds.length !== 1) { setFeedback({ kind: 'warning', message: 'Vui lòng chỉ chọn một tài khoản cho mỗi workbook tờ khai thuế GTGT.' }); return; }
     if (!validIsoDate(selection.dateFrom) || !validIsoDate(selection.dateTo) || selection.dateFrom > selection.dateTo) { setFeedback({ kind: 'warning', message: 'Khoảng ngày xuất tờ khai không hợp lệ. Vui lòng kiểm tra ngày bắt đầu và ngày kết thúc.' }); return; }
     if (!folder.trim()) { setFeedback({ kind: 'warning', message: 'Vui lòng chọn thư mục lưu trữ.' }); return; }
@@ -131,6 +157,8 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
       setFeedback({ kind: 'warning', message: `Chưa thể xuất workbook vì thiếu dữ liệu:\n${missing.join('\n')}\nVui lòng sang Quản lý HĐĐT để đồng bộ bổ sung.` });
       return;
     }
+    setExporting(true);
+    onExportingChange?.(true);
     try {
       const result = await window.miaRuntime!.artifacts.vatReturnExport({ destination: folder, connection_ids: selectedConnectionIds, date_from: selection.dateFrom, date_to: selection.dateTo });
       setFeedback(result.count === 1 && result.files[0]
@@ -138,15 +166,18 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
         : { kind: 'error', message: 'Không thể tạo tờ khai thuế GTGT: exporter không trả về file kết quả hợp lệ.' });
     } catch (error) {
       setFeedback(vatReturnExportErrorFeedback(error));
+    } finally {
+      setExporting(false);
+      onExportingChange?.(false);
     }
   }
 
   return <section className="artifact-account-page vat-return-page invoice-page" aria-labelledby="vat-return-title">
     <header className="artifact-account-header"><h1 id="vat-return-title">Hỗ trợ lập tờ khai thuế GTGT</h1><p>Tổng hợp số liệu hóa đơn và tạo file Excel tham khảo. Vui lòng kiểm tra, đối chiếu trước khi kê khai chính thức.</p></header>
     <section className="artifact-toolbar-card vat-return-toolbar toolbar-card" aria-label="Thiết lập xuất tờ khai thuế GTGT">
-      <div className="artifact-toolbar-field artifact-date-field"><label>1. Khoảng thời gian</label><DateRangePicker dateFrom={selection.dateFrom} dateTo={selection.dateTo} onChange={(dateFrom, dateTo) => onSelectionChange({ dateFrom, dateTo })} /></div>
+      <div className="artifact-toolbar-field artifact-date-field"><label>1. Khoảng thời gian</label><DateRangePicker disabled={exporting} dateFrom={selection.dateFrom} dateTo={selection.dateTo} onChange={(dateFrom, dateTo) => onSelectionChange({ dateFrom, dateTo })} /></div>
       <div className="artifact-toolbar-field artifact-storage-field"><label>2. Đường dẫn lưu trữ</label><StorageFolderPicker className="invoice-export-folder" value={folder} onChange={onFolder} onBrowse={chooseFolder} ariaLabel="Đường dẫn lưu trữ" /></div>
-      <div className="artifact-toolbar-actions"><button className="add-account artifact-reset-button" type="button" onClick={resetForm}><span aria-hidden="true">↻</span>Đặt lại</button><button className="sync-button artifact-download-button vat-export-button" type="button" disabled={!selectedConnectionIds.length || coverageState === 'loading'} onClick={() => void prepareExport()}><DownloadIcon />Xuất tờ khai thuế GTGT</button></div>
+      <div className="artifact-toolbar-actions"><button className="add-account artifact-reset-button" type="button" disabled={exporting} onClick={resetForm}><span aria-hidden="true">↻</span>Đặt lại</button><button className="sync-button artifact-download-button vat-export-button" type="button" disabled={!selectedConnectionIds.length || coverageState === 'loading' || exporting} onClick={() => void prepareExport()}><DownloadIcon />{exporting ? 'Đang xuất tờ khai…' : 'Xuất tờ khai thuế GTGT'}</button></div>
     </section>
     <section className="artifact-account-content">
       <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tờ khai" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tờ khai" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="checking">Đang kiểm tra</option><option value="ready">Đã đồng bộ</option><option value="not_ready">Chưa đồng bộ</option><option value="error">Không thể kiểm tra</option></select></div></div>

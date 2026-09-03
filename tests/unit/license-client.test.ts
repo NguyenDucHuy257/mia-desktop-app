@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const { buildDeviceEvidence, hashHardwareSignal } = require('../../electron/license/hardware-profile.cjs');
-const { buildLegacyDetection, normalizePhone } = require('../../electron/license/legacy-detector.cjs');
+const { buildLegacyDetection, normalizePhone, readLegacyPhones } = require('../../electron/license/legacy-detector.cjs');
 const { createLicenseApi, validateServerUrl } = require('../../electron/license/license-api.cjs');
 const { LicenseManager, miaV2Key } = require('../../electron/license/license-manager.cjs');
 const { createProtectedLicenseStore } = require('../../electron/license/protected-license-store.cjs');
@@ -96,7 +96,7 @@ function activeResponse(deviceId: string, overrides: Record<string, any> = {}) {
     migrated: true,
     recovered: false,
     hardware_profile: evidence().hardware,
-    reason: 'legacy_migrated',
+    reason: 'ok',
     ...overrides,
   };
 }
@@ -121,6 +121,17 @@ describe('MIA shared-key-server client', () => {
     expect(result.legacy.exact_key_candidates[0]).toMatch(/^key[a-f0-9]{29}$/);
   });
 
+  it('rejects a device profile with fewer than three valid hardware signals', () => {
+    expect(() => buildDeviceEvidence({
+      system_uuid: 'uuid',
+      bios_serial: 'bios',
+      baseboard_serial: 'UNKNOWN',
+      machine_guid: '',
+      cpu_id: null,
+      disk_serial: 'DEFAULT STRING',
+    })).toThrowError(expect.objectContaining({ code: 'insufficient_hardware' }));
+  });
+
   it('builds phone legacy candidates only from a real phone', () => {
     const base = evidence();
     expect(normalizePhone('0000000000')).toBeNull();
@@ -128,6 +139,18 @@ describe('MIA shared-key-server client', () => {
     const detection = buildLegacyDetection(base, ['0000000000', '0981234567']);
     expect(detection.exact_key_candidates).toContain(`KEY${'b'.repeat(29)}0981234567`);
     expect(JSON.stringify(detection)).not.toContain('0000000000');
+  });
+
+  it('never imports customer-support hotlines as the registration phone', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mia-license-phone-'));
+    directories.push(directory);
+    const phoneFile = path.join(directory, 'phone.txt');
+    fs.writeFileSync(phoneFile, '0865219286', 'utf8');
+    expect(readLegacyPhones(directory)).toEqual([]);
+    fs.writeFileSync(phoneFile, '0383466992', 'utf8');
+    expect(readLegacyPhones(directory)).toEqual([]);
+    expect(normalizePhone('0865219286')).toBeNull();
+    expect(normalizePhone('0383466992')).toBeNull();
   });
 
   it('posts the Taxsoft-compatible payload only to /verify-key-v2 over HTTPS', async () => {
@@ -202,8 +225,10 @@ describe('MIA shared-key-server client', () => {
     expect(() => store.loadLicense()).toThrow(/license_state_corrupt/);
   });
 
-  it('requires a phone locally for exact V1 evidence and migrates after phone submission', async () => {
-    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id, { phone: payload.phone, migrated: true })) }) });
+  it('requires a phone locally for exact V1 evidence and accepts the production legacy migration response', async () => {
+    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id, {
+      phone: payload.phone, migrated: true, reason: 'legacy_migrated',
+    })) }) });
     expect((await setup.instance.initialize()).state).toBe('legacy_phone_required');
     expect(setup.client.verifyKeyV2).not.toHaveBeenCalled();
     const state = await setup.instance.submitPhone('0981234567');
@@ -255,7 +280,9 @@ describe('MIA shared-key-server client', () => {
     const profile = { version: 3, device_id: temporaryId, phone: '0981234567', hardware: evidence().hardware };
     const setup = manager({
       store: memoryStore(saved, profile),
-      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(canonicalId, { phone: '0981234567', recovered: true })) }),
+      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(canonicalId, {
+        phone: '0981234567', migrated: false, recovered: true, reason: 'recovered_existing_device',
+      })) }),
     });
     expect((await setup.instance.initialize()).state).toBe('active');
     expect(setup.store.inspect().profile.device_id).toBe(canonicalId);
