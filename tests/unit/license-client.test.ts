@@ -225,8 +225,10 @@ describe('MIA shared-key-server client', () => {
     expect(() => store.loadLicense()).toThrow(/license_state_corrupt/);
   });
 
-  it('requires a phone locally for exact V1 evidence and migrates after phone submission', async () => {
-    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id, { phone: payload.phone, migrated: true })) }) });
+  it('requires a phone locally for exact V1 evidence and accepts the production legacy migration response', async () => {
+    const setup = manager({ api: api({ verifyKeyV2: vi.fn(async (payload: any) => activeResponse(payload.device_id, {
+      phone: payload.phone, migrated: true, reason: 'legacy_migrated',
+    })) }) });
     expect((await setup.instance.initialize()).state).toBe('legacy_phone_required');
     expect(setup.client.verifyKeyV2).not.toHaveBeenCalled();
     const state = await setup.instance.submitPhone('0981234567');
@@ -278,7 +280,9 @@ describe('MIA shared-key-server client', () => {
     const profile = { version: 3, device_id: temporaryId, phone: '0981234567', hardware: evidence().hardware };
     const setup = manager({
       store: memoryStore(saved, profile),
-      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(canonicalId, { phone: '0981234567', recovered: true })) }),
+      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(canonicalId, {
+        phone: '0981234567', migrated: false, recovered: true, reason: 'recovered_existing_device',
+      })) }),
     });
     expect((await setup.instance.initialize()).state).toBe('active');
     expect(setup.store.inspect().profile.device_id).toBe(canonicalId);

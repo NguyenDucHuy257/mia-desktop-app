@@ -4,6 +4,13 @@ const { isLicenseAccessGranted } = require('./access-control.cjs');
 
 const TOOL = 'MIA';
 const ACTIVE_STATES = new Set(['active']);
+const SUCCESS_REASONS = new Set([
+  'ok',
+  'interim_v2_upgraded',
+  'recovered_existing_device',
+  'legacy_already_migrated',
+  'legacy_migrated',
+]);
 
 function miaV2Key(deviceId, phone) {
   const normalizedPhone = normalizePhone(phone);
@@ -36,7 +43,21 @@ function safeState(state, details = {}) {
 }
 
 function responseGrantsLicense(response) {
-  return response?.valid === true && response?.expired === false && response?.reason === 'ok';
+  return response?.valid === true
+    && response?.expired === false
+    && SUCCESS_REASONS.has(String(response?.reason || ''));
+}
+
+function responseDiagnostic(response) {
+  return {
+    valid: response?.valid === true,
+    expired: response?.expired === true,
+    reason: typeof response?.reason === 'string' ? response.reason : null,
+    migrated: response?.migrated === true,
+    recovered: response?.recovered === true,
+    has_key: typeof response?.key === 'string' && response.key.length > 0,
+    has_device_id: typeof response?.device_id === 'string' && response.device_id.length > 0,
+  };
 }
 
 class LicenseManager {
@@ -124,7 +145,7 @@ class LicenseManager {
   persistActive(response, source) {
     const candidate = {
       state: 'active', active: true, valid: response?.valid,
-      expired: response?.expired, reason: response?.reason,
+      expired: response?.expired, reason: responseGrantsLicense(response) ? 'ok' : response?.reason,
     };
     if (!responseGrantsLicense(response) || !isLicenseAccessGranted(candidate) || !response?.key || !response?.device_id) {
       throw Object.assign(new Error('active license response is incomplete'), { code: 'invalid_response' });
@@ -226,6 +247,7 @@ class LicenseManager {
         phone,
         legacyKeys: this.detection.exact_key_candidates,
       }));
+      this.log('license_verify_response', responseDiagnostic(response));
       if (responseGrantsLicense(response)) {
         const source = response.migrated
           ? 'legacy_migration'
@@ -263,6 +285,7 @@ class LicenseManager {
         phone,
         legacyKeys: this.detection.exact_key_candidates,
       }));
+      this.log('license_verify_response', responseDiagnostic(response));
       this.current = responseGrantsLicense(response)
         ? this.persistActive(response, response.migrated ? 'legacy_migration' : response.recovered ? 'device_recovery' : 'v2_verify')
         : response?.valid === true
