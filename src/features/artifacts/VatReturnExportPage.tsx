@@ -47,10 +47,26 @@ export function vatReturnExportErrorFeedback(error: unknown): VatReturnFeedback 
 export async function loadVatReturnCoverage(connectionIds: string[], selection: VatReturnSelectionState) {
   const chunks: string[][] = [];
   for (let index = 0; index < connectionIds.length; index += 50) chunks.push(connectionIds.slice(index, index + 50));
-  const results = await Promise.all(chunks.map((connection_ids) => window.miaRuntime!.artifacts.vatReturnCoverage({
-    connection_ids, date_from: selection.dateFrom, date_to: selection.dateTo,
-  })));
-  return results.flatMap((result) => result.accounts);
+  const transientCodes = new Set(['runtime_timeout', 'runtime_not_running', 'database_locked', 'database_unavailable']);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const accounts: VatReturnCoverageAccount[] = [];
+      // Keep local SQLite reads bounded: chunks are intentionally sequential
+      // so opening the VAT page cannot create competing database scans.
+      for (const connection_ids of chunks) {
+        const result = await window.miaRuntime!.artifacts.vatReturnCoverage({
+          connection_ids, date_from: selection.dateFrom, date_to: selection.dateTo,
+        });
+        accounts.push(...result.accounts);
+      }
+      return accounts;
+    } catch (error) {
+      const code = String((error as Error & { code?: string })?.code || '');
+      if (attempt >= 2 || !transientCodes.has(code)) throw error;
+      await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
+  return [];
 }
 
 function SelectionBox({ checked, indeterminate = false }: { checked: boolean; indeterminate?: boolean }) {

@@ -29,8 +29,8 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   expect((await brandName.boundingBox())?.height).toBeLessThanOrEqual(22);
 
   const menu = page.locator('.app-navigation .nav-button');
-  await expect(menu).toHaveCount(7);
-  await expect(menu).toHaveText(['Quản lý HĐĐT', 'XML/HTML/PDF', 'Xuất tờ khai thuế GTGT', 'Lịch sử tải xuống', 'Tra cứu MVT', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng']);
+  await expect(menu).toHaveCount(8);
+  await expect(menu).toHaveText(['Quản lý HĐĐT', 'XML/HTML/PDF', 'Xuất tờ khai thuế GTGT', 'Tra cứu PDF gốc', 'Tra cứu MVT', 'Lịch sử tải xuống', 'Cài đặt hệ thống', 'Hướng dẫn sử dụng']);
   await expect(page.locator('.sidebar')).not.toContainText('Danh sách MST');
   await expect(page.locator('.brand > span')).toHaveText('Giải pháp tải HDDT hàng loạt');
   await expect(page.locator('.topbar-company h1')).toHaveText('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
@@ -66,6 +66,9 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
 
   await page.getByRole('button', { name: 'Tra cứu MVT', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Tra cứu MVT' })).toBeVisible();
+  await page.getByRole('button', { name: 'Tra cứu PDF gốc', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Tra cứu PDF gốc' })).toBeVisible();
+  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
   await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
   const guide = page.getByRole('button', { name: 'Hướng dẫn sử dụng', exact: true });
   await expect(guide.locator('svg')).toHaveCount(1);

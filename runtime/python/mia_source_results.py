@@ -26,6 +26,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
+from mia_export_paths import direction_export_directory, export_direction_label
+
 
 logger = logging.getLogger("mia.excel_export")
 ExportProgressCallback = Callable[[dict[str, Any]], None]
@@ -1717,10 +1719,7 @@ def _grouped_result_filename(
     safe_tax_code = re.sub(r"[^0-9A-Za-z._-]+", "_", company_tax_code).strip("._-")
     if not safe_tax_code:
         safe_tax_code = "MIA"
-    direction_label = (
-        "Mua vào" if direction == "purchase" else
-        "Bán ra" if direction == "sold" else "Mua vào và Bán ra"
-    )
+    direction_label = export_direction_label(direction)
     scope_label = {
         "overview": "Tổng quan", "details": "Chi tiết",
         "reconciliation": "Đối chiếu Tổng quan và Chi tiết",
@@ -1732,20 +1731,9 @@ def _grouped_result_filename(
 
 
 def _result_output_directory(
-    destination: Path, company_tax_code: str, scope: str,
-    date_from: str, date_to: str,
+    destination: Path, company_tax_code: str, direction: str,
 ) -> Path:
-    safe_tax_code = re.sub(
-        r"[^0-9A-Za-z._-]+", "_", company_tax_code
-    ).strip("._-") or "MIA"
-    scope_label = {
-        "overview": "Tổng quan", "details": "Chi tiết",
-        "reconciliation": "Đối chiếu Tổng quan và Chi tiết",
-    }[scope]
-    return (
-        destination / safe_tax_code
-        / f"{scope_label} {date_from}_{date_to}"
-    )
+    return direction_export_directory(destination, company_tax_code, direction)
 
 
 def _database_revision(database_path: Path) -> tuple[tuple[int, int], ...]:
@@ -2539,7 +2527,7 @@ def _export_results_impl(
         reporter.start_unit("reconciliation")
         output_directory = _result_output_directory(
             destination, context["base_job"].company_tax_code,
-            "reconciliation", context["date_from"], context["date_to"],
+            str(value.get("direction") or "all"),
         )
         target = _available_path(
             output_directory,
@@ -2724,9 +2712,7 @@ def _export_results_impl(
             output_directory = _result_output_directory(
                 destination,
                 context["base_job"].company_tax_code,
-                scope,
-                context["date_from"],
-                context["date_to"],
+                str(value.get("direction") or "all"),
             )
             output_directory.mkdir(parents=True, exist_ok=True)
             target = _available_path(

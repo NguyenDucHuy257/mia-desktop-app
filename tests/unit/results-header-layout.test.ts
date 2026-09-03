@@ -9,7 +9,7 @@ describe('results header layout contract', () => {
     expect(component).toContain("import backIcon from '../../assets/figma/back.png'");
     expect(component).toContain('<img src={backIcon} alt="" />');
     expect(component).not.toContain('http://127.0.0.1:5173/src/assets/figma/back.png');
-    expect(tokens).toContain('--mia-sidebar-width: 210px;');
+    expect(tokens).toContain('--mia-sidebar-width: 232px;');
     expect(styles).toContain('padding: var(--results-page-inset-top) 24px 8px;');
     expect(styles).toContain('--results-back-title-gap: 8px;');
     expect(styles).toContain('display: grid;');
@@ -20,5 +20,7 @@ describe('results header layout contract', () => {
     expect(headerLayoutRules).not.toContain('transform:');
     expect(headerLayoutRules).not.toContain('position: absolute');
     expect(headerLayoutRules).not.toMatch(/margin:\s*-\d/);
+    expect(styles).toMatch(/\.results-page--figma \.results-export-popover > button:hover\s*\{[^}]*color:\s*#fff;/s);
+    expect(styles).toMatch(/\.results-page--figma \.results-export-popover > button:active\s*\{[^}]*color:\s*#fff;/s);
   });
 });

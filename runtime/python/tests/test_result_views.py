@@ -394,10 +394,7 @@ class ResultViewTests(unittest.TestCase):
             )
             self.assertEqual(
                 {Path(path).parent.relative_to(Path(directory)) for path in result["files"]},
-                {
-                    Path("0100000000") / "Tổng quan 2026-02-01_2026-02-28",
-                    Path("0100000000") / "Chi tiết 2026-02-01_2026-02-28",
-                },
+                {Path("0100000000") / "Mua vào"},
             )
             overview_rows.assert_called_once()
             overview_writer.assert_called_once()
@@ -498,6 +495,10 @@ class ResultViewTests(unittest.TestCase):
             }
             self.assertEqual(result["count"], 4)
             self.assertEqual({Path(path).name for path in result["files"]}, expected)
+            self.assertEqual(
+                {Path(path).parent.relative_to(Path(directory)) for path in result["files"]},
+                {Path("0100000000") / "Mua vào & Bán ra"},
+            )
 
             for path_value in result["files"]:
                 path = Path(path_value)

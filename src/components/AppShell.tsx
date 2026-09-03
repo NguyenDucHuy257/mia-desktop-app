@@ -7,7 +7,7 @@ import logsIcon from '../assets/figma/nav-logs.png';
 import settingsIcon from '../assets/figma/nav-settings.png';
 import verifiedBlueIcon from '../assets/figma/verified-blue.png';
 
-export type NavigationKey = 'invoices' | 'xml-html' | 'vat-return' | 'logs' | 'mvt' | 'settings' | 'guide';
+export type NavigationKey = 'invoices' | 'xml-html' | 'vat-return' | 'pdf-lookup' | 'mvt' | 'logs' | 'settings' | 'guide';
 
 interface AppShellProps extends PropsWithChildren {
   active: NavigationKey;
@@ -19,8 +19,9 @@ const navigation = [
   ['invoices', 'Quản lý HĐĐT', invoicesIcon],
   ['xml-html', 'XML/HTML/PDF', xmlIcon],
   ['vat-return', 'Xuất tờ khai thuế GTGT', xmlIcon],
-  ['logs', 'Lịch sử tải xuống', logsIcon],
+  ['pdf-lookup', 'Tra cứu PDF gốc', xmlIcon],
   ['mvt', 'Tra cứu MVT', materialIcon],
+  ['logs', 'Lịch sử tải xuống', logsIcon],
   ['settings', 'Cài đặt hệ thống', settingsIcon],
   ['guide', 'Hướng dẫn sử dụng', settingsIcon],
 ] as const;

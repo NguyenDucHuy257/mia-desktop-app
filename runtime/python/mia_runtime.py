@@ -225,7 +225,11 @@ def _copy_artifacts(
 def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: threading.Event) -> None:
     global _artifact_task
     try:
-        if value.get("result_scopes"):
+        if value.get("vat_return") is True:
+            from mia_vat_return_export import export_vat_return
+
+            result = export_vat_return(_production_backend(), value)
+        elif value.get("result_scopes"):
             def export_progress(event: dict[str, Any]) -> None:
                 write_message({
                     "jsonrpc": "2.0",
@@ -240,9 +244,17 @@ def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: thread
         else:
             result = _copy_artifacts(value, cancel_event)
         status, error = "completed", None
-    except ValueError as exc:
-        if str(exc) == "artifact_cancelled":
+    except (ValueError, RuntimeError) as exc:
+        message = str(exc)
+        if message == "artifact_cancelled":
             result, status, error = None, "cancelled", "artifact_cancelled"
+        elif (
+            message.startswith("vat_return_")
+            or message.startswith("result_export_")
+            or message.startswith("result_reconciliation_")
+            or message in {"invalid_artifact_directory", "invalid_vat_return_range"}
+        ):
+            result, status, error = None, "failed", message
         else:
             result, status, error = None, "failed", "invalid_params"
     except RpcError as exc:
@@ -672,9 +684,11 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         value = dict(params)
         kinds = set(value.get("kinds") or ())
         result_export = bool(value.get("result_scopes"))
+        vat_return_export = value.get("vat_return") is True
         if (
-            (result_export and kinds != {"excel"})
-            or (not result_export and (not kinds or not kinds.issubset({"xml", "html"})))
+            ((result_export or vat_return_export) and kinds != {"excel"})
+            or (not result_export and not vat_return_export and (not kinds or not kinds.issubset({"xml", "html"})))
+            or (result_export and vat_return_export)
         ):
             raise RpcError(-32602, "invalid_params")
         with _artifact_task_lock:

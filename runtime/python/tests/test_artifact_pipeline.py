@@ -513,6 +513,14 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["status"], "completed")
             xml = next((root / "output").rglob("*.xml"))
             html = next((root / "output").rglob("*.html"))
+            self.assertEqual(
+                xml.parent.relative_to(root / "output"),
+                Path("0101234567") / "Mua vào" / "XML 2026-01-01_2026-01-31",
+            )
+            self.assertEqual(
+                html.parent.relative_to(root / "output"),
+                Path("0101234567") / "Mua vào" / "HTML 2026-01-01_2026-01-31",
+            )
             self.assertEqual(xml.stem, "20231015_1_C23TTL_00109_0101")
             self.assertEqual(html.stem, xml.stem)
             self.assertTrue((html.parent / "sign-check.jpg").is_file())

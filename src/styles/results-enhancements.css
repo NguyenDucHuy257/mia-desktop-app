@@ -138,7 +138,7 @@
   accent-color: #2563eb;
 }
 
-.results-export-popover > button {
+.results-page--figma .results-export-popover > button {
   height: 36px;
   border: 1px solid #2563eb;
   border-radius: var(--mia-radius-ui);
@@ -150,16 +150,25 @@
   cursor: pointer;
 }
 
-.results-export-popover > button:hover {
+.results-page--figma .results-export-popover > button:hover {
   border-color: #1d4ed8;
   background: #1d4ed8;
+  color: #fff;
 }
 
-.results-export-popover > button:focus-visible {
+.results-page--figma .results-export-popover > button:active {
+  border-color: #1e40af;
+  background: #1e40af;
+  color: #fff;
+}
+
+.results-page--figma .results-export-popover > button:focus-visible {
+  color: #fff;
   box-shadow: 0 0 0 3px rgb(59 130 246 / 22%);
 }
 
-.results-export-popover > button:disabled {
+.results-page--figma .results-export-popover > button:disabled {
+  color: #fff;
   opacity: .5;
   cursor: default;
 }

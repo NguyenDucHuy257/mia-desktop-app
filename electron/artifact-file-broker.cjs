@@ -167,6 +167,32 @@ function waitForTaskPoll(delayMs = 100) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
+async function pollBackgroundExport(runtime, request, onStarted = () => {}) {
+  const started = await runtime.invoke(
+    'artifacts.export.start', request, { timeoutMs: 30_000 },
+  );
+  const taskId = started.task_id;
+  onStarted(taskId);
+  while (true) {
+    let task;
+    try {
+      task = await runtime.invoke(
+        'artifacts.export.status', { task_id: taskId }, { timeoutMs: 30_000 },
+      );
+    } catch (error) {
+      // The worker owns the task. A temporarily busy local transport must not
+      // report failure while Python is still writing the workbook.
+      if (error?.code !== 'runtime_timeout') throw error;
+      await waitForTaskPoll(250);
+      continue;
+    }
+    if (task.status === 'completed') return { taskId, result: checkedExportResult(task.result) };
+    if (task.status === 'cancelled') throw new Error('artifact_cancelled');
+    if (task.status === 'failed') throw new Error(task.error || 'artifact_write_failed');
+    await waitForTaskPoll();
+  }
+}
+
 function createArtifactBroker(getRuntime) {
   let activeTaskId = null;
   let latestTaskId = null;
@@ -175,12 +201,20 @@ function createArtifactBroker(getRuntime) {
   };
   return Object.freeze({
     coverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.coverage', validateArtifactSnapshotRequest(value))),
-    vatReturnCoverage: (value) => runBrokerCommand(() => getRuntime().invoke('artifacts.vat_return.coverage', validateVatReturnCoverageRequest(value))),
+    vatReturnCoverage: (value) => runBrokerCommand(() => getRuntime().invoke(
+      'artifacts.vat_return.coverage', validateVatReturnCoverageRequest(value),
+      { timeoutMs: 30_000 },
+    )),
     vatReturnExport: (value) => runBrokerCommand(async () => {
+      const request = validateVatReturnExportRequest(value);
       assertIdle();
       activeTaskId = 'vat-return-starting';
       try {
-        return await getRuntime().invoke('artifacts.vat_return.export', validateVatReturnExportRequest(value), { timeoutMs: 5 * 60 * 1000 });
+        const runtime = getRuntime();
+        const task = await pollBackgroundExport(runtime, {
+          ...request, kinds: ['excel'], vat_return: true,
+        }, (taskId) => { activeTaskId = taskId; });
+        return task.result;
       } finally {
         activeTaskId = null;
       }
@@ -238,17 +272,10 @@ function createArtifactBroker(getRuntime) {
       // temporary scheduling pressure without losing the task id and falsely
       // reporting failure while the export continues in the background.
       try {
-        const started = await runtime.invoke(
-          'artifacts.export.start', request, { timeoutMs: 30_000 },
+        const task = await pollBackgroundExport(
+          runtime, request, (taskId) => { activeTaskId = taskId; },
         );
-        activeTaskId = started.task_id;
-        while (true) {
-          const task = await runtime.invoke('artifacts.export.status', { task_id: activeTaskId });
-          if (task.status === 'completed') return checkedExportResult(task.result);
-          if (task.status === 'cancelled') throw new Error('artifact_cancelled');
-          if (task.status === 'failed') throw new Error(task.error || 'artifact_write_failed');
-          await waitForTaskPoll();
-        }
+        return task.result;
       } finally {
         activeTaskId = null;
       }

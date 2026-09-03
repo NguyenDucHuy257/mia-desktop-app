@@ -9,12 +9,15 @@ import shutil
 import sqlite3
 import tempfile
 import threading
+import time
 from contextlib import closing
 from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote, urlsplit
+
+from mia_export_paths import artifact_export_directory
 
 
 QUERY_TYPES = ("query", "sco-query")
@@ -441,6 +444,7 @@ class ArtifactInspector:
         persisted Detail months. Row counts are deliberately irrelevant so a
         finalized empty period remains covered.
         """
+        started = time.perf_counter()
         value = _validate_request({**dict(raw), "directions": list(DIRECTIONS)}, destination=False)
         accounts = []
         for connection_id in value["connection_ids"]:
@@ -486,10 +490,17 @@ class ArtifactInspector:
                     "missing": missing,
                 }
             accounts.append({"connection_id": connection_id, **directions})
-        return {
+        result = {
             "accounts": accounts, "date_from": value["date_from"],
             "date_to": value["date_to"],
         }
+        backend_logger = getattr(self.backend, "logger", None)
+        if backend_logger is not None:
+            backend_logger.info(
+                "vat_return_coverage_completed accounts=%s duration_ms=%.1f",
+                len(accounts), (time.perf_counter() - started) * 1000,
+            )
+        return result
 
     def _completed_job_intervals(
         self, connection_id: str, direction: str, module_name: str,
@@ -599,9 +610,7 @@ class ArtifactInspector:
                        WHERE company_tax_code=? AND direction=?""",
                     (tax_code, direction),
                 ).fetchall()]
-                from app.utils.invoice_identity import (
-                    canonical_invoice_identity, invoice_status_is_excluded,
-                )
+                from app.utils.invoice_identity import invoice_status_is_excluded
 
                 has_attributes = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='invoice_overview_attributes'"
@@ -618,19 +627,43 @@ class ArtifactInspector:
                         row['from_date'], row['to_date'],
                     )
                     if has_attributes:
-                        overview_sql = """SELECT overview.*, status.value_json AS status_json
-                            FROM invoice_overview_items overview
-                            LEFT JOIN invoice_overview_attributes status
-                              ON status.invoice_item_id=overview.id AND status.field_name='tthai'
-                            WHERE overview.company_tax_code=? AND overview.direction=?
-                              AND overview.query_type=? AND overview.nlap_date BETWEEN ? AND ?"""
+                        status_join = """LEFT JOIN invoice_overview_attributes status
+                              ON status.invoice_item_id=overview.id AND status.field_name='tthai'"""
+                        status_column = "status.value_json"
                     else:
-                        overview_sql = """SELECT overview.*, NULL AS status_json
+                        status_join = ""
+                        status_column = "NULL"
+                    detail_conditions = [
+                        "detail.company_tax_code=overview.company_tax_code",
+                        "detail.direction=overview.direction",
+                        "detail.query_type=overview.query_type",
+                        "detail.nbmst=overview.nbmst",
+                        "detail.khhdon=overview.khhdon",
+                        "detail.shdon=overview.shdon",
+                        "detail.khmshdon=overview.khmshdon",
+                    ]
+                    if "normalized_ready" in detail_columns:
+                        detail_conditions.append("detail.normalized_ready=1")
+                    if "detail_outcome" in detail_columns:
+                        detail_conditions.append("detail.detail_outcome IN ('with_lines','valid_empty')")
+                    if "error_message" in detail_columns:
+                        detail_conditions.append("(detail.error_message IS NULL OR TRIM(detail.error_message)='')")
+                    # Let SQLite use the canonical unique identity index and
+                    # return only missing candidates. The previous version
+                    # materialized every Overview and Detail invoice into two
+                    # Python sets once per checkpoint, which became quadratic
+                    # I/O for long ranges and regularly exceeded the 5s IPC
+                    # timeout on a cold Results/VAT page.
+                    missing_sql = f"""SELECT {status_column} AS status_json
                             FROM invoice_overview_items overview
+                            {status_join}
                             WHERE overview.company_tax_code=? AND overview.direction=?
-                              AND overview.query_type=? AND overview.nlap_date BETWEEN ? AND ?"""
-                    expected = set()
-                    for item in connection.execute(overview_sql, parameters):
+                              AND overview.query_type=? AND overview.nlap_date BETWEEN ? AND ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM invoice_detail_items detail
+                                  WHERE {' AND '.join(detail_conditions)}
+                              )"""
+                    for item in connection.execute(missing_sql, parameters):
                         raw_status = item['status_json']
                         if raw_status is not None:
                             try:
@@ -638,29 +671,16 @@ class ArtifactInspector:
                             except (TypeError, json.JSONDecodeError):
                                 pass
                         if not invoice_status_is_excluded(raw_status):
-                            expected.add(canonical_invoice_identity(
-                                tax_code, direction, dict(item)
-                            ))
-                    detail_conditions = [
-                        "company_tax_code=?", "direction=?", "query_type=?",
-                        "nlap_date BETWEEN ? AND ?",
-                    ]
-                    if "normalized_ready" in detail_columns:
-                        detail_conditions.append("normalized_ready=1")
-                    if "detail_outcome" in detail_columns:
-                        detail_conditions.append("detail_outcome IN ('with_lines','valid_empty')")
-                    if "error_message" in detail_columns:
-                        detail_conditions.append("(error_message IS NULL OR TRIM(error_message)='')")
-                    completed = {
-                        canonical_invoice_identity(tax_code, direction, dict(item))
-                        for item in connection.execute(
-                            "SELECT * FROM invoice_detail_items WHERE "
-                            + " AND ".join(detail_conditions), parameters,
-                        )
-                    }
-                    return expected <= completed
+                            return False
+                    return True
                 for row in rows:
-                    row['_invoice_complete'] = invoice_complete(row)
+                    eligible = (
+                        row["checkpoint_status"] == "finalized"
+                        and int(row.get("overview_expected") or 0)
+                        == int(row.get("detail_succeeded") or 0)
+                        and int(row.get("detail_failed") or 0) == 0
+                    )
+                    row['_invoice_complete'] = eligible and invoice_complete(row)
         except sqlite3.Error:
             return []
         per_query = []
@@ -1084,8 +1104,10 @@ class ArtifactBatchCoordinator:
                 if pdf_cache_valid(self.data_root, tax_code, key, html_path):
                     cache_keys["pdf"].add(key)
         output_roots = {
-            kind: Path(self.value["destination"]) / _safe_filename(tax_code)
-            / f"{kind.upper()} {self.value['date_from']}_{self.value['date_to']}"
+            kind: artifact_export_directory(
+                self.value["destination"], tax_code, self.value["directions"],
+                kind, self.value["date_from"], self.value["date_to"],
+            )
             for kind in self.value["kinds"]
         }
         pdf_pool = None

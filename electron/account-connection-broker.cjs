@@ -92,6 +92,7 @@ function localErrorMessage(code) {
     return 'Không thể ghi đè tờ khai thuế GTGT vì file đang được mở. Vui lòng đóng file và thử lại.';
   }
   if (code === 'vat_return_destination_not_writable') return 'Không thể lưu tờ khai vào thư mục đã chọn. Vui lòng kiểm tra quyền ghi hoặc chọn thư mục khác.';
+  if (code === 'vat_return_workbook_verification_failed') return 'Tờ khai đã được tạo nhưng không vượt qua bước kiểm tra tính toàn vẹn. Vui lòng xem Nhật ký để biết chi tiết.';
   if (String(code).startsWith('vat_return_coverage_missing:')) return 'Chưa đủ coverage Tổng quan và Chi tiết cho toàn bộ khoảng xuất tờ khai.';
   if (code === 'artifact_cancelled') return 'Đã dừng tải XML/HTML.';
   if (code === 'artifact_task_active') return 'Đang có một lượt tải XML/HTML khác.';
@@ -117,8 +118,9 @@ function serializeError(error) {
     'runtime_timeout', 'runtime_not_running', 'runtime_write_failed',
   ]);
   const runtimeMessage = String(error?.message || '');
-  if (publicCodes.has(runtimeMessage) || runtimeMessage.startsWith('source_http_') || runtimeMessage.startsWith('vat_return_unknown_tax_rate:') || runtimeMessage.startsWith('vat_return_coverage_missing:') || runtimeMessage.startsWith('vat_return_detail_missing:') || runtimeMessage.startsWith('vat_return_purchase_invalid:') || runtimeMessage.startsWith('vat_return_purchase_reduction_invalid:') || runtimeMessage.startsWith('vat_return_destination_file_locked:') || ['vat_return_detail_missing', 'vat_return_company_name_missing', 'vat_return_template_missing', 'vat_return_destination_not_writable'].includes(runtimeMessage)) {
-    return { code: runtimeMessage, message: localErrorMessage(runtimeMessage) };
+  const runtimeCode = typeof error?.code === 'string' ? error.code : runtimeMessage;
+  if (publicCodes.has(runtimeCode) || runtimeCode.startsWith('source_http_') || runtimeCode.startsWith('vat_return_unknown_tax_rate:') || runtimeCode.startsWith('vat_return_coverage_missing:') || runtimeCode.startsWith('vat_return_detail_missing:') || runtimeCode.startsWith('vat_return_purchase_invalid:') || runtimeCode.startsWith('vat_return_purchase_reduction_invalid:') || runtimeCode.startsWith('vat_return_destination_file_locked:') || ['vat_return_detail_missing', 'vat_return_company_name_missing', 'vat_return_template_missing', 'vat_return_destination_not_writable', 'vat_return_workbook_verification_failed'].includes(runtimeCode)) {
+    return { code: runtimeCode, message: localErrorMessage(runtimeCode) };
   }
   if (error instanceof BrokerInputError) {
     return {

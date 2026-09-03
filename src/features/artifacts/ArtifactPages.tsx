@@ -52,9 +52,10 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
   const [retries, setRetries] = useState(5);
   const [pdfConcurrency, setPdfConcurrency] = useState(5);
   const isSettings = title === 'Cài đặt' || title === 'Cài đặt hệ thống';
-  const isLogs = title === 'Nhật ký' || title === 'Lịch sử tải xuống';
+  const isLogs = title === 'Nhật ký';
+  const isPausedHistory = title === 'Lịch sử tải xuống';
   const isGuide = title === 'Hướng dẫn sử dụng';
-  const isComingSoon = isGuide || title === 'Tra cứu MVT';
+  const isComingSoon = isGuide || isPausedHistory || title === 'Tra cứu MVT' || title === 'Tra cứu PDF gốc';
 
   useEffect(() => {
     if (isSettings) void window.miaRuntime?.preferences?.get().then((value) => {

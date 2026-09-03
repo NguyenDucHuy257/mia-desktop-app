@@ -24,6 +24,7 @@ const DEFAULT_EXPORT_FOLDER = 'C:\\MIACrawl\\Export\\PDF\\T10_2023';
 const labels: Record<Exclude<NavigationKey, 'invoices'>, string> = {
   'xml-html': 'XML/HTML',
   'vat-return': 'Xuất tờ khai thuế GTGT',
+  'pdf-lookup': 'Tra cứu PDF gốc',
   mvt: 'Tra cứu MVT',
   logs: 'Lịch sử tải xuống',
   settings: 'Cài đặt hệ thống',
@@ -207,7 +208,7 @@ function WorkspaceApp() {
           />
         ) : active === 'xml-html' ? <XmlHtmlPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} lifecycle={artifactDownloads} selection={artifactSelection} onSelectionChange={setArtifactSelection} coverageRevision={invoiceJobs.coverageRevision} pdfConcurrency={pdfConcurrency} activeWorkspaceTask={activeWorkspaceTask} />
           : active === 'vat-return' ? <VatReturnExportPage accounts={accounts ?? []} selectedConnectionIds={selectedAccountIds} onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])} onSelectAccounts={setSelectedAccountIds} folder={exportFolder} onFolder={updateExportFolder} selection={{ dateFrom: artifactSelection.dateFrom, dateTo: artifactSelection.dateTo }} onSelectionChange={({ dateFrom, dateTo }) => setArtifactSelection((current) => ({ ...current, dateFrom, dateTo }))} coverageRevision={invoiceJobs.coverageRevision} activeWorkspaceTask={activeWorkspaceTask} onExportingChange={setVatReturnExporting} />
-          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'guide' ? '' : active === 'logs' ? 'Theo dõi lịch sử tải xuống và hoạt động cục bộ.' : 'Thiết lập ứng dụng MIA TOOL 2026.'} onPdfConcurrencyChange={setPdfConcurrency} />}
+          : <UtilityPage title={labels[active]} description={active === 'mvt' || active === 'pdf-lookup' || active === 'logs' || active === 'guide' ? '' : 'Thiết lập ứng dụng MIA TOOL 2026.'} onPdfConcurrencyChange={setPdfConcurrency} />}
       </AppShell>
       <DeleteProgressPopup progress={deleteProgress} />
     </>
