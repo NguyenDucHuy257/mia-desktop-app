@@ -23,7 +23,7 @@ export interface BulkParseResult {
 }
 
 export const MAX_BULK_ACCOUNTS = 100;
-const TAX_CODE_PATTERN = /^\d{10}(?:-\d{3})?$/;
+const TAX_CODE_PATTERN = /^(?:\d{10}(?:-\d{3})?|\d{12})$/;
 
 export function normalizeTaxCode(value: string) {
   return value.trim();
@@ -36,7 +36,7 @@ export function validateCredentials(credentials: AccountCredentials): Credential
   if (!username) {
     errors.username = 'Vui lòng nhập mã số thuế.';
   } else if (!TAX_CODE_PATTERN.test(username)) {
-    errors.username = 'Mã số thuế phải gồm 10 số hoặc dạng 10 số-3 số.';
+    errors.username = 'Mã số thuế phải gồm 10 số, 12 số hoặc dạng 10 số-3 số.';
   }
 
   if (!credentials.password) {
