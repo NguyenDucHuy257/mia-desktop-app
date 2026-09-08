@@ -1,6 +1,6 @@
 'use strict';
 
-const TAX_CODE_PATTERN = /^\d{10}(?:-\d{3})?$/;
+const TAX_CODE_PATTERN = /^(?:\d{10}(?:-\d{3})?|\d{12})$/;
 const CONNECTION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 class BrokerInputError extends Error {
@@ -94,6 +94,8 @@ function localErrorMessage(code) {
   if (code === 'vat_return_destination_not_writable') return 'Không thể lưu tờ khai vào thư mục đã chọn. Vui lòng kiểm tra quyền ghi hoặc chọn thư mục khác.';
   if (code === 'vat_return_workbook_verification_failed') return 'Tờ khai đã được tạo nhưng không vượt qua bước kiểm tra tính toàn vẹn. Vui lòng xem Nhật ký để biết chi tiết.';
   if (String(code).startsWith('vat_return_coverage_missing:')) return 'Chưa đủ coverage Tổng quan và Chi tiết cho toàn bộ khoảng xuất tờ khai.';
+  if (code === 'artifact_export_timeout') return 'Xuất Excel không có tiến trình trong thời gian cho phép và đã được dừng để tránh treo ứng dụng. Hãy thử lại với khoảng thời gian nhỏ hơn.';
+  if (code === 'artifact_worker_lost') return 'Tiến trình xuất Excel đã bị gián đoạn. Hãy thử lại.';
   if (code === 'artifact_cancelled') return 'Đã dừng tải XML/HTML.';
   if (code === 'artifact_task_active') return 'Đang có một lượt tải XML/HTML khác.';
   if (code === 'artifact_batch_empty') return 'Không có artifact XML/HTML phù hợp để tải.';
@@ -114,7 +116,7 @@ function serializeError(error) {
     'result_export_template_missing', 'result_export_failed', 'artifact_write_denied',
     'artifact_write_failed', 'invalid_artifact_directory',
     'invalid_result_export_range', 'artifact_cancelled', 'artifact_task_active',
-    'artifact_batch_empty',
+    'artifact_batch_empty', 'artifact_export_timeout', 'artifact_worker_lost',
     'runtime_timeout', 'runtime_not_running', 'runtime_write_failed',
   ]);
   const runtimeMessage = String(error?.message || '');

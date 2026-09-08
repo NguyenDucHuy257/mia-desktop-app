@@ -22,7 +22,10 @@ async function invokeResult(channel, ...args) {
   }
   if (result.ok) return result.data;
 
-  const error = new Error(String(result.error?.message ?? 'MIA API request failed'));
+  // Electron's contextBridge can discard custom Error properties. Preserve the
+  // public code in the standard message as well as on the error object.
+  const publicCode = String(result.error?.code ?? 'internal_error');
+  const error = new Error(`[${publicCode}] ${String(result.error?.message ?? 'MIA API request failed')}`);
   error.name = 'MiaRuntimeError';
   error.code = String(result.error?.code ?? 'internal_error');
   if (Number.isInteger(result.error?.status)) error.status = result.error.status;
@@ -107,6 +110,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     setChannel: (channel) => invokeIpc('mia:updates:channel', channel),
   }),
   results: Object.freeze({
+    materialStart: (query) => invokeResult('mia:results:materialStart', query),
+    materialStatus: (query) => invokeResult('mia:results:materialStatus', query),
     overview: (query) => invokeResult('mia:results:overview', query),
     details: (query) => invokeResult('mia:results:details', query),
     reconciliation: (query) => invokeResult('mia:results:reconciliation', query),

@@ -104,6 +104,8 @@ function createResultBroker(getRuntime) {
     { timeoutMs: method === 'reconciliation' ? 30_000 : 15_000 },
   );
   return Object.freeze({
+    materialStart: (query) => runBrokerCommand(() => invokeResult('materialStart', query)),
+    materialStatus: (query) => runBrokerCommand(() => invokeResult('materialStatus', query)),
     overview: (query) => runBrokerCommand(() => invokeResult('overview', query)),
     details: (query) => runBrokerCommand(() => invokeResult('details', query)),
     reconciliation: (query) => runBrokerCommand(() => invokeResult('reconciliation', query)),

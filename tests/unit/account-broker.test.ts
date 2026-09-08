@@ -5,6 +5,14 @@ const require = createRequire(import.meta.url);
 const { createAccountConnectionBroker, runBrokerCommand } = require('../../electron/account-connection-broker.cjs');
 
 describe('account connection IPC broker', () => {
+  it('passes a 12-digit household username unchanged to the runtime', async () => {
+    const createConnection = vi.fn().mockResolvedValue({ connection_id: 'conn_household', username: '001234567890' });
+    const broker = createAccountConnectionBroker(() => ({ createConnection }));
+    const result = await broker.create({ username: '001234567890', password: 'test-password' });
+    expect(result.ok).toBe(true);
+    expect(createConnection).toHaveBeenCalled();
+    expect(result.data.username).toBe('001234567890');
+  });
   it('rejects invalid renderer input before calling the API client', async () => {
     const createConnection = vi.fn();
     const broker = createAccountConnectionBroker(() => ({ createConnection }));
