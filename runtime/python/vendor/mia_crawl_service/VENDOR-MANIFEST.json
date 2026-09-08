@@ -73,7 +73,7 @@
     "app/services/invoice_package_download_service.py": "da2093217b0739ec6b5cbe17db06ec50efa61f3667df084e0998755164dec6a6",
     "app/services/invoice_package_storage_service.py": "4c1864a7df646a6b7220fa076732968d015d543d20c558c2781c09377d64c95e",
     "app/services/invoice_pdf_export_service.py": "3bb490a0c93699327539ac636cc1a48523031b6f8210db0ef8c5d812be87c030",
-    "app/services/overview_downloader.py": "0acdfb51325c293a54efa73bcc61e0fe2f2979ead5ecabf17e20114bed7f55a6",
+    "app/services/overview_downloader.py": "9bedcadbf9c822e8c4acedab5d99de2b64ef57f518540a6b46fc1db0829ec883",
     "app/services/portal_session.py": "e835315e38ea1b38234f342961282c541d4ea182467251d83a7c968dff941b90",
     "app/services/rate_limit_diagnostics.py": "b4f03cba724d2ac75f629e901f7ec1c13bb2c50284638524e56c7f741723b730",
     "app/session_manager/__init__.py": "106e87756fdd78cb02e3c164299d00f0962a3b08e868a0a879bda14c6cba4b12",
