@@ -64,6 +64,23 @@ describe('invoice result control presentation', () => {
     expect(styles).toContain('overflow-wrap: break-word');
   });
 
+  it('offers a snapshot-safe sync then download action', async () => {
+    const [component, lifecycle, styles] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/features/jobs/use-batch-job-lifecycle.ts'),
+      source('src/styles/invoice-refresh.css'),
+    ]);
+    expect(component).toContain('Đồng bộ &amp; tải xuống');
+    expect(component).toContain("startJob('supplement', true)");
+    expect(component).toContain('pendingAutoExport.current');
+    expect(component).toContain("status !== 'completed' && status !== 'completed_with_warning'");
+    expect(component).toContain('executeResultExport(snapshot, true)');
+    expect(component).toContain('connectionIds: [...selectedAccountIds]');
+    expect(lifecycle).toContain('return true;');
+    expect(lifecycle).toContain('return false;');
+    expect(styles).toContain('.invoice-sync-export-button');
+  });
+
   it('uses blue result actions and blue-to-gold scroll thumbs', async () => {
     const [page, luxury] = await Promise.all([
       source('src/features/results/ResultsPage.tsx'),

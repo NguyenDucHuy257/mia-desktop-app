@@ -341,6 +341,50 @@ test('keeps one direction and restores the two legacy sync modes', async ({ page
   expect(captured).toMatchObject({ date_from: '2026-01-01', date_to: '2026-01-31', directions: ['sold'], query_types: ['query', 'sco-query'], scopes: ['overview', 'detail'], data_types: ['invoice'], sync_mode: 'supplement', force_refresh: false, refresh_latest_month: false });
 });
 
+test('sync and download waits for successful completion then exports the captured range', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = { connection_id: 'conn_auto', username: '0101234567', company_name: 'Công ty Auto Export', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false };
+    const record = { job_id: 'job-auto', connection_id: account.connection_id, intent: {}, idempotency_key: 'auto', created_at: 'now', updated_at: 'now', status: 'queued' };
+    Object.defineProperty(window, 'miaRuntime', { value: {
+      accountConnections: { list: async () => [account], get: async () => account, create: async () => account, reconnect: async () => account, revoke: async () => undefined },
+      preferences: { get: async () => ({ concurrency: 1, retries: 1, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
+      jobs: {
+        resume: async () => null, resumeAll: async () => [], latestAll: async () => [],
+        syncStates: async () => [],
+        start: async (intent: unknown) => {
+          (window as typeof window & { autoSyncIntent?: unknown }).autoSyncIntent = intent;
+          return { record: { ...record, intent }, accepted: { job_id: record.job_id, status: 'queued' } };
+        },
+        status: async () => ({ ...record, status: 'completed', overall_percent: 100, stage: null, current_month: null, error: null }),
+        summary: async () => ({ job_id: record.job_id, status: 'completed', warning_count: 0, stages: [], coverage_plan: {}, work: {}, post_processing: {} }),
+        cancel: async () => ({}), clear: async () => undefined,
+      },
+      artifacts: {
+        selectDirectory: async () => 'C:\\MIA',
+        onExportProgress: () => () => undefined,
+        export: async (request: unknown) => {
+          (window as typeof window & { autoExportRequest?: unknown }).autoExportRequest = request;
+          return { count: 1, files: ['C:\\MIA\\result.xlsx'] };
+        },
+      },
+    } });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Đồng bộ & tải xuống' }).click();
+  await expect.poll(() => page.evaluate(() => Boolean(
+    (window as typeof window & { autoExportRequest?: unknown }).autoExportRequest,
+  )), { timeout: 10_000 }).toBe(true);
+  const captured = await page.evaluate(() => ({
+    sync: (window as typeof window & { autoSyncIntent?: unknown }).autoSyncIntent,
+    exportRequest: (window as typeof window & { autoExportRequest?: unknown }).autoExportRequest,
+  }));
+  expect(captured.sync).toMatchObject({ sync_mode: 'supplement', scopes: ['overview'] });
+  expect(captured.exportRequest).toMatchObject({
+    connection_ids: ['conn_auto'], destination: 'C:\\MIA', kinds: ['excel'],
+    result_scopes: ['overview'], direction: 'purchase',
+  });
+});
+
 test('shows bounded polling failure and lets the user retry', async ({ page }) => {
   await page.addInitScript(() => {
     const record = { job_id: 'job-retry', connection_id: 'conn_demo', intent: {}, idempotency_key: 'desktop-fixed', created_at: 'now', updated_at: 'now', status: 'running' };
