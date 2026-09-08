@@ -405,21 +405,35 @@ class ResultReconciliationTests(unittest.TestCase):
             workbook = load_workbook(result["files"][0], data_only=False)
             try:
                 worksheet = workbook["Bao cao doi chieu"]
-                headers = [cell.value for cell in worksheet[1]]
+                header_row = next(
+                    row for row in range(1, worksheet.max_row + 1)
+                    if worksheet.cell(row, 1).value == "STT"
+                )
+                headers = [cell.value for cell in worksheet[header_row]]
                 self.assertIn("Trạng thái đối chiếu", headers)
                 self.assertIn("Lý do chênh lệch", headers)
                 detail_total_column = headers.index("Tổng tiền trước thuế - Chi tiết") + 1
                 difference_column = headers.index("Tổng tiền trước thuế - Chênh lệch") + 1
-                self.assertIsNone(worksheet.cell(2, detail_total_column).value)
-                self.assertIsNone(worksheet.cell(2, difference_column).value)
+                self.assertIsNone(worksheet.cell(header_row + 1, detail_total_column).value)
+                self.assertIsNone(worksheet.cell(header_row + 1, difference_column).value)
                 reason_column = headers.index("Lý do chênh lệch") + 1
-                self.assertIn("không tìm thấy dữ liệu Chi tiết", worksheet.cell(2, reason_column).value)
-                self.assertIn("lớn hơn Chi tiết 1 đồng", worksheet.cell(3, reason_column).value)
+                self.assertIn("không tìm thấy dữ liệu Chi tiết", worksheet.cell(header_row + 1, reason_column).value)
+                self.assertIn("lớn hơn Chi tiết 1 đồng", worksheet.cell(header_row + 2, reason_column).value)
                 self.assertFalse(any(
                     cell.value in {"-0", "+0", "-0.00", "+0.00"}
                     for row in worksheet.iter_rows() for cell in row
                 ))
-                self.assertIn("Tong hop", workbook.sheetnames)
+                self.assertEqual(workbook.sheetnames, ["Bao cao doi chieu"])
+                self.assertEqual(worksheet["A1"].value,
+                                 "BÁO CÁO ĐỐI CHIẾU TỔNG QUAN & CHI TIẾT")
+                summary_labels = {
+                    worksheet.cell(row, 1).value
+                    for row in range(2, header_row)
+                }
+                self.assertIn("Dữ liệu hiện có - Tổng quan", summary_labels)
+                self.assertIn("Phạm vi đủ điều kiện đối chiếu", summary_labels)
+                self.assertIn("Thiếu Chi tiết", summary_labels)
+                self.assertEqual(worksheet.freeze_panes, f"A{header_row + 1}")
             finally:
                 workbook.close()
 
