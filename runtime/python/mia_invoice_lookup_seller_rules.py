@@ -139,6 +139,29 @@ SELLER_EXACT_RULES: dict[str, str] = {
     '0101360697': 'https|van.ehoadon.vn/TCHD',
 }
 
+# Incremental seller entries from the supplied workbook's ``vnpt`` sheet.
+# Keeping these as a final update makes the source refresh explicit and lets
+# the resolver match branch-specific MSTs before provider fallback.
+SELLER_EXACT_RULES.update({
+    "0104918404": "https|hoadon.winmart.vn/",
+    "0201209259": "https|hpggfortune-tt78.vnpt-invoice.com.vn/",
+    "0110269067-001": "https|gsmhochiminh-tt78.vnpt-invoice.com.vn/",
+    "3501473524": "https|tcit-tt78.vnpt-invoice.com.vn/",
+    "3500859860": "https|gemalink-tt78.vnpt-invoice.com.vn/",
+    "0303436268": "https|dichvuachuan-tt78.vnpt-invoice.com.vn/",
+    "0317291301": "https|lta-tt78.vnpt-invoice.com.vn/",
+    "3500871096": "https|snpcaimep-tt78.vnpt-invoice.com.vn/",
+    "0301464414": "https|tanvinhthinh-tt78.vnpt-invoice.com.vn/",
+    "3502294165": "https|saigonnewport-tt78.vnpt-invoice.com.vn/",
+    "0309532497": "https|saigonnewport-tt78.vnpt-invoice.com.vn/",
+    "0313524097": "https|icdtanamexco-tt78.vnpt-invoice.com.vn/",
+    "0201579242": "https|vipgreenport-tt78.vnpt-invoice.com.vn/",
+    "0316991861": "https|cangicdphuclong-tt78.vnpt-invoice.com.vn/",
+    "0201641148": "https|mpcport-tt78.vnpt-invoice.com.vn/",
+    "033057001745": "https|0900101240-tt78.vnpt-invoice.com.vn/",
+    "0100956381": "https|hddt.centralretail.com.vn/vi-vn/chon-thuong-hieu-cua-crv",
+})
+
 SELLER_ROOT_RULES: dict[str, dict[str, str]] = {
     "0105987432": {"strategy": "easyinvoice"},
     "0100684378": {"strategy": "vnpt_dynamic"},

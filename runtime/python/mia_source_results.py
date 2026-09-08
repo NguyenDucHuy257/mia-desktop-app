@@ -116,6 +116,7 @@ class _ExcelSafeDetailRowBuilder:
         from app.parsers.invoice_detail_excel_row_builder import InvoiceDetailExcelRowBuilder
 
         self._delegate = InvoiceDetailExcelRowBuilder()
+        self.material_database = None
 
     def build_rows(
         self, payload: dict[str, Any], record: dict[str, Any]
@@ -127,13 +128,26 @@ class _ExcelSafeDetailRowBuilder:
             record,
             available_xml=record.get("xml_path"),
         )
+        rows = self._delegate.build_rows(payload, record)
+        if self.material_database is not None:
+            from types import SimpleNamespace
+            from mia_material_lookup import enrich_materials
+            job = SimpleNamespace(
+                company_tax_code=record.get('company_tax_code'),
+                parameters={'directions': [record.get('direction')], 'query_types': [record.get('query_type')]},
+            )
+            # Use the same persisted exact-name mapping as the Results table.
+            enriched = [{**record, **row} for row in rows]
+            enrich_materials(self.material_database, enriched, job)
+            for row, material in zip(rows, enriched):
+                row['m_VT'] = material.get('m_VT', row.get('m_VT', ''))
         return [
             _excel_safe_record({
                 **row,
                 "url": lookup.url or "",
                 "mk": lookup.code or "",
             })
-            for row in self._delegate.build_rows(payload, record)
+            for row in rows
         ]
 
 
@@ -154,6 +168,8 @@ class _LookupEnrichedResultReader:
         self._revision = _database_revision(self.database_path)
         page = self.delegate.detail_page(job, limit=limit, cursor=cursor)
         items = page.get("items") or []
+        from mia_material_lookup import enrich_materials
+        enrich_materials(self.database_path, items, job)
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -1970,7 +1986,7 @@ def _detail_source_columns(worksheet: Any, header_row: int) -> list[int]:
     return source_columns
 
 
-def _normalize_detail_excel_atomically(target: Path) -> None:
+def _normalize_detail_excel_atomically(target: Path, progress=None) -> None:
     """Convert source Detail sheets to the customer's fixed 37-column form."""
     import urllib.parse
 
@@ -1985,6 +2001,9 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
     output_sheet.title = "Sheet1"
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    body_font = Font(size=12, bold=False)
+    body_fill = PatternFill(fill_type=None)
+    body_alignment = Alignment(wrap_text=False)
 
     for column_index, ((_key, label), width) in enumerate(
         zip(_DETAIL_EXPORT_COLUMNS, _DETAIL_EXPORT_WIDTHS, strict=True), start=1
@@ -2000,11 +2019,16 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
         output_sheet.column_dimensions[get_column_letter(column_index)].width = width
 
     output_row = 2
+    total_rows = sum(sheet.max_row for sheet in source_workbook.worksheets)
+    processed_rows = 0
     try:
         for source_sheet in source_workbook.worksheets:
             header_row = InvoiceDetailExcelExporter._find_header_row(source_sheet)
             source_columns = _detail_source_columns(source_sheet, header_row)
             for source_row in range(header_row + 1, source_sheet.max_row + 1):
+                processed_rows += 1
+                if progress is not None and processed_rows % 100 == 0:
+                    progress("format", processed_rows, total_rows)
                 values = [
                     source_sheet.cell(source_row, source_column).value
                     for source_column in source_columns
@@ -2016,9 +2040,9 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
                 ):
                     source_cell = source_sheet.cell(source_row, source_column)
                     target_cell = output_sheet.cell(output_row, column_index, value)
-                    target_cell.font = Font(size=12, bold=False)
-                    target_cell.fill = PatternFill(fill_type=None)
-                    target_cell.alignment = Alignment(wrap_text=False)
+                    target_cell.font = body_font
+                    target_cell.fill = body_fill
+                    target_cell.alignment = body_alignment
                     target_cell.border = border
                     target_cell.number_format = (
                         "#,##0" if column_index in {20, 21, 23, 24, 27} else "General"
@@ -2309,34 +2333,71 @@ def _write_reconciliation_excel(
     if progress:
         progress("load_template", 0, 1)
     workbook = Workbook()
-    summary_sheet = workbook.active
-    summary_sheet.title = "Tong hop"
-    worksheet = workbook.create_sheet("Bao cao doi chieu")
+    worksheet = workbook.active
+    worksheet.title = "Bao cao doi chieu"
     headers = [
         _RECONCILIATION_LABELS[column]
         for column in _RECONCILIATION_EXPORT_COLUMNS
     ]
-    worksheet.append(headers)
     header_fill = PatternFill("solid", fgColor="EAF4EE")
-    for cell in worksheet[1]:
+    summary_rows = [
+        ("Dữ liệu hiện có - Tổng quan", summary.get("selected_overview_invoice_count", 0)),
+        ("Dữ liệu hiện có - Chi tiết", summary.get("selected_detail_invoice_count", 0)),
+        ("Chênh lệch dữ liệu hiện có", (
+            int(summary.get("selected_overview_invoice_count", 0) or 0)
+            - int(summary.get("selected_detail_invoice_count", 0) or 0)
+        )),
+        ("Phạm vi đủ điều kiện đối chiếu", "; ".join(
+            f"{value['date_from']} - {value['date_to']}"
+            for value in summary.get("coverage_ranges") or ()
+        )),
+        ("Trong phạm vi đối chiếu - Tổng quan", summary.get("overview_invoice_count", 0)),
+        ("Trong phạm vi đối chiếu - Chi tiết", summary.get("detail_invoice_count", 0)),
+        ("Chênh lệch số lượng", summary.get("difference", 0)),
+        ("Thiếu Chi tiết", summary.get("missing_detail_count", 0)),
+        ("Thiếu Tổng quan", summary.get("missing_overview_count", 0)),
+        ("Hóa đơn lệch tiền", summary.get("money_mismatch_count", 0)),
+        ("Khoảng chưa đủ dữ liệu 2/2", "; ".join(
+            f"{value['date_from']} - {value['date_to']}"
+            for value in summary.get("uncovered_ranges") or ()
+        )),
+    ]
+    summary_rows.extend(
+        (f"Tổng chênh lệch - {label}", value)
+        for label, value in (summary.get("difference_totals") or {}).items()
+    )
+    worksheet.append(["BÁO CÁO ĐỐI CHIẾU TỔNG QUAN & CHI TIẾT", None])
+    worksheet.merge_cells("A1:B1")
+    worksheet["A1"].font = Font(bold=True, color="155D36", size=14)
+    worksheet["A1"].fill = header_fill
+    worksheet["A1"].alignment = Alignment(horizontal="center")
+    for label, value in summary_rows:
+        worksheet.append([label, _excel_safe_value(value)])
+        worksheet.cell(worksheet.max_row, 1).font = Font(bold=True, color="374151")
+        if label.startswith("Tổng chênh lệch"):
+            worksheet.cell(worksheet.max_row, 2).number_format = '#,##0;[Red]-#,##0;0'
+
+    header_row = worksheet.max_row + 2
+    for column_index, label in enumerate(headers, start=1):
+        cell = worksheet.cell(header_row, column_index, label)
         cell.font = Font(bold=True, color="155D36")
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    worksheet.freeze_panes = f"A{header_row + 1}"
+    worksheet.auto_filter.ref = (
+        f"A{header_row}:{get_column_letter(len(headers))}{header_row + len(rows)}"
+    )
     if progress:
         progress("load_template", 1, 1)
         progress("write_rows", 0, len(rows))
     for index, item in enumerate(rows, start=1):
         fields = item.get("fields") or {}
-        worksheet.append([
-            _excel_safe_value(index if column == "stt" else fields.get(column))
-            for column in _RECONCILIATION_EXPORT_COLUMNS
-        ])
-        for column_index, column in enumerate(
-            _RECONCILIATION_EXPORT_COLUMNS, start=1
-        ):
-            cell = worksheet.cell(index + 1, column_index)
+        row_number = header_row + index
+        for column_index, column in enumerate(_RECONCILIATION_EXPORT_COLUMNS, start=1):
+            cell = worksheet.cell(
+                row_number, column_index,
+                _excel_safe_value(index if column == "stt" else fields.get(column)),
+            )
             if column == "mismatch_fields" or (
                 column.startswith("difference_") and cell.value not in (None, 0, "0")
             ):
@@ -2358,39 +2419,6 @@ def _write_reconciliation_excel(
         elif column in {"nbten", "nmten"}:
             width = 34
         worksheet.column_dimensions[get_column_letter(column_index)].width = width
-
-    summary_rows = [
-        ("Dữ liệu hiện có - Tổng quan", summary.get("selected_overview_invoice_count", 0)),
-        ("Dữ liệu hiện có - Chi tiết", summary.get("selected_detail_invoice_count", 0)),
-        ("Khoảng đối chiếu", "; ".join(
-            f"{value['date_from']} - {value['date_to']}"
-            for value in summary.get("coverage_ranges") or ()
-        )),
-        ("Số hóa đơn Tổng quan", summary.get("overview_invoice_count", 0)),
-        ("Số hóa đơn Chi tiết", summary.get("detail_invoice_count", 0)),
-        ("Chênh lệch số lượng", summary.get("difference", 0)),
-        ("Thiếu Chi tiết", summary.get("missing_detail_count", 0)),
-        ("Thiếu Tổng quan", summary.get("missing_overview_count", 0)),
-        ("Hóa đơn lệch tiền", summary.get("money_mismatch_count", 0)),
-        ("Khoảng chưa đủ dữ liệu 2/2", "; ".join(
-            f"{value['date_from']} - {value['date_to']}"
-            for value in summary.get("uncovered_ranges") or ()
-        )),
-    ]
-    summary_rows.extend(
-        (f"Tổng chênh lệch - {label}", value)
-        for label, value in (summary.get("difference_totals") or {}).items()
-    )
-    summary_sheet.append(["BÁO CÁO ĐỐI CHIẾU TỔNG QUAN & CHI TIẾT", None])
-    summary_sheet.merge_cells("A1:B1")
-    summary_sheet["A1"].font = Font(bold=True, color="155D36", size=14)
-    summary_sheet["A1"].fill = header_fill
-    summary_sheet["A1"].alignment = Alignment(horizontal="center")
-    for label, value in summary_rows:
-        summary_sheet.append([label, _excel_safe_value(value)])
-    summary_sheet.column_dimensions["A"].width = 30
-    summary_sheet.column_dimensions["B"].width = 52
-    summary_sheet.freeze_panes = "A2"
     if progress:
         progress(
             "format", len(_RECONCILIATION_EXPORT_COLUMNS),
@@ -2589,6 +2617,7 @@ def _export_results_impl(
                     row_builder = _FilteredExcelSafeDetailRowBuilder(
                         search=scope_search, column_filters=scope_columns
                     )
+                    row_builder.material_database = context['database_path']
                     for record in payload:
                         record.setdefault("company_tax_code", context["base_job"].company_tax_code)
                         record_key = _invoice_key(record, direction, query_type)
@@ -2673,6 +2702,7 @@ def _export_results_impl(
                         if plan["search"] or plan["column_filters"]
                         else _ExcelSafeDetailRowBuilder()
                     )
+                    export_row_builder.material_database = context['database_path']
                     if reporter.callback is None:
                         exporter = InvoiceDetailExcelExporter(
                             _source_template_dir() / "invoice_detail.xlsx",
@@ -2725,9 +2755,15 @@ def _export_results_impl(
                     context["date_to"],
                 ),
             )
-            _combine_source_workbooks_atomically(staged_jobs, target)
+            if scope == "details" and len(staged_jobs) == 1:
+                # Normalization replaces all sheet titles/styles below. Avoid
+                # cloning every cell into an intermediate workbook first.
+                import shutil
+                shutil.copyfile(staged_jobs[0][2], target)
+            else:
+                _combine_source_workbooks_atomically(staged_jobs, target)
             if scope == "details":
-                _normalize_detail_excel_atomically(target)
+                _normalize_detail_excel_atomically(target, progress=reporter.unit)
             reporter.unit("format", len(staged_jobs), len(staged_jobs))
             reporter.unit("save", 1, 1)
             reporter.complete_unit()

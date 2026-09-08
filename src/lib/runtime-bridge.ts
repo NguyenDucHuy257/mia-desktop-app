@@ -24,6 +24,8 @@ export interface LicenseStateResponse {
   };
 }
 
+export interface MaterialLookupStatus { status: 'idle' | 'running' | 'completed' | 'failed'; task_id?: string; processed: number; total: number; failed: number; missing_xml?: number; error?: string }
+
 export interface LicenseDetails {
   state: LicenseStateName;
   active: boolean;
@@ -105,6 +107,8 @@ export interface MiaRuntimeBridge {
     setChannel(channel: 'stable' | 'beta'): Promise<UpdateStatus>;
   };
   results: {
+    materialStart(query: ResultQuery): Promise<MaterialLookupStatus>;
+    materialStatus(query: ResultQuery): Promise<MaterialLookupStatus>;
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
     reconciliation(query: ResultQuery): Promise<LocalResultPage<ReconciliationResult>>;

@@ -13,7 +13,7 @@ function bitmapDimensions(path: string) {
 
 describe('MIA TOOL 2026 installer branding', () => {
   it('uses the new product and installer names without numeric suffixes', () => {
-    expect(packageMetadata.version).toBe('4.0.5');
+    expect(packageMetadata.version).toBe('4.0.6');
     expect(packageMetadata.build.productName).toBe('MIA TOOL 2026');
     expect(packageMetadata.build.nsis.shortcutName).toBe('MIA TOOL 2026');
     expect(packageMetadata.build.nsis.artifactName).toBe('MIA-TOOL-2026-Setup-${version}.${ext}');
@@ -31,6 +31,8 @@ describe('MIA TOOL 2026 installer branding', () => {
     const welcome = readFileSync(nsis.include, 'utf8');
     const terms = readFileSync(nsis.license, 'utf8');
     expect(welcome).toContain('Chào mừng đến với MIA TOOL 2026');
+    expect(welcome).toContain('Hướng dẫn cài đặt:');
+    expect(welcome).toContain('Màn hình nền hoặc menu Bắt đầu');
     expect(welcome).toContain('MUI_PAGE_WELCOME');
     expect(terms).toContain('ĐIỀU KHOẢN SỬ DỤNG MIA TOOL 2026');
     expect(terms).toContain('kiểm tra, đối chiếu số liệu');

@@ -123,6 +123,38 @@ class SyncStateTests(unittest.TestCase):
         self.assertEqual(state["status"], "completed")
         self.assertTrue(state["overview_ready"])
         self.assertTrue(state["detail_ready"])
+        self.assertEqual(state["sync_from"], "2025-01-01")
+        self.assertEqual(state["sync_until"], "2025-01-31")
+
+    def test_durable_range_is_exposed_when_selected_range_extends_past_coverage(self):
+        self.backend.repository.latest_invoice_job_for_direction.return_value = None
+        state = self.backend.sync_states(
+            ["conn_account"], "purchase", "2025-01-01", "2025-09-07"
+        )[0]
+        self.assertEqual(state["status"], "not_synced")
+        self.assertEqual(state["sync_from"], "2025-01-01")
+        self.assertEqual(state["sync_until"], "2025-01-31")
+
+    def test_overview_only_job_completes_without_detail_coverage(self):
+        database = self.root / self.tax_code / "db" / "invoices.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute("DELETE FROM invoice_detail_checkpoints")
+            connection.commit()
+        job = SimpleNamespace(
+            job_id="job-overview", status="completed", current_stage=None,
+            parameters={
+                "directions": ["purchase"], "result_scope": "overview",
+                "date_from": "2025-01-01", "date_to": "2025-01-31",
+            },
+            progress_state={"modules": {"overview": {"status": "completed"}}},
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = job
+        state = self.backend.sync_states(
+            ["conn_account"], "purchase", "2025-01-01", "2025-01-31"
+        )[0]
+        self.assertEqual(state["status"], "completed")
+        self.assertTrue(state["overview_ready"])
+        self.assertFalse(state["detail_ready"])
 
     def test_completed_legacy_job_restores_coverage_without_detail_checkpoint(self):
         database = self.root / self.tax_code / "db" / "invoices.sqlite3"

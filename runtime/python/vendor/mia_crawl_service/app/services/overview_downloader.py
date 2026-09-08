@@ -589,45 +589,29 @@ class OverviewDownloader:
                     # every paged JSON record, so render it into the styled
                     # template locally instead of making a redundant export.
                     content = self._cash_records_to_xlsx(records, direction, chunk_begin, chunk_end)
-                elif result.final_status not in {'completed', 'completed_with_warning'}:
-                    # Do not call another portal endpoint after a partial/rate-limited
-                    # cursor. Publish only the rows already persisted locally.
-                    logger.warning(
-                        'Rendering partial electronic workbook locally status=%s '
-                        'direction=%s range=%s..%s fetched=%s/%s',
-                        result.final_status, direction, chunk_begin, chunk_end,
-                        len(records), result.first_page_total,
-                    )
+                else:
+                    # The paginated JSON above is already the authoritative
+                    # dataset. Calling the portal's separate Excel endpoint
+                    # here duplicates the request and can hang for minutes
+                    # after all rows have been fetched. Render locally for
+                    # both complete and partial electronic results.
+                    if result.final_status == 'completed':
+                        logger.info(
+                            'Rendering electronic workbook locally direction=%s '
+                            'range=%s..%s fetched=%s/%s',
+                            direction, chunk_begin, chunk_end,
+                            len(records), result.first_page_total,
+                        )
+                    else:
+                        logger.warning(
+                            'Rendering partial electronic workbook locally status=%s '
+                            'direction=%s range=%s..%s fetched=%s/%s',
+                            result.final_status, direction, chunk_begin, chunk_end,
+                            len(records), result.first_page_total,
+                        )
                     content = self._electronic_records_to_xlsx(
                         records, direction, chunk_begin, chunk_end
                     )
-                else:
-                    try:
-                        content = self.crawler.download_export(
-                            headers=self.headers_provider(),
-                            direction=direction,
-                            category=category,
-                            begin_date=chunk_begin,
-                            end_date=chunk_end,
-                            status=status,
-                        )
-                    except RuntimeError:
-                        if category != 'cash_register':
-                            raise
-                        logger.warning(
-                            'Excel export failed for %s/%s %s..%s; falling back to paged JSON',
-                            direction, category, chunk_begin, chunk_end,
-                        )
-                        fallback_result = self._fetch_records_resilient(
-                            direction=direction,
-                            category=category,
-                            begin_date=chunk_begin,
-                            end_date=chunk_end,
-                            status=status,
-                        )
-                        content = self._cash_records_to_xlsx(
-                            fallback_result.records, direction, chunk_begin, chunk_end
-                        )
                 path.write_bytes(content)
                 # Parse now so corrupt/error workbooks fail before merge.
                 workbook = _load_workbook(path, read_only=True, data_only=False)

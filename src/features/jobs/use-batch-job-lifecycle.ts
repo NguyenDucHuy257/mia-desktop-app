@@ -357,11 +357,11 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
     if (activeRef.current) {
       diagnosticLog('job_batch_start_ignored', { reason: 'batch_already_active' }, 'warn');
       setMessage({ kind: 'notice', text: 'Đang có một phiên đồng bộ. Hãy dừng hoặc chờ phiên hiện tại hoàn tất.' });
-      return;
+      return false;
     }
 
     const normalized = normalizeBatch(intents);
-    if (normalized.length === 0) return;
+    if (normalized.length === 0) return false;
     stopTimers();
     const token = generation.current;
     activeRef.current = true;
@@ -395,6 +395,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
       // launchNext advances only after that account reaches a terminal state.
       void launchNext(token);
     })();
+    return true;
   }, [launchNext, stopTimers, updateItems]);
 
   const cancelAll = useCallback(async () => {

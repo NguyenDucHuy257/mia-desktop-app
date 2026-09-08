@@ -44,6 +44,7 @@ _write_lock = threading.Lock()
 _production_backend_lock = threading.Lock()
 _artifact_task_lock = threading.Lock()
 _artifact_task: dict[str, Any] | None = None
+ARTIFACT_TASK_TIMEOUT_SECONDS = 120.0
 
 
 class RpcError(Exception):
@@ -225,12 +226,18 @@ def _copy_artifacts(
 def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: threading.Event) -> None:
     global _artifact_task
     try:
+        with _artifact_task_lock:
+            if _artifact_task and _artifact_task.get("task_id") == task_id:
+                _artifact_task["last_activity_monotonic"] = time.monotonic()
         if value.get("vat_return") is True:
             from mia_vat_return_export import export_vat_return
 
             result = export_vat_return(_production_backend(), value)
         elif value.get("result_scopes"):
             def export_progress(event: dict[str, Any]) -> None:
+                with _artifact_task_lock:
+                    if _artifact_task and _artifact_task.get("task_id") == task_id:
+                        _artifact_task["last_activity_monotonic"] = time.monotonic()
                 write_message({
                     "jsonrpc": "2.0",
                     "method": "export.progress",
@@ -266,7 +273,8 @@ def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: thread
             logger.exception("artifact_task_failed task_id=%s", task_id)
         result, status, error = None, "failed", "internal_error"
     with _artifact_task_lock:
-        if _artifact_task and _artifact_task.get("task_id") == task_id:
+        if (_artifact_task and _artifact_task.get("task_id") == task_id
+                and _artifact_task.get("status") in {"running", "cancelling"}):
             _artifact_task.update(status=status, result=result, error=error)
 
 
@@ -293,12 +301,63 @@ def _run_unified_artifact_task(task_id: str, coordinator: Any) -> None:
         if logger is not None:
             logger.exception("unified_artifact_task_failed task_id=%s", task_id)
     with _artifact_task_lock:
-        if _artifact_task and _artifact_task.get("task_id") == task_id:
+        if (_artifact_task and _artifact_task.get("task_id") == task_id
+                and _artifact_task.get("status") in {"running", "cancelling"}):
             _artifact_task.update(status=status, result=result, error=error)
+
+
+def _reap_stale_artifact_task() -> None:
+    """Release an orphaned export slot after a worker timeout or restart."""
+    global _artifact_task
+    with _artifact_task_lock:
+        task = _artifact_task
+        if not task or task.get("status") not in {"running", "cancelling"}:
+            return
+        worker = task.get("worker")
+        last_activity = task.get("last_activity_monotonic", task.get("started_monotonic"))
+        expired = isinstance(last_activity, (int, float)) and (
+            time.monotonic() - last_activity >= ARTIFACT_TASK_TIMEOUT_SECONDS
+        )
+        orphaned = worker is not None and not worker.is_alive()
+        if not expired and not orphaned:
+            return
+        task["status"] = "failed"
+        task["error"] = "artifact_export_timeout" if expired else "artifact_worker_lost"
+        cancel_event = task.get("cancel_event")
+        if cancel_event is not None:
+            cancel_event.set()
+        coordinator = task.get("coordinator")
+        if coordinator is not None:
+            try:
+                coordinator.cancel()
+            except Exception:
+                pass
+        if logger is not None:
+            logger.warning("artifact_task_reaped task_id=%s reason=%s", task.get("task_id"), task["error"])
+
+
+def _artifact_watchdog(task_id: str) -> None:
+    # Check periodically so a worker is eventually reaped even when the first
+    # watchdog wake-up happens while it is still active.  The timeout is an
+    # inactivity timeout; export progress refreshes the heartbeat.
+    interval = min(5.0, max(1.0, ARTIFACT_TASK_TIMEOUT_SECONDS / 10.0))
+    while True:
+        time.sleep(interval)
+        with _artifact_task_lock:
+            if not _artifact_task or _artifact_task.get("task_id") != task_id:
+                return
+            if _artifact_task.get("status") not in {"running", "cancelling"}:
+                return
+        _reap_stale_artifact_task()
 
 
 def dispatch(method: str, params: Any) -> tuple[Any, bool]:
     global storage, crawler, data_directory, logger, production_backend
+    if method in {'results.materialStart', 'results.materialStatus'}:
+        from mia_material_lookup import start, status
+        if method == 'results.materialStart':
+            return start(_production_backend(), params), False
+        return status(params['connection_id']), False
 
     if method == "system.health":
         return {
@@ -609,6 +668,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             )
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
+        _reap_stale_artifact_task()
         with _artifact_task_lock:
             if _artifact_task and _artifact_task.get("status") in {
                 "running", "cancelling"
@@ -618,12 +678,17 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             _artifact_task = {
                 "task_id": task_id, "status": "running", "result": None,
                 "error": None, "coordinator": coordinator,
+                "started_monotonic": time.monotonic(),
             }
-        threading.Thread(
+        worker = threading.Thread(
             target=_run_unified_artifact_task,
             args=(task_id, coordinator),
             name="mia-unified-artifact-export", daemon=True,
-        ).start()
+        )
+        with _artifact_task_lock:
+            _artifact_task["worker"] = worker
+        worker.start()
+        threading.Thread(target=_artifact_watchdog, args=(task_id,), name="mia-artifact-watchdog", daemon=True).start()
         return {"task_id": task_id, "status": "running"}, False
 
     if method == "artifacts.batch.status":
@@ -691,6 +756,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             or (result_export and vat_return_export)
         ):
             raise RpcError(-32602, "invalid_params")
+        _reap_stale_artifact_task()
         with _artifact_task_lock:
             if _artifact_task and _artifact_task.get("status") in {"running", "cancelling"}:
                 raise RpcError(-32064, "artifact_task_active")
@@ -699,13 +765,19 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             _artifact_task = {
                 "task_id": task_id, "status": "running", "result": None,
                 "error": None, "cancel_event": cancel_event,
+                "started_monotonic": time.monotonic(),
+                "last_activity_monotonic": time.monotonic(),
             }
-        threading.Thread(
+        worker = threading.Thread(
             target=_run_artifact_task,
             args=(task_id, value, cancel_event),
             name="mia-artifact-export",
             daemon=True,
-        ).start()
+        )
+        with _artifact_task_lock:
+            _artifact_task["worker"] = worker
+        worker.start()
+        threading.Thread(target=_artifact_watchdog, args=(task_id,), name="mia-artifact-watchdog", daemon=True).start()
         return {"task_id": task_id, "status": "running"}, False
 
     if method == "artifacts.targets":
@@ -846,6 +918,8 @@ def _serve_parallel_control(request_id: str | int, method: str, params: Any) -> 
 
 
 def serve() -> int:
+    from concurrent.futures import ThreadPoolExecutor
+    result_workers = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mia-result-read")
     should_stop = False
     while not should_stop:
         raw = sys.stdin.buffer.readline(MAX_MESSAGE_BYTES + 2)
@@ -867,6 +941,9 @@ def serve() -> int:
         try:
             decoded = json.loads(raw.decode("utf-8"))
             request_id, method, params = validate_request(decoded)
+            if method in {"results.overview", "results.details", "results.facets", "results.reconciliation"}:
+                result_workers.submit(_serve_parallel_control, request_id, method, params)
+                continue
             if method in {
                 "artifacts.coverage", "artifacts.vat_return.coverage", "artifacts.vat_return.export", "artifacts.snapshot",
                 "artifacts.batch.status", "artifacts.batch.failures",
@@ -876,7 +953,7 @@ def serve() -> int:
                 # after the task has actually started.
                 "artifacts.export.start", "artifacts.export.status",
                 "artifacts.export.cancel",
-                "results.reconciliation",
+                "results.reconciliation", "results.materialStart", "results.materialStatus",
                 "source.jobs.status", "source.jobs.cancel", "source.sync.states",
             }:
                 threading.Thread(

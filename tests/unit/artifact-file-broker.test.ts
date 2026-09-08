@@ -168,6 +168,29 @@ describe('artifact filesystem boundary', () => {
     });
   });
 
+  it('preserves an export inactivity timeout instead of sanitizing it as internal_error', async () => {
+    const destination = path.resolve(tmpdir(), 'MIA-results-timeout');
+    const runtime = {
+      invoke: vi.fn()
+        .mockResolvedValueOnce({ task_id: 'excel_timeout', status: 'running' })
+        .mockResolvedValueOnce({
+          task_id: 'excel_timeout', status: 'failed', error: 'artifact_export_timeout',
+        }),
+    };
+
+    await expect(createArtifactBroker(() => runtime).export({
+      destination,
+      connection_ids: ['conn_1'],
+      kinds: ['excel'],
+      result_scopes: ['overview'],
+      date_from: '2026-01-01',
+      date_to: '2026-12-31',
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'artifact_export_timeout' },
+    });
+  });
+
   it('runs XML and HTML copying as a cancellable local artifact task', async () => {
     const destination = path.resolve(tmpdir(), 'MIA-packages');
     const runtime = {

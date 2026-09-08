@@ -279,11 +279,6 @@ class SourceBackend:
             raise ValueError("invalid_sync_mode")
         if sync_mode is not None and len(list(intent.get("directions") or ())) != 1:
             raise ValueError("sync_mode_requires_one_direction")
-        if sync_mode is not None:
-            # Invoice Management synchronization is one business operation:
-            # Detail must never be omitted because a renderer/export choice
-            # happened to submit only Overview.
-            intent["scopes"] = ["overview", "detail"]
         if sync_mode == "new":
             intent["force_refresh"] = True
             intent["refresh_latest_month"] = False

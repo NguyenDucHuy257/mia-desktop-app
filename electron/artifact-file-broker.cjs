@@ -163,7 +163,7 @@ async function invokeArtifactExport(getRuntime, value) {
   return checkedExportResult(result);
 }
 
-function waitForTaskPoll(delayMs = 100) {
+function waitForTaskPoll(delayMs = 500) {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 

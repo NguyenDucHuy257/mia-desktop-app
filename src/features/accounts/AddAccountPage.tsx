@@ -188,7 +188,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
               {errors.username ? <small id="account-username-error" className="field-error">{errors.username}</small> : null}
             </label>
             <div className="account-field">
-              <label htmlFor="account-password">Mật khẩu</label>
+              <label htmlFor="account-password">Mật khẩu: (mật khẩu vào trang hoadondientu.gdt.gov.vn)</label>
               <PasswordInput
                 id="account-password"
                 value={password}

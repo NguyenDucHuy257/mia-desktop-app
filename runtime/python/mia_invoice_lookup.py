@@ -119,12 +119,14 @@ def resolve_invoice_lookup(
     rule: dict[str, str] | None = None
     matched_by: str | None = None
     rule_id: str | None = None
-    if seller in SELLER_EXACT_RULES:
-        rule = _rule_from_legacy(SELLER_EXACT_RULES[seller], seller)
-        matched_by, rule_id = "seller_exact", seller
-    elif root_tax_code(seller) in SELLER_ROOT_RULES:
+    # Root-level corrections from the source mapping must win over stale
+    # branch entries (for example all Ajinomoto branches use ajinomotosg).
+    if root_tax_code(seller) in SELLER_ROOT_RULES:
         rule = dict(SELLER_ROOT_RULES[root_tax_code(seller)])
         matched_by, rule_id = "seller_root", root_tax_code(seller)
+    elif seller in SELLER_EXACT_RULES:
+        rule = _rule_from_legacy(SELLER_EXACT_RULES[seller], seller)
+        matched_by, rule_id = "seller_exact", seller
     elif provider in PROVIDER_RULES:
         rule = _rule_from_legacy(PROVIDER_RULES[provider], provider)
         matched_by, rule_id = "msttcgp", provider
@@ -174,6 +176,10 @@ def _rule_from_legacy(value: str, rule_id: str) -> dict[str, str]:
     text = _decode_rule_url(str(value or "").strip())
     if text.casefold() == "easy":
         return {"strategy": "easyinvoice"}
+    if text == "VNPT_DYNAMIC":
+        return {"strategy": "vnpt_dynamic"}
+    if text == "XML_GUID":
+        return {"strategy": "xml_guid", "url": HTTPS_PREFIX + "van.ehoadon.vn/Lookup"}
     if rule_id == "0101360697" and "bit.ly/hdtracuuVan" in text:
         return {"strategy": "xml_guid", "url": HTTPS_PREFIX + "van.ehoadon.vn/Lookup"}
     if not is_safe_lookup_url(text):
