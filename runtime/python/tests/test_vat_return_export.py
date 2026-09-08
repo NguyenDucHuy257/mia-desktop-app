@@ -466,6 +466,46 @@ class VatReturnExportTests(unittest.TestCase):
         self.assertEqual(sheet.sheet_properties.pageSetUpPr.fitToPage,True)
         book.close()
 
+    def test_sold_schedule_omits_zero_value_note_lines_but_keeps_real_zero_rate_sales(self):
+        self.invoice(
+            "sold", "10%", 100, 10, number="1",
+            lines=[
+                {"ten": "Dá»‹ch vá»¥ thá»±c", "tsuat": "10%", "thtien": "100", "tthue": "10"},
+                {"ten": "Ghi chÃº há»£p Ä‘á»“ng", "tsuat": "0%", "thtien": "0", "tthue": "0"},
+                {"ten": "Äiá»u chá»‰nh lÃ m trÃ²n", "tsuat": "0%", "thtien": "0", "tthue": "-0.280"},
+            ],
+        )
+        self.invoice("sold", "0%", 50, 0, number="2")
+
+        report = build_vat_return_data(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+
+        self.assertEqual(len(report["sold_groups"]["0"]), 1)
+        self.assertEqual(report["sold_groups"]["0"][0]["shdon"], "S2")
+        self.assertEqual(report["sold_groups"]["0"][0]["base"], Decimal("50"))
+        self.assertEqual(report["totals"]["0"], Decimal("50"))
+        excluded = [
+            item for item in report["trace"]
+            if item["exclusion_reason"] == "zero_value_detail_line"
+        ]
+        self.assertEqual(len(excluded), 2)
+        self.assertEqual(
+            {(item["base"], item["actual_tax"]) for item in excluded},
+            {("0", "0"), ("0", "-0.280")},
+        )
+
+        result = self.export_book("zero-note-lines")
+        book = load_workbook(result["files"][0], data_only=False)
+        sheet = book[SOLD_SHEET_NAME]
+        exported_numbers = [sheet.cell(row, 5).value for row in range(1, sheet.max_row + 1)]
+        self.assertNotIn("S1", [
+            sheet.cell(row, 5).value for row in range(1, sheet.max_row + 1)
+            if sheet.cell(row, 11).value == 0 and sheet.cell(row, 12).value == 0
+        ])
+        self.assertIn("S2", exported_numbers)
+        book.close()
+
     def test_reduction_is_only_explicit_8_or_declared_10_matching_8_percent(self):
         self.invoice("sold","10%",1000,100)
         self.invoice("sold","8%",1000,80)
@@ -693,6 +733,48 @@ class VatReturnExportTests(unittest.TestCase):
             self.export_book("purchase-invalid")
         self.assertFalse((self.root/"purchase-invalid").exists())
 
+    def test_purchase_null_overview_totals_use_only_balanced_complete_detail(self):
+        self.invoice(
+            "purchase", "", 5_700_000, 0, query_type="sco-query",
+            overview_fields={
+                "tgtcthue": None, "tgtthue": None,
+                "tgtttbso": "5700000", "ttcktmai": 0, "tgtphi": None,
+                "nbten": "Người bán máy tính tiền",
+            },
+            lines=[
+                ("Kẹp tôn 5T", "", 3_700_000, 0),
+                ("Kẹp tôn 6T", "", 2_000_000, 0),
+            ],
+        )
+        report = build_vat_return_data(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+        self.assertEqual(len(report["purchase_items"]), 1)
+        item = report["purchase_items"][0]
+        self.assertEqual((item["base"], item["tax"]),
+                         (Decimal("5700000"), Decimal("0")))
+        self.assertEqual(item["totals_source"], "detail_verified_fallback")
+        self.assertEqual(report["purchase_audit"][0]["reason"],
+                         "detail_verified_fallback")
+        result = self.export_book("purchase-detail-fallback")
+        self.assertEqual(result["audit"]["purchase_base"], "5700000")
+        self.assertEqual(result["audit"]["purchase_tax"], "0")
+
+    def test_purchase_null_overview_totals_reject_unbalanced_detail(self):
+        self.invoice(
+            "purchase", "", 5_700_000, 0, query_type="sco-query",
+            overview_fields={
+                "tgtcthue": None, "tgtthue": None,
+                "tgtttbso": "6000000", "ttcktmai": 0, "tgtphi": None,
+                "nbten": "Người bán máy tính tiền",
+            },
+            lines=[("Không cân với tổng thanh toán", "", 5_700_000, 0)],
+        )
+        with self.assertRaisesRegex(ValueError, "vat_return_purchase_invalid"):
+            build_vat_return_data(
+                self.db, self.tax_code, "2023-10-01", "2023-10-31",
+            )
+
     def test_purchase_8_percent_reduction_sheet_uses_one_row_per_canonical_detail_line(self):
         mixed_lines=[
             ("Mặt hàng trùng", "8", 100, 8),
@@ -792,7 +874,8 @@ class VatReturnExportTests(unittest.TestCase):
         self.assertEqual(str(sheet.cell(part_two+3,1).value).strip(),"Tổng")
         self.assertEqual((sheet.cell(part_two+3,6).value,sheet.cell(part_two+3,11).value),(0,0))
         self.assertTrue(str(sheet.cell(part_two+4,1).value).startswith("III. "))
-        self.assertIsNone(sheet.cell(part_two+5,3).value)
+        self.assertEqual(sheet.cell(part_two+5,3).value,
+                         f"=K{part_two+3}-G{total_row}")
         self.assertEqual(sheet.max_row,24)
         self.assertEqual(str(sheet.print_area),f"'{REDUCTION_SHEET_NAME}'!$A$1:$L$24")
         template=load_workbook(_template_path(),data_only=False)
@@ -814,6 +897,123 @@ class VatReturnExportTests(unittest.TestCase):
         self.assertEqual(result["audit"]["purchase_reduction_line_count"],9)
         self.assertEqual((result["audit"]["purchase_reduction_base"],
                           result["audit"]["purchase_reduction_tax"]),("2200","169"))
+
+    def test_sold_reduction_sheet_lists_detail_lines_and_uses_template_formulas(self):
+        self.invoice("purchase", "8%", 500, 40,
+                     lines=[("Đầu vào 8%", "8%", 500, 40)])
+        self.invoice("sold", "8%", 300, 24, number="20", lines=[
+            ("Dịch vụ vận tải", "8%", 100, 8),
+            ("Dịch vụ xuất bến", "8", 200, 16),
+        ])
+        self.invoice("sold", "10%", 400, 32, number="21", lines=[
+            ("Khai thuế suất 10%, thực tế giảm còn 8%", "10%", 400, 32),
+        ])
+        self.invoice("sold", "10%", 500, 50, number="22", lines=[
+            ("Không thuộc diện giảm", "10%", 500, 50),
+        ])
+
+        report = build_vat_return_data(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+        self.assertEqual(
+            [item["name"] for item in report["sold_reduction_lines"]],
+            ["Dịch vụ vận tải", "Dịch vụ xuất bến",
+             "Khai thuế suất 10%, thực tế giảm còn 8%"],
+        )
+        self.assertEqual(
+            sum((item["base"] for item in report["sold_reduction_lines"]), Decimal(0)),
+            Decimal("700"),
+        )
+        self.assertEqual(
+            sum((item["reduction"] for item in report["sold_reduction_lines"]), Decimal(0)),
+            Decimal("14"),
+        )
+
+        result = self.export_book("sold-reduction")
+        formula_book = load_workbook(result["files"][0], data_only=False)
+        value_book = load_workbook(result["files"][0], data_only=True)
+        sheet = formula_book[REDUCTION_SHEET_NAME]
+        values = value_book[REDUCTION_SHEET_NAME]
+        part_two = next(
+            row for row in range(1, sheet.max_row + 1)
+            if str(sheet.cell(row, 1).value or "").startswith("II. ")
+        )
+        data_rows = [part_two + 3, part_two + 4, part_two + 5]
+        self.assertEqual(
+            [sheet.cell(row, 2).value for row in data_rows],
+            ["Dịch vụ vận tải", "Dịch vụ xuất bến",
+             "Khai thuế suất 10%, thực tế giảm còn 8%"],
+        )
+        for row, base, reduction in zip(data_rows, (100, 200, 400), (2, 4, 8)):
+            self.assertEqual(sheet.cell(row, 6).value, base)
+            self.assertEqual(sheet.cell(row, 7).value, 0.1)
+            self.assertEqual(sheet.cell(row, 9).value, f"=G{row}*80%")
+            self.assertEqual(sheet.cell(row, 11).value, f"=F{row}*(G{row}-I{row})")
+            self.assertEqual(values.cell(row, 9).value, 0.08)
+            self.assertEqual(values.cell(row, 11).value, reduction)
+            self.assertIn(f"K{row}:L{row}", {str(item) for item in sheet.merged_cells.ranges})
+        sold_total = data_rows[-1] + 1
+        self.assertEqual((sheet.cell(sold_total, 6).value,
+                          sheet.cell(sold_total, 11).value), (700, 14))
+        difference_row = sold_total + 2
+        self.assertEqual(sheet.cell(difference_row, 3).value,
+                         f"=K{sold_total}-G{part_two-1}")
+        self.assertEqual(values.cell(difference_row, 3).value, -26)
+        self.assertEqual(result["audit"]["sold_reduction_line_count"], 3)
+        self.assertEqual(result["audit"]["sold_reduction_base"], "700")
+        self.assertEqual(result["audit"]["sold_reduction_tax"], "14")
+        formula_book.close()
+        value_book.close()
+
+    def test_sold_reduction_sheet_groups_equal_display_columns_and_sums_revenue(self):
+        self.invoice("sold", "8%", 100, 8, number="30", lines=[
+            ("Dịch vụ vận tải", "8%", 100, 8),
+        ])
+        self.invoice("sold", "8%", 250, 20, number="31", lines=[
+            ("  Dịch vụ   vận tải  ", "8", 250, 20),
+        ])
+        self.invoice("sold", "8%", 400, 32, number="32", lines=[
+            ("Dịch vụ khác", "8%", 400, 32),
+        ])
+
+        report = build_vat_return_data(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+        lines = report["sold_reduction_lines"]
+        self.assertEqual(report["sold_reduction_source_line_count"], 3)
+        self.assertEqual(len(lines), 2)
+        transport = next(item for item in lines if item["name"] == "Dịch vụ vận tải")
+        self.assertEqual(transport["base"], Decimal("350"))
+        self.assertEqual(transport["statutory_rate"], Decimal("0.10"))
+        self.assertEqual(transport["reduced_rate"], Decimal("0.08"))
+        self.assertEqual(transport["reduction"], Decimal("7"))
+        self.assertEqual(transport["source_line_count"], 2)
+
+        result = self.export_book("sold-reduction-grouped")
+        formula_book = load_workbook(result["files"][0], data_only=False)
+        value_book = load_workbook(result["files"][0], data_only=True)
+        sheet = formula_book[REDUCTION_SHEET_NAME]
+        values = value_book[REDUCTION_SHEET_NAME]
+        part_two = next(
+            row for row in range(1, sheet.max_row + 1)
+            if str(sheet.cell(row, 1).value or "").startswith("II. ")
+        )
+        data_rows = [part_two + 3, part_two + 4]
+        self.assertEqual(
+            [(sheet.cell(row, 2).value, sheet.cell(row, 6).value) for row in data_rows],
+            [("Dịch vụ khác", 400), ("Dịch vụ vận tải", 350)],
+        )
+        transport_row = data_rows[1]
+        self.assertEqual(sheet.cell(transport_row, 7).value, 0.1)
+        self.assertEqual(sheet.cell(transport_row, 9).value,
+                         f"=G{transport_row}*80%")
+        self.assertEqual(sheet.cell(transport_row, 11).value,
+                         f"=F{transport_row}*(G{transport_row}-I{transport_row})")
+        self.assertEqual(values.cell(transport_row, 11).value, 7)
+        self.assertEqual(result["audit"]["sold_reduction_source_line_count"], 3)
+        self.assertEqual(result["audit"]["sold_reduction_line_count"], 2)
+        formula_book.close()
+        value_book.close()
 
     def test_purchase_reduction_tax_rate_normalizer_accepts_only_explicit_8_variants(self):
         for value in ("8","8%","8.0","8.00","8.0%","8.00%","0.08"):
