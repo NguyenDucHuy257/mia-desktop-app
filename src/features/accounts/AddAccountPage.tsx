@@ -104,20 +104,21 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
     diagnosticLog(failed ? 'account_login_failed' : 'account_login_succeeded', {
       mode: 'bulk', account_count: results.length, successful, failed,
     }, failed ? 'error' : 'info');
-    for (const result of results) {
-      if (result.status === 'fulfilled') onConnectionCreated?.(result.value.connection_id);
-    }
+    // One refresh loads the whole persisted list. Refreshing once per success
+    // queues repeated profile lookups behind the serial account runtime.
+    const lastSuccess = [...results].reverse().find((result) => result.status === 'fulfilled');
+    if (lastSuccess?.status === 'fulfilled') onConnectionCreated?.(lastSuccess.value.connection_id);
 
     if (failed === 0) {
       setBulkValue('');
       setFeedback({ kind: 'success', message: `Đã thêm ${successful} tài khoản thành công.` });
     } else {
-      const firstFailure = results.find((result) => result.status === 'rejected');
+      const failures = results.flatMap((result, index) => result.status === 'rejected'
+        ? [`Dòng ${parsed.entries[index]!.lineNumber} — ${parsed.entries[index]!.username}: ${accountErrorMessage(result.reason)}`]
+        : []);
       setFeedback({
         kind: 'error',
-        message: `Đã thêm ${successful}/${results.length} tài khoản. ${
-          firstFailure?.status === 'rejected' ? accountErrorMessage(firstFailure.reason) : ''
-        }`,
+        message: `Đã hoàn tất nhập ${results.length} tài khoản.\nThành công: ${successful} · Thất bại: ${failed}\n\nDanh sách tài khoản không thể đăng nhập hoặc hoàn tất thêm:\n${failures.join('\n\n')}`,
       });
     }
     setSubmitting(false);

@@ -484,10 +484,17 @@ class ProductionBackend(SourceBackend):
             session_hash,
             worker_id=source_backend_module.WORKER_ID,
         )
-        company = portal.get_company_info()
-        company_name = str(company.get("name") or "").strip()
-        if not company_name:
-            raise ValueError("missing_company_name")
+        # Validate credentials first. A display-profile outage must not revoke
+        # an account whose managed login already succeeded.
+        portal.login()
+        try:
+            company = portal.get_company_info()
+            company_name = str(company.get("name") or "").strip()
+        except (requests.RequestException, RuntimeError, ValueError) as error:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning("account_profile_unavailable error_type=%s", type(error).__name__)
+            return ""
         return company_name[:300]
 
     def create_connection(self, username: str, password: str):

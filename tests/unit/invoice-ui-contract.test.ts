@@ -118,6 +118,8 @@ describe('invoice result control presentation', () => {
     ]);
     expect(invoicePage).toContain('ACCOUNT_PAGE_SIZE = 20');
     expect(invoicePage).toContain('pageRows.map');
+    expect(invoicePage).toContain('Chọn tất cả tài khoản trên mọi trang');
+    expect(invoicePage).toContain('function moveAccountPage(offset: number)');
     expect(invoicePage).not.toContain('[1, 2, 3].map');
     expect(datePicker).toContain('date-range-calendar-control');
     expect(addAccount).toContain('Quay lại Quản lý HĐĐT');

@@ -5,6 +5,14 @@ import { NoticeDialog } from '../../src/components/NoticeDialog';
 import { loadVatReturnCoverage, vatReturnExportErrorFeedback } from '../../src/features/artifacts/VatReturnExportPage';
 
 describe('VAT return popup semantics', () => {
+  it('shows a readable confirmable warning for serialized reduction errors', () => {
+    const feedback = vatReturnExportErrorFeedback(new Error('[vat_return_purchase_reduction_invalid:{"count":72,"examples":[]}] failure'));
+    expect(feedback.kind).toBe('warning');
+    expect(feedback.canContinue).toBe(true);
+    expect(feedback.message).toContain('72 dòng');
+    expect(feedback.message).not.toContain('examples');
+    expect(feedback.message).not.toContain('vat_return_');
+  });
   afterEach(() => vi.unstubAllGlobals());
 
   it('retries a cold transient coverage timeout without exposing a false error', async () => {

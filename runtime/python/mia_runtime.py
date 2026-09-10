@@ -111,6 +111,13 @@ def _production_backend():
 
 
 def _source_error_name(error: BaseException) -> str | None:
+    known_messages = {
+        'Captcha key not found': 'source_captcha_missing',
+        'Captcha content not found': 'source_captcha_missing',
+        'Captcha model failed': 'source_captcha_model_failed',
+    }
+    if str(error) in known_messages:
+        return known_messages[str(error)]
     for name in ("error_code", "code"):
         value = getattr(error, name, None)
         if isinstance(value, str) and value:
@@ -122,6 +129,14 @@ def _source_error_name(error: BaseException) -> str | None:
         "AccountConnectionNotFoundError": "connection_not_found",
         "ResourceOwnershipError": "resource_not_found",
         "JobNotFoundError": "job_not_found",
+        "Timeout": "source_timeout",
+        "ReadTimeout": "source_timeout",
+        "ConnectTimeout": "source_timeout",
+        "ConnectionError": "source_connection_failed",
+        "SSLError": "source_tls_failed",
+        "PermissionError": "account_storage_denied",
+        "ModuleNotFoundError": "account_runtime_dependency_missing",
+        "ImportError": "account_runtime_dependency_missing",
     }
     return mapping.get(type(error).__name__)
 
@@ -232,7 +247,14 @@ def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: thread
         if value.get("vat_return") is True:
             from mia_vat_return_export import export_vat_return
 
-            result = export_vat_return(_production_backend(), value)
+            try:
+                result = _vat_export_rpc_result(export_vat_return(_production_backend(), value))
+            except Exception as exc:
+                if logger is not None:
+                    logger.exception("vat_return_export_failed task_id=%s error_type=%s", task_id, type(exc).__name__)
+                if isinstance(exc, (ValueError, RuntimeError)) and str(exc).startswith("vat_return_"):
+                    raise
+                raise RuntimeError("vat_return_export_failed") from exc
         elif value.get("result_scopes"):
             def export_progress(event: dict[str, Any]) -> None:
                 with _artifact_task_lock:
@@ -276,6 +298,18 @@ def _run_artifact_task(task_id: str, value: dict[str, Any], cancel_event: thread
         if (_artifact_task and _artifact_task.get("task_id") == task_id
                 and _artifact_task.get("status") in {"running", "cancelling"}):
             _artifact_task.update(status=status, result=result, error=error)
+
+
+def _vat_export_rpc_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Keep full audit data local; status RPC only needs counts and file paths."""
+    if not result.get("audit"):
+        return {"count": result.get("count", 0), "files": result.get("files", [])}
+    audit = result.get("audit") or {}
+    summary = {key: item for key, item in audit.items()
+               if isinstance(item, (int, float, bool)) or (isinstance(item, str) and len(item) <= 128)}
+    summary["reduction_anomalies"] = []
+    summary["details_omitted"] = True
+    return {"count": result.get("count", 0), "files": result.get("files", []), "audit": summary}
 
 
 def _artifact_task_view(task_id: str) -> dict[str, Any]:
@@ -432,10 +466,10 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 return _purge_source_account(params["connection_id"]), False
         except RpcError:
             raise
-        except (KeyError, TypeError, ValueError):
-            raise RpcError(-32602, "invalid_params") from None
         except Exception as error:
             code = _source_error_name(error)
+            if code is None and isinstance(error, (KeyError, TypeError, ValueError)):
+                code = "source_account_data_invalid"
             if logger is not None:
                 logger.exception(
                     "source_account_failed method=%s error_type=%s error_code=%s",
@@ -651,7 +685,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32011, "storage_not_initialized")
         try:
             from mia_vat_return_export import export_vat_return
-            return export_vat_return(_production_backend(), dict(params)), False
+            return _vat_export_rpc_result(export_vat_return(_production_backend(), dict(params))), False
         except FileNotFoundError:
             raise RpcError(-32602, "vat_return_template_missing") from None
         except (KeyError, TypeError, ValueError) as error:

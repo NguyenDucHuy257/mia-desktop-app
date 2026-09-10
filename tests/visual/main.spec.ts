@@ -127,9 +127,11 @@ test('invoice accounts paginate by twenty after filtering and preserve selection
   await expect(page.getByText('Hiển thị 1–20 trên tổng 21 tài khoản')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Chọn 1000000000' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
 
+  await page.getByRole('button', { name: 'Chọn tất cả tài khoản trên mọi trang' }).click();
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.locator('.table-row')).toHaveCount(1);
   await expect(page.getByText('Hiển thị 21–21 trên tổng 21 tài khoản')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Chọn 1000000020' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
   await page.getByRole('button', { name: 'Trang trước' }).click();
   await expect(page.getByRole('button', { name: 'Chọn 1000000000' }).locator('.selection-box')).toHaveAttribute('data-checked', 'true');
 
@@ -143,6 +145,10 @@ test('invoice accounts paginate by twenty after filtering and preserve selection
   await expect(page.locator('.table-row')).toHaveCount(20);
   await expect(page.getByText('Hiển thị 1–20 trên tổng 20 tài khoản')).toBeVisible();
   await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('1');
+  await page.getByLabel('Số tài khoản mỗi trang').selectOption('10');
+  await expect(page.locator('.table-row')).toHaveCount(10);
+  await page.getByRole('button', { name: 'Trang sau' }).click();
+  await expect(page.locator('.pagination button[data-active="true"]')).toHaveText('2');
 });
 
 test('detail results retain total rows on page two and empty export is stopped before lifecycle', async ({ page }) => {

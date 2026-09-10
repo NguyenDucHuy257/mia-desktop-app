@@ -159,7 +159,7 @@ export interface VatReturnDirectionCoverage { direction: InvoiceDirection; overv
 export interface VatReturnCoverageAccount { connection_id: string; purchase: VatReturnDirectionCoverage; sold: VatReturnDirectionCoverage }
 export interface VatReturnCoverageRequest { connection_ids: string[]; date_from: string; date_to: string }
 export interface VatReturnCoverage extends VatReturnCoverageRequest { accounts: VatReturnCoverageAccount[] }
-export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string }
+export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string; allow_incomplete?: boolean }
 export interface VatReturnReductionAnomaly {
   canonical_invoice_identity: string;
   line_identity: string;

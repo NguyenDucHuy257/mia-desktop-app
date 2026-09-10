@@ -12,6 +12,20 @@ from mia_backend import ProductionBackend
 
 
 class DesktopExitCancellationTests(unittest.TestCase):
+    def test_vat_status_omits_large_audit_and_preserves_file_and_totals(self):
+        import json
+        original = {"count": 1, "files": ["C:/exports/vat.xlsx"], "audit": {
+            "purchase_rows": [{"name": "x" * 2000}] * 2000,
+            "purchase_base": "123456", "reduction_anomaly_count": 2000,
+            "reduction_anomalies": [{"name": "x" * 2000}] * 2000,
+        }}
+        result = mia_runtime._vat_export_rpc_result(original)
+        self.assertLess(len(json.dumps(result).encode()), mia_runtime.MAX_MESSAGE_BYTES)
+        self.assertEqual(result["files"], original["files"])
+        self.assertEqual(result["audit"]["purchase_base"], "123456")
+        self.assertEqual(result["audit"]["reduction_anomaly_count"], 2000)
+        self.assertEqual(len(original["audit"]["purchase_rows"]), 2000)
+
     def test_orphaned_artifact_task_is_reaped_before_new_export(self):
         previous = mia_runtime._artifact_task
         try:

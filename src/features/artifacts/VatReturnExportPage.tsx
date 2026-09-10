@@ -16,7 +16,7 @@ type CoverageState = 'loading' | 'ready' | 'error';
 type StatusFilter = '' | 'ready' | 'not_ready' | 'checking' | 'error';
 
 export interface VatReturnSelectionState { dateFrom: string; dateTo: string }
-interface VatReturnFeedback { kind: Exclude<NoticeKind, 'notice'>; message: string; path?: string }
+interface VatReturnFeedback { kind: Exclude<NoticeKind, 'notice'>; message: string; path?: string; canContinue?: boolean }
 
 function validIsoDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -26,7 +26,15 @@ function validIsoDate(value: string) {
 
 export function vatReturnExportErrorFeedback(error: unknown): VatReturnFeedback {
   const runtimeError = error as Error & { code?: string };
-  const code = String(runtimeError?.code ?? '');
+  const code = String(runtimeError?.code ?? /^\[([^\]]+)\]/.exec(runtimeError?.message ?? '')?.[1] ?? '');
+  if (code === 'vat_return_export_failed' || code === 'internal_error') {
+    return { kind: 'error', message: 'Xuất tờ khai GTGT thất bại do lỗi xử lý nội bộ. Vui lòng xem Nhật ký tại thời điểm xuất để xác định nguyên nhân. File kết quả chưa được xác nhận tạo thành công.' };
+  }
+  const warningText = `${code} ${runtimeError?.message ?? ''}`;
+  if (warningText.includes('vat_return_purchase_reduction_invalid:')) {
+    const count = /"count"\s*:\s*(\d+)/.exec(warningText)?.[1];
+    return { kind: 'warning', canContinue: true, message: `${count ? `${count} dòng` : 'Một số dòng'} chi tiết Mua vào 8% thiếu tên hàng, thành tiền hoặc tiền thuế. Đây có thể là dòng diễn giải.\nNếu tiếp tục, ô trống sẽ giữ trống và không cộng giá trị vào tổng; dòng có số tiền không hợp lệ sẽ được bỏ qua. Vui lòng kiểm tra file sau khi tải.\nBạn có muốn tiếp tục tải tờ khai?` };
+  }
   if (code === 'artifact_task_active') {
     return { kind: 'warning', message: 'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.' };
   }
@@ -106,6 +114,7 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
   const [page, setPage] = useState(1);
   const [feedback, setFeedback] = useState<VatReturnFeedback | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportStates, setExportStates] = useState<Record<string, string>>({});
   const generation = useRef(0);
   const initialForm = useRef({ selection, folder });
   const accountIds = useMemo(() => accounts.map((account) => account.connection_id), [accounts]);
@@ -141,7 +150,7 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
 
   async function chooseFolder() { const selected = await window.miaRuntime?.artifacts.selectDirectory(); if (selected) onFolder(selected); }
   function resetForm() { onSelectionChange({ ...initialForm.current.selection }); onFolder(initialForm.current.folder); setFeedback(null); }
-  async function prepareExport() {
+  async function prepareExport(allowIncomplete = false) {
     const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'vat-return-export');
     if (conflict) { setFeedback({ kind: 'warning', message: conflict }); return; }
     if (exporting) { setFeedback({ kind: 'warning', message: 'Đang xuất tờ khai thuế GTGT. Vui lòng chờ tiến trình hiện tại hoàn tất.' }); return; }
@@ -158,14 +167,19 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
       return;
     }
     setExporting(true);
+    const exportingId = selectedConnectionIds[0]!;
+    setExportStates((current) => ({ ...current, [exportingId]: 'Đang tạo tờ khai…' }));
     onExportingChange?.(true);
     try {
-      const result = await window.miaRuntime!.artifacts.vatReturnExport({ destination: folder, connection_ids: selectedConnectionIds, date_from: selection.dateFrom, date_to: selection.dateTo });
+      const result = await window.miaRuntime!.artifacts.vatReturnExport({ destination: folder, connection_ids: selectedConnectionIds, date_from: selection.dateFrom, date_to: selection.dateTo, ...(allowIncomplete ? { allow_incomplete: true } : {}) });
       setFeedback(result.count === 1 && result.files[0]
         ? { kind: 'success', message: 'Đã tạo tờ khai thuế GTGT thành công.', path: result.files[0] }
         : { kind: 'error', message: 'Không thể tạo tờ khai thuế GTGT: exporter không trả về file kết quả hợp lệ.' });
+      setExportStates((current) => ({ ...current, [exportingId]: result.count === 1 && result.files[0] ? 'Hoàn thành' : 'Xuất thất bại' }));
     } catch (error) {
-      setFeedback(vatReturnExportErrorFeedback(error));
+      const failure = vatReturnExportErrorFeedback(error);
+      setFeedback(failure);
+      setExportStates((current) => ({ ...current, [exportingId]: failure.canContinue ? 'Chờ xác nhận' : 'Xuất thất bại' }));
     } finally {
       setExporting(false);
       onExportingChange?.(false);
@@ -183,11 +197,11 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
       <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tờ khai" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tờ khai" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="checking">Đang kiểm tra</option><option value="ready">Đã đồng bộ</option><option value="not_ready">Chưa đồng bộ</option><option value="error">Không thể kiểm tra</option></select></div></div>
       <div className="artifact-account-table vat-return-table data-card">
         <div className="artifact-account-row artifact-account-row--head table-header table-grid"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span className="vat-coverage-header"><strong>Trạng thái đồng bộ</strong><span><b>Mua vào</b><b>Bán ra</b></span></span><span>Tiến trình</span><span>Xem kết quả</span></div>
-        <div className="artifact-account-body table-body">{pageRows.map(({ account, coverage: item }) => <div className="artifact-account-row table-row table-grid" key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><span className="vat-direction-coverages"><CoverageBadge snapshot={item?.purchase} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><CoverageBadge snapshot={item?.sold} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /></span><span className="artifact-row-progress"><i><b style={{ width: '0%' }} /></i><em>0%</em></span><span className="artifact-row-action row-action-group"><span className="row-action-placeholder">—</span></span></div>)}</div>
+        <div className="artifact-account-body table-body">{pageRows.map(({ account, coverage: item }) => <div className="artifact-account-row table-row table-grid" key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><span className="vat-direction-coverages"><CoverageBadge snapshot={item?.purchase} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><CoverageBadge snapshot={item?.sold} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /></span><span className="artifact-row-progress" role="status"><em>{exportStates[account.connection_id] ?? 'Chưa xuất'}</em></span><span className="artifact-row-action row-action-group"><span className="row-action-placeholder">—</span></span></div>)}</div>
         {coverageState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{coverageState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra coverage tờ khai.</div> : null}{coverageState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
       </div>
       <footer className="pagination"><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
     </section>
-    {feedback ? <NoticeDialog kind={feedback.kind} message={feedback.message} path={feedback.path} onClose={() => setFeedback(null)} /> : null}
+    {feedback ? <NoticeDialog kind={feedback.kind} message={feedback.message} path={feedback.path} actionLabel={feedback.canContinue ? 'Tiếp tục tải' : undefined} onAction={feedback.canContinue ? () => { setFeedback(null); void prepareExport(true); } : undefined} onClose={() => setFeedback(null)} /> : null}
   </section>;
 }
