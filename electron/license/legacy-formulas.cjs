@@ -46,6 +46,14 @@ function createMiaV1Key(serialNumber, sizeBytes) {
   return MIA_V1_KEY_PREFIX + createMiaV1Hash29(serialNumber, sizeBytes);
 }
 
+// Source 3.9.0 load_key/get_disk_info: SHA256(trimmed serial)[:29] + phone.
+// Never generate the shared fallback hash of "N/A" for migration.
+function buildSerialPhoneHashes(diskRecords) {
+  return [...new Set(diskRecords.map((disk) => String(disk?.SerialNumber || '').trim())
+    .filter((serial) => serial && serial !== 'N/A')
+    .map((serial) => crypto.createHash('sha256').update(serial, 'utf8').digest('hex').slice(0, 29)))];
+}
+
 function buildMiaV1Candidates(diskRecords) {
   if (!Array.isArray(diskRecords)) throw new TypeError('legacy disk records must be an array');
 
@@ -78,6 +86,7 @@ function buildMiaV1Candidates(diskRecords) {
 }
 
 module.exports = {
+  buildSerialPhoneHashes,
   MIA_V1_HASH_LENGTH,
   MIA_V1_KEY_PREFIX,
   buildMiaV1Candidates,

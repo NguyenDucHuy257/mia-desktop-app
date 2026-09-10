@@ -153,6 +153,7 @@ class SyncStateTests(unittest.TestCase):
             ["conn_account"], "purchase", "2025-01-01", "2025-01-31"
         )[0]
         self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["requested_scope"], "overview")
         self.assertTrue(state["overview_ready"])
         self.assertFalse(state["detail_ready"])
 

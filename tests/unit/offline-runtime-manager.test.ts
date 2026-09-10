@@ -24,6 +24,23 @@ afterEach(async () => {
 });
 
 describe('OfflineRuntimeManager', () => {
+  it('enforces the main-process policy before invoking a business method', async () => {
+    const runtime = await manager() as any;
+    runtime.start = vi.fn(async () => ({}));
+    runtime.client = { call: vi.fn(), stop: vi.fn(async () => {}) };
+    runtime.options.authorizeRequest = vi.fn(async () => { throw Object.assign(new Error('denied'), { code: 'license_tax_code_denied' }); });
+    await expect(runtime.invoke('artifacts.export.start', {})).rejects.toMatchObject({ code: 'license_tax_code_denied' });
+    expect(runtime.client.call).not.toHaveBeenCalled();
+  });
+
+  it('forwards the policy-bounded date range, not the original unbounded query', async () => {
+    const runtime = await manager() as any;
+    runtime.start = vi.fn(async () => ({}));
+    runtime.client = { call: vi.fn(async () => ({})), stop: vi.fn(async () => {}) };
+    runtime.options.authorizeRequest = async () => ({ date_from: '2026-08-01', date_to: '2026-08-31' });
+    await runtime.invoke('artifacts.export.start', {});
+    expect(runtime.client.call).toHaveBeenCalledWith('artifacts.export.start', { date_from: '2026-08-01', date_to: '2026-08-31' }, {});
+  });
   it('deduplicates concurrent starts and initializes SQLite', async () => {
     const runtime = await manager();
     const first = runtime.start();

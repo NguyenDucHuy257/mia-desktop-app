@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type WheelEvent } from 'react';
 import calendarIcon from '../assets/figma/artifact-calendar.svg';
+import { useLicensePolicy } from '../features/licensing/LicensePolicyContext';
 import {
   adjustDateText,
   datePartAtCaret,
@@ -56,6 +57,14 @@ function selectDatePart(input: HTMLInputElement, part: DatePart) {
 
 export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fromLabel = 'Từ ngày', toLabel = 'Đến ngày', disabled = false }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
+  const policy = useLicensePolicy();
+  const minimum = policy?.date_from;
+  const maximum = policy?.date_to;
+  useEffect(() => {
+    if (minimum && maximum && (dateFrom < minimum || dateTo > maximum || !dateFrom || !dateTo)) {
+      onChange(minimum, maximum);
+    }
+  }, [minimum, maximum, dateFrom, dateTo, onChange]);
   const [fromText, setFromText] = useState(displayDate(dateFrom));
   const [toText, setToText] = useState(displayDate(dateTo));
   const [error, setError] = useState('');
@@ -81,6 +90,10 @@ export function DateRangePicker({ dateFrom, dateTo, onChange, className = '', fr
   function apply() {
     const nextFrom = parseDateText(fromText);
     const nextTo = parseDateText(toText);
+    if (minimum && maximum && nextFrom && nextTo && (nextFrom < minimum || nextTo > maximum)) {
+      setError('Key dùng thử chỉ cho phép chọn từ 01/08/2026 đến 31/08/2026.');
+      return;
+    }
     if (!nextFrom || !nextTo) { setError('Nhập ngày theo định dạng d/m/yyyy hoặc dd/mm/yyyy.'); return; }
     if (nextFrom > nextTo) { setError('Ngày bắt đầu không được sau ngày kết thúc.'); return; }
     setError('');

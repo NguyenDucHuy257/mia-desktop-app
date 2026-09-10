@@ -15,6 +15,7 @@ function readLegacyPhones(userDataDirectory, additionalPaths = []) {
   const candidates = [
     path.join(userDataDirectory, 'phone.txt'),
     path.join(userDataDirectory, 'data', 'phone.txt'),
+    path.join(userDataDirectory, '__pycache__', 'sdt.txt'),
     ...additionalPaths,
   ];
   const phones = [];
@@ -37,19 +38,21 @@ function readLegacyPhones(userDataDirectory, additionalPaths = []) {
 function buildLegacyDetection(evidence, phones = []) {
   const baseKeys = Array.from(evidence?.legacy?.exact_key_candidates || []);
   const hashes = Array.from(evidence?.legacy?.hash29_candidates || []);
+  const serialHashes = Array.from(evidence?.legacy?.serial_phone_hash29_candidates || []);
   const validPhones = [...new Set(phones.map(normalizePhone).filter(Boolean))];
   const keys = [...baseKeys];
-  for (const hash29 of hashes) {
+  for (const hash29 of [...serialHashes, ...hashes]) {
     for (const phone of validPhones) keys.push(`KEY${hash29}${phone}`);
   }
   return Object.freeze({
-    has_any_candidate: hashes.length > 0,
+    has_any_candidate: hashes.length > 0 || serialHashes.length > 0,
     exact_key_candidates: Object.freeze([...new Set(keys)]),
     hash29_candidates: Object.freeze([...new Set(hashes)]),
     phones: Object.freeze(validPhones),
     detected_schema: Object.freeze([
       ...(hashes.length ? ['mia_v1_disk_hash29'] : []),
       ...(validPhones.length && hashes.length ? ['mia_v2_hash29_phone_observed'] : []),
+      ...(serialHashes.length ? ['mia_serial_phone_observed'] : []),
     ]),
   });
 }

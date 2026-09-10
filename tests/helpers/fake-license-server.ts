@@ -39,6 +39,7 @@ export function activeResponse(request: LicenseRequest, overrides: Record<string
     hardware_matches: 6,
     hardware_profile: request.hardware,
     reason: 'ok',
+    entitlements: { version: 1, plan: 'V', trial: false, max_tax_codes: null, allowed_tax_codes: [], date_from: null, date_to: null },
     ...overrides,
   };
 }

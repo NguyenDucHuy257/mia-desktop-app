@@ -119,27 +119,41 @@ function monthEndIso(value: string | null | undefined, selectedUntil?: string) {
   return selectedUntil && selectedUntil < monthEnd ? selectedUntil : monthEnd;
 }
 
-function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
-  const label = !state ? 'Chưa đồng bộ'
+export function syncStatusPresentation(state: InvoiceSyncState | undefined, wantsDetails: boolean) {
+  if (!state) return { label: 'Chưa đồng bộ', detail: null };
+  const selectedReady = Boolean(state.overview_ready && (!wantsDetails || state.detail_ready));
+  const failedScope = state.current_stage === 'detail' || state.current_stage === 'details'
+    ? 'detail'
+    : state.current_stage === 'overview'
+      ? 'overview'
+      : state.requested_scope;
+  const label = state.status === 'not_synced' && selectedReady ? 'Đã đồng bộ'
     : state.status === 'not_synced' && state.overview_ready ? 'Chưa đồng bộ đầy đủ'
     : state.status === 'not_synced' ? 'Chưa đồng bộ'
     : state.status === 'queued' ? 'Chờ đồng bộ'
       : state.status === 'running' && state.current_stage === 'detail' ? 'Đang đồng bộ Chi tiết'
       : state.status === 'running' ? 'Đang đồng bộ Tổng quan'
-        : state.status === 'failed' && state.overview_ready ? 'Đồng bộ Chi tiết thất bại'
-        : state.status === 'failed' ? 'Đồng bộ lỗi'
+        : state.status === 'failed' && failedScope === 'detail' ? 'Đồng bộ Chi tiết thất bại'
+        : state.status === 'failed' && failedScope === 'overview' ? 'Đồng bộ Tổng quan thất bại'
+        : state.status === 'failed' ? 'Đồng bộ thất bại'
           : state.status === 'cancelled' ? 'Đồng bộ bị hủy'
+          : state.status === 'completed' && !selectedReady ? 'Chưa đồng bộ đầy đủ'
             : 'Đã đồng bộ';
   const processingLabel = dateLabel(state?.current_until ?? monthEndIso(state?.current_month));
   const from = dateLabel(state?.sync_from);
   const until = dateLabel(state?.sync_until);
   const missingDetail = state?.missing_detail_ranges?.[0];
   const missingOverview = state?.missing_overview_ranges?.[0];
-  const missing = missingOverview ?? missingDetail;
+  const missing = missingOverview ?? (wantsDetails ? missingDetail : undefined);
   const detail = state?.status === 'running' && processingLabel
     ? `Đang xử lý đến ${processingLabel}`
-    : state?.status === 'completed' && from && until ? `Từ ${from} đến ${until}`
+    : state.status !== 'failed' && state.status !== 'cancelled' && selectedReady && from && until ? `Từ ${from} đến ${until}`
     : missing ? `Thiếu ${missingOverview ? 'Tổng quan' : 'Chi tiết'}: ${dateLabel(missing.date_from)} - ${dateLabel(missing.date_to)}` : null;
+  return { label, detail };
+}
+
+function SyncStatusCell({ state, wantsDetails }: { state?: InvoiceSyncState; wantsDetails: boolean }) {
+  const { label, detail } = syncStatusPresentation(state, wantsDetails);
   return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
@@ -626,7 +640,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                 <span className="invoice-count-value invoice-count-value--overview">{formatInvoiceCount(row.syncState?.invoice_count ?? 0)}</span>
                 <span className="invoice-count-value invoice-count-value--detail">{formatInvoiceCount(row.syncState?.detail_invoice_count ?? 0)}</span>
                 <ProgressCell row={row} />
-                <SyncStatusCell state={row.syncState} />
+                <SyncStatusCell state={row.syncState} wantsDetails={resultScopes.includes('detail')} />
                 {account ? <span className="row-action-group">
                   <button className="row-result-button" type="button" onClick={() => {
                     const resultDateFrom = dateFrom;

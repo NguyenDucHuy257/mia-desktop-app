@@ -104,6 +104,10 @@ function localErrorMessage(code) {
 }
 
 function serializeError(error) {
+  const licenseMessages = require('./license/entitlements.cjs').MESSAGES;
+  if (Object.hasOwn(licenseMessages, error?.code || '')) {
+    return { code: error.code, message: licenseMessages[error.code] };
+  }
   const publicCodes = new Set([
     'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed',
     'database_locked', 'database_unavailable', 'job_not_found', 'job_conflict',

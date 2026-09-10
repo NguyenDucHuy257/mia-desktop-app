@@ -35,6 +35,9 @@ class OfflineRuntimeManager {
     const started = Date.now();
     this.logger?.info('runtime_rpc_start', { method });
     try {
+      if (this.options.authorizeRequest) {
+        params = await this.options.authorizeRequest(method, params, (name, value) => this.client.call(name, value));
+      }
       const result = await this.client.call(method, params, callOptions);
       this.logger?.info('runtime_rpc_end', { method, duration_ms: Date.now() - started, outcome: 'ok' });
       return result;
@@ -44,6 +47,9 @@ class OfflineRuntimeManager {
       await this.#restart();
       const retryStarted = Date.now();
       try {
+        if (this.options.authorizeRequest) {
+          params = await this.options.authorizeRequest(method, params, (name, value) => this.client.call(name, value));
+        }
         const result = await this.client.call(method, params, callOptions);
         this.logger?.info('runtime_rpc_retry_end', { method, duration_ms: Date.now() - retryStarted, outcome: 'ok' });
         return result;

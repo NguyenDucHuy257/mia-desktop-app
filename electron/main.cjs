@@ -6,11 +6,13 @@ const { ensureDeviceIdentity } = require('./device-identity.cjs');
 const { collectDeviceEvidence } = require('./license/hardware-profile.cjs');
 const { createLicenseApi } = require('./license/license-api.cjs');
 const { LicenseManager } = require('./license/license-manager.cjs');
+const { createLicenseRequestGuard } = require('./license/entitlements.cjs');
 const { createProtectedLicenseStore } = require('./license/protected-license-store.cjs');
 const { isLicenseAccessGranted, licenseRequiredError } = require('./license/access-control.cjs');
 const { isTrustedAppUrl } = require('./security-policy.cjs');
 const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
+const { createOfflineAuthManager } = require('./offline-auth.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 const { createResultBroker } = require('./result-broker.cjs');
 const { createArtifactBroker } = require('./artifact-file-broker.cjs');
@@ -43,6 +45,8 @@ let electronLogger;
 let rendererLogger;
 let licenseManagerInstance;
 let licenseSessionActive = false;
+let offlineAuthManager;
+let offlineAuthSessionActive = false;
 let offlineRuntimeStartPromise;
 
 function diagnosticDirectory() {
@@ -106,13 +110,29 @@ function licenses() {
   licenseManagerInstance = new LicenseManager({
     enabled,
     api,
+    currentVersion: app.getVersion(),
     securityDirectory: securityDirectory(),
     store: createProtectedLicenseStore(securityDirectory(), protector),
     ensureIdentity: () => ensureDeviceIdentity(securityDirectory(), protector),
     collectEvidence: () => collectDeviceEvidence(),
+    // Source 3.9.0 stores the registration phone relative to its launch folder.
+    // Read only known files; never scan disks for customer records.
+    legacyPhonePaths: [...new Set([process.cwd(), path.dirname(app.getPath('exe'))])]
+      .map((directory) => path.join(directory, '__pycache__', 'sdt.txt')),
     logger: electronLog(),
   });
   return licenseManagerInstance;
+}
+
+function offlineAuth() {
+  if (!offlineAuthManager) {
+    offlineAuthManager = createOfflineAuthManager({
+      directory: securityDirectory(),
+      protector: secureProtector(),
+      logger: electronLog(),
+    });
+  }
+  return offlineAuthManager;
 }
 
 function serializeLicenseError(error) {
@@ -129,15 +149,50 @@ function serializeLicenseError(error) {
 async function handleLicense(method, ...args) {
   try {
     const verifiesAccess = ['initialize', 'submitPhone', 'retry', 'updatePhone'].includes(method);
-    if (verifiesAccess) licenseSessionActive = false;
+    if (verifiesAccess) {
+      licenseSessionActive = false;
+      offlineAuthSessionActive = false;
+      offlineAuthManager?.lock();
+    }
     const data = await licenses()[method](...args);
     if (verifiesAccess && isLicenseAccessGranted(data)) {
-      await ensureOfflineRuntimeStarted();
       licenseSessionActive = true;
     }
     return { ok: true, data };
   } catch (error) {
     return serializeLicenseError(error);
+  }
+}
+
+
+const OFFLINE_AUTH_MESSAGES = Object.freeze({
+  offline_password_invalid: 'Mật khẩu phải có từ 8 đến 128 ký tự.',
+  offline_password_confirmation_mismatch: 'Mật khẩu xác nhận không khớp.',
+  offline_password_incorrect: 'Mật khẩu không đúng.',
+  offline_password_already_configured: 'Máy này đã có mật khẩu đăng nhập.',
+  offline_password_not_configured: 'Máy này chưa tạo mật khẩu đăng nhập.',
+  offline_password_unchanged: 'Mật khẩu mới phải khác mật khẩu hiện tại.',
+  offline_auth_rate_limited: 'Bạn đã nhập sai nhiều lần. Vui lòng chờ rồi thử lại.',
+  offline_auth_state_corrupt: 'Dữ liệu mật khẩu trên máy bị lỗi. Vui lòng liên hệ hỗ trợ.',
+  offline_auth_required: 'Cần đăng nhập bằng mật khẩu trên máy.',
+});
+
+function serializeOfflineAuthError(error) {
+  const code = Object.hasOwn(OFFLINE_AUTH_MESSAGES, error?.code || '') ? error.code : 'internal_error';
+  electronLog().warn('offline_auth_request_failed', { code, error_type: error?.name || 'Error' });
+  return { ok: false, error: { code, message: OFFLINE_AUTH_MESSAGES[code] || 'Không thể xử lý mật khẩu trên máy.' } };
+}
+
+async function handleOfflineAuth(method, ...args) {
+  try {
+    const data = await offlineAuth()[method](...args);
+    if (data?.unlocked) {
+      await ensureOfflineRuntimeStarted();
+      offlineAuthSessionActive = true;
+    }
+    return { ok: true, data };
+  } catch (error) {
+    return serializeOfflineAuthError(error);
   }
 }
 
@@ -159,7 +214,7 @@ function appIconPath() {
     : path.join(__dirname, '..', 'icon.ico');
 }
 
-function assertTrustedSender(event, { licenseRequired = true } = {}) {
+function assertTrustedSender(event, { licenseRequired = true, offlineAuthRequired = licenseRequired } = {}) {
   const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
   if (!isTrustedAppUrl(senderUrl, {
     devServerUrl: process.env.VITE_DEV_SERVER_URL,
@@ -168,6 +223,9 @@ function assertTrustedSender(event, { licenseRequired = true } = {}) {
     throw new Error('untrusted IPC sender');
   }
   if (licenseRequired && !licenseSessionActive) throw licenseRequiredError();
+  if (offlineAuthRequired && !offlineAuthSessionActive) {
+    throw Object.assign(new Error('OFFLINE_AUTH_REQUIRED'), { code: 'OFFLINE_AUTH_REQUIRED' });
+  }
 }
 
 function createWindow() {
@@ -225,8 +283,22 @@ for (const [channel, method] of [
   ['mia:license:update-phone', 'updatePhone'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
-    assertTrustedSender(event, { licenseRequired: false });
+    const preAuthMethod = ['status', 'initialize', 'submitPhone', 'retry'].includes(method);
+    assertTrustedSender(event, preAuthMethod
+      ? { licenseRequired: false, offlineAuthRequired: false }
+      : { licenseRequired: true, offlineAuthRequired: true });
     return handleLicense(method, ...args);
+  });
+}
+for (const [channel, method] of [
+  ['mia:offline-auth:status', 'status'],
+  ['mia:offline-auth:create', 'create'],
+  ['mia:offline-auth:unlock', 'unlock'],
+  ['mia:offline-auth:change', 'change'],
+]) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event, { licenseRequired: true, offlineAuthRequired: false });
+    return handleOfflineAuth(method, ...args);
   });
 }
 ipcMain.handle('mia:artifacts:select-directory', async (event) => {
@@ -372,6 +444,7 @@ for (const [channel, method] of [['mia:results:materialStart', 'materialStart'],
 function ensureOfflineRuntimeStarted() {
   if (!offlineRuntime) {
     offlineRuntime = new OfflineRuntimeManager({
+      authorizeRequest: createLicenseRequestGuard(() => licenses().status()),
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
@@ -431,7 +504,7 @@ if (!hasSingleInstanceLock) {
 
     // The renderer initially contains only the fail-closed activation gate.
     // Runtime and business IPC remain unavailable until KEYV2 verification
-    // returns the one accepted authorization tuple.
+    // succeeds and the local offline password has been unlocked.
     createWindow();
     await handleLicense('initialize');
     app.on('activate', () => {

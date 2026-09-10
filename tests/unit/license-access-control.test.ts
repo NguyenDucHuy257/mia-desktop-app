@@ -46,8 +46,10 @@ describe('license access control', () => {
     expect(main).toMatch(/app\.isPackaged\s*\? 'https:\/\/gotax\.vn'/);
     expect(main).toContain("allowInsecureLocalhost: !app.isPackaged && process.env.MIA_LICENSE_ALLOW_INSECURE_LOCALHOST === 'true'");
     expect(main).toContain('if (licenseRequired && !licenseSessionActive) throw licenseRequiredError();');
-    expect(main).toContain("assertTrustedSender(event, { licenseRequired: false });");
+    expect(main).toContain('if (offlineAuthRequired && !offlineAuthSessionActive)');
+    expect(main).toContain("? { licenseRequired: false, offlineAuthRequired: false }");
     expect(main).toContain("await handleLicense('initialize');");
     expect(preload).toContain("error.code = 'LICENSE_REQUIRED'");
+    expect(preload).toContain("error.code = 'OFFLINE_AUTH_REQUIRED'");
   });
 });

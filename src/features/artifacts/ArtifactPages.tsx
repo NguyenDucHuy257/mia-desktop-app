@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import type { DiagnosticLogEntry } from '../../lib/runtime-bridge';
 import { LicenseSettingsCard } from '../licensing/LicenseSettingsCard';
+import { OfflinePasswordSettingsCard } from '../offline-auth/OfflinePasswordSettingsCard';
 
 const EVENT_LABELS: Record<string, string> = {
   account_login_requested: 'Đang đăng nhập tài khoản',
@@ -117,14 +118,23 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
     }
   }
 
-  return <section className="utility-page">
+  return <section className={`utility-page${isSettings ? ' utility-page--settings' : ''}`}>
     <h1>{title}</h1>{description ? <p>{description}</p> : null}
-    {isSettings ? <div className="utility-panel">
-      <label>Chế độ xử lý<select value={1} disabled aria-label="Chế độ xử lý tuần tự"><option value={1}>Tuần tự (1 tài khoản/lần)</option></select></label>
-      <label>Số lần thử lại<input type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /></label>
-      <label>Số PDF xử lý đồng thời<input type="number" min="1" max="100" aria-label="Số PDF xử lý đồng thời" value={pdfConcurrency} onChange={(event) => setPdfConcurrency(Number(event.target.value))} /></label>
-      <button type="button" onClick={() => void saveSettings()}>Lưu cài đặt</button>
+    {isSettings ? <div className="utility-panel utility-settings-panel">
+      <section className="utility-settings-card">
+        <header>
+          <div className="utility-settings-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9 4c0-.5 0-1-.1-1.5l2-1.5-2-3.5-2.5 1a9 9 0 0 0-2.6-1.5L15.5 2h-4l-.4 3a9 9 0 0 0-2.6 1.5L6 5.5 4 9l2 1.5a10 10 0 0 0 0 3L4 15l2 3.5 2.5-1a9 9 0 0 0 2.6 1.5l.4 3h4l.4-3a9 9 0 0 0 2.6-1.5l2.5 1 2-3.5-2-1.5c.1-.5.1-1 .1-1.5Z" /></svg></div>
+          <div><h2>Xử lý dữ liệu</h2><p>Cấu hình tốc độ và số lần thử lại cho các tác vụ mới.</p></div>
+        </header>
+        <div className="utility-settings-grid">
+          <label><span>Chế độ xử lý</span><select value={1} disabled aria-label="Chế độ xử lý tuần tự"><option value={1}>Tuần tự (1 tài khoản/lần)</option></select><small>Giúp tác vụ ổn định và tránh xung đột dữ liệu.</small></label>
+          <label><span>Số lần thử lại</span><input aria-label="Số lần thử lại" type="number" min="0" max="5" value={retries} onChange={(event) => setRetries(Number(event.target.value))} /><small>Từ 0 đến 5 lần khi kết nối bị gián đoạn.</small></label>
+          <label><span>Số PDF xử lý đồng thời</span><input type="number" min="1" max="100" aria-label="Số PDF xử lý đồng thời" value={pdfConcurrency} onChange={(event) => setPdfConcurrency(Number(event.target.value))} /><small>Từ 1 đến 100 tệp, tùy cấu hình máy.</small></label>
+        </div>
+        <footer><span>Thay đổi áp dụng cho tác vụ bắt đầu sau khi lưu.</span><button type="button" onClick={() => void saveSettings()}>Lưu cài đặt</button></footer>
+      </section>
       <LicenseSettingsCard />
+      <OfflinePasswordSettingsCard />
     </div> : isLogs ? <div className="utility-panel utility-log-panel">
       <div className="utility-log-toolbar">
         <label className="utility-log-search">Tìm kiếm<input aria-label="Tìm kiếm Nhật ký" placeholder="Tìm chức năng, lỗi hoặc mã tác vụ..." value={query} onChange={(event) => setQuery(event.target.value)} /></label>

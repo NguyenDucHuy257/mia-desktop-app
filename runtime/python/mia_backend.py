@@ -448,6 +448,7 @@ class ProductionBackend(SourceBackend):
             sync_until = metrics["sync_until"]
             output.append({
                 "connection_id": str(connection_id), "direction": direction, "status": status,
+                "requested_scope": latest_result_scope,
                 "current_stage": str(state.get("current_stage") or getattr(job, "current_stage", "") or "") or None,
                 "overview_complete": overview_complete,
                 "detail_complete": detail_complete,

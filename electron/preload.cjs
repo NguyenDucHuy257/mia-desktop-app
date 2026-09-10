@@ -11,6 +11,12 @@ async function invokeIpc(channel, ...args) {
       error.code = 'LICENSE_REQUIRED';
       throw error;
     }
+    if (message.includes('OFFLINE_AUTH_REQUIRED')) {
+      const error = new Error('OFFLINE_AUTH_REQUIRED');
+      error.name = 'MiaRuntimeError';
+      error.code = 'OFFLINE_AUTH_REQUIRED';
+      throw error;
+    }
     throw cause;
   }
 }
@@ -43,6 +49,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     details: () => invokeResult('mia:license:details'),
     revealKey: () => invokeResult('mia:license:reveal-key'),
     updatePhone: (phone) => invokeResult('mia:license:update-phone', phone),
+  }),
+  offlineAuth: Object.freeze({
+    status: () => invokeResult('mia:offline-auth:status'),
+    create: (password, confirmation) => invokeResult('mia:offline-auth:create', password, confirmation),
+    unlock: (password) => invokeResult('mia:offline-auth:unlock', password),
+    change: (currentPassword, newPassword, confirmation) => invokeResult('mia:offline-auth:change', currentPassword, newPassword, confirmation),
   }),
   accountConnections: Object.freeze({
     create: (credentials) => invokeResult('mia:account-connections:create', credentials),
