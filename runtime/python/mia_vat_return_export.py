@@ -404,7 +404,7 @@ def _build_reduction_sheet(
         ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"G{row_number}:J{row_number}"})
         for column, value in (
             ("A", index + 1), ("B", item["name"]),
-            ("F", item["base"]), ("G", item["tax"]),
+            ("F", None if item.get("base_blank") else item["base"]), ("G", None if item.get("tax_blank") else item["tax"]),
         ):
             _set_ooxml_cell(output_row, f"{column}{row_number}", value)
         money_addresses.update({f"F{row_number}", f"G{row_number}"})
@@ -836,7 +836,7 @@ def _group_sold_reduction_lines(
     return output
 
 
-def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to: str) -> dict[str, Any]:
+def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to: str, *, allow_incomplete: bool = False) -> dict[str, Any]:
     totals = {key: Decimal(0) for key in ("purchase_base", "purchase_tax", "kct", "0", "5_base", "5_tax", "10_base", "10_tax", "kkknt")}
     unknown: set[tuple[str, str, str, str]] = set()
     grouped: dict[tuple[tuple[str, ...], str], dict[str, Any]] = {}
@@ -1271,8 +1271,9 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                         "missing": missing_fields,
                     })
                     audit_item["reason"] = "missing_required_fields"
-                    purchase_reduction_audit.append(audit_item)
-                    continue
+                    if not allow_incomplete:
+                        purchase_reduction_audit.append(audit_item)
+                        continue
                 output = {
                     "parent_identity": identity,
                     "parent_identity_hash": masked_invoice_identity(identity),
@@ -1283,6 +1284,7 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "khhdon": str(parent_row["khhdon"] or ""),
                     "shdon": str(parent_row["shdon"] or ""),
                     "name": audit_item["name"], "base": base, "tax": tax,
+                    "base_blank": raw_base in (None, ""), "tax_blank": raw_tax in (None, ""),
                     "difference_from_8_percent": difference,
                 }
                 purchase_reduction_lines.append(output)
@@ -1301,7 +1303,7 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
             'date_from': date_from, 'date_to': date_to,
             'examples': invalid_purchase[:5],
         }, ensure_ascii=False, separators=(',', ':')))
-    if invalid_purchase_reduction_lines:
+    if invalid_purchase_reduction_lines and not allow_incomplete:
         raise ValueError('vat_return_purchase_reduction_invalid:' + json.dumps({
             'direction': 'purchase', 'count': len(invalid_purchase_reduction_lines),
             'date_from': date_from, 'date_to': date_to,
@@ -1452,7 +1454,7 @@ def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
     if not company_name: raise ValueError("vat_return_company_name_missing")
     report = build_vat_return_data(
         backend.data_root / tax_code / "db" / "invoices.sqlite3",
-        tax_code, date_from, date_to,
+        tax_code, date_from, date_to, allow_incomplete=value.get("allow_incomplete") is True,
     )
     if report["missing_purchase_detail"]:
         raise ValueError('vat_return_detail_missing:' + json.dumps({

@@ -710,3 +710,5 @@
   }
 
 }
+.invoice-page > .invoice-content .table-body { overflow-y: auto; }
+.notice-message { white-space: pre-wrap; max-height: 60vh; overflow-y: auto; }

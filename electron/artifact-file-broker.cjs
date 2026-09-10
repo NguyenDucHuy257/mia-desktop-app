@@ -139,10 +139,10 @@ function validateVatReturnCoverageRequest(value) {
 }
 
 function validateVatReturnExportRequest(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['destination', 'connection_ids', 'date_from', 'date_to'].includes(key))) throw new TypeError('invalid_vat_return_export');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['destination', 'connection_ids', 'date_from', 'date_to', 'allow_incomplete'].includes(key)) || (value.allow_incomplete !== undefined && typeof value.allow_incomplete !== 'boolean')) throw new TypeError('invalid_vat_return_export');
   const coverage = validateVatReturnCoverageRequest({ connection_ids: value.connection_ids, date_from: value.date_from, date_to: value.date_to });
   if (coverage.connection_ids.length !== 1 || typeof value.destination !== 'string' || !path.isAbsolute(value.destination) || value.destination.length > 1024) throw new TypeError('invalid_vat_return_export');
-  return { ...coverage, destination: path.resolve(value.destination) };
+  return { ...coverage, destination: path.resolve(value.destination), ...(value.allow_incomplete === true ? { allow_incomplete: true } : {}) };
 }
 
 function checkedExportResult(result) {

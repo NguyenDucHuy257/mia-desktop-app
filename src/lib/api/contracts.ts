@@ -41,8 +41,9 @@ export interface CreateJobRequest {
 export interface InvoiceSyncState {
   connection_id: string;
   direction: InvoiceDirection;
-  status: 'not_synced' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  current_stage?: string | null;
+    status: 'not_synced' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+    requested_scope?: 'overview' | 'detail';
+    current_stage?: string | null;
   overview_complete?: boolean;
   detail_complete?: boolean;
   overview_ready?: boolean;

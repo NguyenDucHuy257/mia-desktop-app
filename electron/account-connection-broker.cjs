@@ -104,6 +104,10 @@ function localErrorMessage(code) {
 }
 
 function serializeError(error) {
+  const licenseMessages = require('./license/entitlements.cjs').MESSAGES;
+  if (Object.hasOwn(licenseMessages, error?.code || '')) {
+    return { code: error.code, message: licenseMessages[error.code] };
+  }
   const publicCodes = new Set([
     'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed',
     'database_locked', 'database_unavailable', 'job_not_found', 'job_conflict',
@@ -118,6 +122,15 @@ function serializeError(error) {
     'invalid_result_export_range', 'artifact_cancelled', 'artifact_task_active',
     'artifact_batch_empty', 'artifact_export_timeout', 'artifact_worker_lost',
     'runtime_timeout', 'runtime_not_running', 'runtime_write_failed',
+    'account_busy', 'capacity_exhausted', 'invalid_params', 'storage_not_initialized',
+    'source_timeout', 'source_connection_failed', 'source_tls_failed',
+    'source_captcha_missing', 'source_captcha_model_failed',
+    'account_storage_denied', 'account_runtime_dependency_missing',
+    'source_account_data_invalid',
+    'vat_return_export_failed', 'vat_return_template_sheet_missing',
+    'vat_return_template_styles_missing', 'vat_return_purchase_sheet_data_missing',
+    'vat_return_reduction_sheet_data_missing', 'vat_return_sold_sheet_missing',
+    'vat_return_purchase_sheet_missing', 'vat_return_reduction_sheet_missing',
   ]);
   const runtimeMessage = String(error?.message || '');
   const runtimeCode = typeof error?.code === 'string' ? error.code : runtimeMessage;

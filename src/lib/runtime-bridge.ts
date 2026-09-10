@@ -5,7 +5,27 @@ export type LicenseStateName =
   | 'activation_required' | 'expired' | 'revoked' | 'offline'
   | 'verification_required' | 'error';
 
+export interface LicenseEntitlements {
+  version: number;
+  plan: string;
+  trial: boolean;
+  max_tax_codes: number | null;
+  allowed_tax_codes: string[];
+  date_from: string | null;
+  date_to: string | null;
+}
+
+export interface LicenseUpdateInfo {
+  available: boolean;
+  url: string;
+  label: string;
+  latest_version: string;
+  current_version: string;
+}
+
 export interface LicenseStateResponse {
+  entitlements?: LicenseEntitlements;
+  update?: LicenseUpdateInfo;
   state: LicenseStateName;
   active: boolean;
   valid?: boolean;
@@ -38,6 +58,20 @@ export interface LicenseDetails {
   mode: string | null;
 }
 
+export interface OfflineAuthState {
+  state: 'setup_required' | 'locked' | 'unlocked';
+  configured: boolean;
+  unlocked: boolean;
+  retry_after_seconds: number;
+}
+
+export interface OfflineAuthBridge {
+  status(): Promise<OfflineAuthState>;
+  create(password: string, confirmation: string): Promise<OfflineAuthState>;
+  unlock(password: string): Promise<OfflineAuthState>;
+  change(currentPassword: string, newPassword: string, confirmation: string): Promise<OfflineAuthState>;
+}
+
 export interface MiaAccountCredentials {
   username: string;
   password: string;
@@ -62,6 +96,7 @@ export interface MiaRuntimeBridge {
     revealKey(): Promise<string | null>;
     updatePhone(phone: string): Promise<LicenseStateResponse>;
   };
+  offlineAuth: OfflineAuthBridge;
   accountConnections: MiaAccountConnectionsBridge;
   jobs: {
     resume(): Promise<PersistedJob | null>;
@@ -159,7 +194,7 @@ export interface VatReturnDirectionCoverage { direction: InvoiceDirection; overv
 export interface VatReturnCoverageAccount { connection_id: string; purchase: VatReturnDirectionCoverage; sold: VatReturnDirectionCoverage }
 export interface VatReturnCoverageRequest { connection_ids: string[]; date_from: string; date_to: string }
 export interface VatReturnCoverage extends VatReturnCoverageRequest { accounts: VatReturnCoverageAccount[] }
-export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string }
+export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string; allow_incomplete?: boolean }
 export interface VatReturnReductionAnomaly {
   canonical_invoice_identity: string;
   line_identity: string;

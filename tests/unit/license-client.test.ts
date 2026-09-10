@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const { buildDeviceEvidence, hashHardwareSignal } = require('../../electron/license/hardware-profile.cjs');
 const { buildLegacyDetection, normalizePhone, readLegacyPhones } = require('../../electron/license/legacy-detector.cjs');
 const { createLicenseApi, validateServerUrl } = require('../../electron/license/license-api.cjs');
-const { LicenseManager, miaV2Key } = require('../../electron/license/license-manager.cjs');
+const { LicenseManager, miaV2Key, normalizeUpdateInfo } = require('../../electron/license/license-manager.cjs');
 const { createProtectedLicenseStore } = require('../../electron/license/protected-license-store.cjs');
 
 const directories: string[] = [];
@@ -74,6 +74,7 @@ function manager(options: Record<string, any> = {}) {
       enabled: true,
       store,
       api: client,
+      currentVersion: options.currentVersion || '4.0.7',
       securityDirectory: path.join(directory, 'security'),
       ensureIdentity: () => ({ publicKeyPem: 'PUBLIC-KEY', fingerprint: 'f'.repeat(64) }),
       collectEvidence: async () => options.evidence || evidence(),
@@ -97,11 +98,49 @@ function activeResponse(deviceId: string, overrides: Record<string, any> = {}) {
     recovered: false,
     hardware_profile: evidence().hardware,
     reason: 'ok',
+    entitlements: { version: 1, plan: 'V', trial: false, max_tax_codes: null, allowed_tax_codes: [], date_from: null, date_to: null },
     ...overrides,
   };
 }
 
 describe('MIA shared-key-server client', () => {
+  it('sends the running app version and preserves only a newer safe update notice', async () => {
+    const deviceId = 'update-notice-device';
+    const profile = { version: 3, device_id: deviceId, phone: '0981234567', hardware: evidence().hardware };
+    const setup = manager({
+      store: memoryStore(null, profile),
+      api: api({ verifyKeyV2: vi.fn(async () => activeResponse(deviceId, {
+        update: {
+          available: true,
+          url: 'https://drive.google.com/file/d/release/view',
+          label: 'v4.0.8 (11/09/2026)',
+          latest_version: '4.0.8',
+        },
+      })) }),
+    });
+
+    const state = await setup.instance.initialize();
+    expect((setup.client.verifyKeyV2 as any).mock.calls[0][0].current_version).toBe('4.0.7');
+    expect(state.update).toMatchObject({ available: true, latest_version: '4.0.8', current_version: '4.0.7' });
+    expect(normalizeUpdateInfo({ available: true, url: 'https://evil.example/update', latest_version: '9.0.0' }, '4.0.7').available).toBe(false);
+    expect(normalizeUpdateInfo({ available: true, url: 'https://drive.google.com/file/d/release/view', latest_version: '4.0.7' }, '4.0.7').available).toBe(false);
+  });
+
+  it('reconstructs serial-only phone keys from the supplied legacy source', () => {
+    const result = buildDeviceEvidence({ system_uuid: 'uuid', bios_serial: 'bios', baseboard_serial: 'board', disks: [{ SerialNumber: ' SERIAL ', Size: '1000' }] });
+    const hash = crypto.createHash('sha256').update('SERIAL').digest('hex').slice(0, 29);
+    expect(buildLegacyDetection(result, ['0981234567']).exact_key_candidates).toContain(`KEY${hash}0981234567`);
+    const missing = buildDeviceEvidence({ system_uuid: 'uuid', bios_serial: 'bios', baseboard_serial: 'board', disks: [{ SerialNumber: '', Size: '1000' }] });
+    expect(missing.legacy.serial_phone_hash29_candidates).toEqual([]);
+  });
+
+  it('reads the original __pycache__/sdt.txt phone location', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mia-legacy-sdt-'));
+    directories.push(directory);
+    fs.mkdirSync(path.join(directory, '__pycache__'));
+    fs.writeFileSync(path.join(directory, '__pycache__', 'sdt.txt'), '0981234567', 'utf8');
+    expect(readLegacyPhones(directory)).toEqual(['0981234567']);
+  });
   it('builds the exact shared-server KEYV2 formula and requires a real phone', () => {
     const deviceId = '8a6414d6-9298-437e-a568-04e546f134d4';
     const digest = crypto.createHash('sha256').update(`MIA|${deviceId}`, 'utf8').digest('hex').slice(0, 32);

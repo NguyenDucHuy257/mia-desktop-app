@@ -75,13 +75,13 @@ class VatReturnExportTests(unittest.TestCase):
         direction={"ready":True,"missing":[]}
         return {"accounts":[{"connection_id":"conn", "purchase":direction,"sold":direction}]}
 
-    def export_book(self, destination_name="out"):
+    def export_book(self, destination_name="out", **options):
         backend=SimpleNamespace(data_root=self.root,connection_tax_code=lambda _id:self.tax_code,
                                 _load_company_names=lambda:{"conn":"CÔNG TY KIỂM THỬ"})
         with patch("mia_vat_return_export.ArtifactInspector.vat_return_coverage",return_value=self.ready_coverage()):
             return export_vat_return(backend,{"connection_ids":["conn"],
                 "destination":str(self.root/destination_name),"date_from":"2023-10-01",
-                "date_to":"2023-10-31"})
+                "date_to":"2023-10-31", **options})
 
     @staticmethod
     def raw_cells(workbook_path):
@@ -1028,6 +1028,21 @@ class VatReturnExportTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(ValueError,r'vat_return_purchase_reduction_invalid:.*"count":2'):
             build_vat_return_data(self.db,self.tax_code,"2023-10-01","2023-10-31")
+
+    def test_confirmed_incomplete_reduction_preserves_blank_excel_cells(self):
+        self.invoice("purchase", "8%", 100, 8, lines=[
+            {"ten": "Narrative", "tsuat": "8%", "thtien": None, "tthue": None},
+            {"ten": "Goods", "tsuat": "8%", "thtien": "100", "tthue": "8"},
+        ])
+        with self.assertRaisesRegex(ValueError, 'vat_return_purchase_reduction_invalid'):
+            self.export_book()
+        result = self.export_book(allow_incomplete=True)
+        book = load_workbook(result["files"][0], data_only=True)
+        sheet = book[REDUCTION_SHEET_NAME]
+        narrative = next(row for row in sheet.iter_rows() if row[1].value == "Narrative")
+        self.assertIsNone(narrative[5].value)
+        self.assertIsNone(narrative[6].value)
+        book.close()
 
     def test_purchase_reduction_empty_period_keeps_empty_part_two_frame(self):
         self.invoice("purchase","5%",100,5)

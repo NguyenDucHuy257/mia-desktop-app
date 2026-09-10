@@ -47,7 +47,16 @@ Response:
   "recovered": false,
   "hardware_match": 1.0,
   "hardware_matches": 6,
-  "reason": "ok"
+  "reason": "ok",
+  "entitlements": {
+    "version": 1,
+    "plan": "TEST1",
+    "trial": true,
+    "max_tax_codes": 1,
+    "allowed_tax_codes": ["0123456789"],
+    "date_from": "2026-08-01",
+    "date_to": "2026-08-31"
+  }
 }
 ```
 
@@ -59,3 +68,27 @@ Kết quả hợp lệ luôn dùng `reason: "ok"`; trạng thái migrate/recover
 
 Server giữ original legacy row, append canonical row với nguyên metadata/expiry,
 và lưu binding/migration JSON chỉ dưới `/opt/keys_app/MIA`.
+
+## Quyền sử dụng (bắt buộc từ bản sửa 10/09/2026)
+
+- `TEST` / `TEST1`: tối đa 1 MST khai báo ở trường thứ 5 của dòng key.
+- `TEST2`, `TEST<n>`: tối đa n MST trong danh sách trường thứ 5, phân cách dấu phẩy.
+- Các key TEST chỉ cho phép dữ liệu **01/08/2026–31/08/2026**, độc lập ngày hết hạn key.
+- `v` / `VIP`: không giới hạn ngày dữ liệu; MST là danh sách trường thứ 5.
+  `o` hoặc thiếu trường này ở key trả phí giữ nghĩa không giới hạn MST của kho cũ.
+- MST chi nhánh là định danh riêng, không tự mở quyền tất cả chi nhánh của MST mẹ.
+- TEST thiếu danh sách MST, ghi `o`, vượt số MST, hoặc loại key lạ trả `license_policy_invalid`.
+- Hỗ trợ cả `key|v|expiry|contact|scope` và `key|expiry|l|contact|scope`.
+- Desktop mới từ chối response thiếu `entitlements` với `license_policy_missing`;
+  không suy diễn thiếu quyền thành VIP. **Cập nhật server trước khi phát hành desktop mới.**
+- Metadata được giữ nguyên khi migrate; key đã migrate dùng bản ghi KEYV2 làm nguồn quyền.
+  Không sửa/cấp lại toàn bộ key chỉ để thêm trường JSON này.
+- Source 3.9.0 gọi `tool=MIA2`. Server chỉ đọc các key MIA legacy có hình dạng
+  đã xác minh từ `MIA2/vip.txt`, seed vào `MIA/legacy_vip.txt`, rồi tạo state mới
+  dưới `MIA`. Không sửa/xóa `MIA2` và không claim key có hình dạng lạ.
+
+Kiểm tra read-only một registry (chỉ in số lượng, không in key/MST/điện thoại):
+
+```powershell
+python -m shared_key_server_mia.audit_registry 'path/to/vip.txt'
+```

@@ -119,27 +119,41 @@ function monthEndIso(value: string | null | undefined, selectedUntil?: string) {
   return selectedUntil && selectedUntil < monthEnd ? selectedUntil : monthEnd;
 }
 
-function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
-  const label = !state ? 'Chưa đồng bộ'
+export function syncStatusPresentation(state: InvoiceSyncState | undefined, wantsDetails: boolean) {
+  if (!state) return { label: 'Chưa đồng bộ', detail: null };
+  const selectedReady = Boolean(state.overview_ready && (!wantsDetails || state.detail_ready));
+  const failedScope = state.current_stage === 'detail' || state.current_stage === 'details'
+    ? 'detail'
+    : state.current_stage === 'overview'
+      ? 'overview'
+      : state.requested_scope;
+  const label = state.status === 'not_synced' && selectedReady ? 'Đã đồng bộ'
     : state.status === 'not_synced' && state.overview_ready ? 'Chưa đồng bộ đầy đủ'
     : state.status === 'not_synced' ? 'Chưa đồng bộ'
     : state.status === 'queued' ? 'Chờ đồng bộ'
       : state.status === 'running' && state.current_stage === 'detail' ? 'Đang đồng bộ Chi tiết'
       : state.status === 'running' ? 'Đang đồng bộ Tổng quan'
-        : state.status === 'failed' && state.overview_ready ? 'Đồng bộ Chi tiết thất bại'
-        : state.status === 'failed' ? 'Đồng bộ lỗi'
+        : state.status === 'failed' && failedScope === 'detail' ? 'Đồng bộ Chi tiết thất bại'
+        : state.status === 'failed' && failedScope === 'overview' ? 'Đồng bộ Tổng quan thất bại'
+        : state.status === 'failed' ? 'Đồng bộ thất bại'
           : state.status === 'cancelled' ? 'Đồng bộ bị hủy'
+          : state.status === 'completed' && !selectedReady ? 'Chưa đồng bộ đầy đủ'
             : 'Đã đồng bộ';
   const processingLabel = dateLabel(state?.current_until ?? monthEndIso(state?.current_month));
   const from = dateLabel(state?.sync_from);
   const until = dateLabel(state?.sync_until);
   const missingDetail = state?.missing_detail_ranges?.[0];
   const missingOverview = state?.missing_overview_ranges?.[0];
-  const missing = missingOverview ?? missingDetail;
+  const missing = missingOverview ?? (wantsDetails ? missingDetail : undefined);
   const detail = state?.status === 'running' && processingLabel
     ? `Đang xử lý đến ${processingLabel}`
-    : state?.status === 'completed' && from && until ? `Từ ${from} đến ${until}`
+    : state.status !== 'failed' && state.status !== 'cancelled' && selectedReady && from && until ? `Từ ${from} đến ${until}`
     : missing ? `Thiếu ${missingOverview ? 'Tổng quan' : 'Chi tiết'}: ${dateLabel(missing.date_from)} - ${dateLabel(missing.date_to)}` : null;
+  return { label, detail };
+}
+
+function SyncStatusCell({ state, wantsDetails }: { state?: InvoiceSyncState; wantsDetails: boolean }) {
+  const { label, detail } = syncStatusPresentation(state, wantsDetails);
   return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
@@ -177,6 +191,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
+  const [accountPageSize, setAccountPageSize] = useState(ACCOUNT_PAGE_SIZE);
   const pendingAutoExport = useRef<ResultExportSnapshot | null>(null);
   const autoSyncObservedActive = useRef(false);
   const {
@@ -487,13 +502,25 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
   });
-  const { currentPage, totalPages, start: firstRowIndex, end: lastRowIndex } = pageBounds(filteredRows.length, page, ACCOUNT_PAGE_SIZE);
+  const { currentPage, totalPages, start: firstRowIndex, end: lastRowIndex } = pageBounds(filteredRows.length, page, accountPageSize);
   const pageRows = filteredRows.slice(firstRowIndex, lastRowIndex);
   const accountPageTokens = paginationTokens(totalPages, currentPage);
   const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
   const filteredAccountIds = filteredRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
   const selectedFilteredCount = filteredAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
   const bulkExportWorking = resultExports.active && resultExports.owner === 'bulk';
+
+  function toggleAllFilteredAccounts() {
+    const allFilteredSelected = filteredAccountIds.length > 0
+      && selectedFilteredCount === filteredAccountIds.length;
+    onSelectAccounts(allFilteredSelected
+      ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id))
+      : [...new Set([...selectedAccountIds, ...filteredAccountIds])]);
+  }
+
+  function moveAccountPage(offset: number) {
+    setPage((current) => Math.max(1, Math.min(totalPages, current + offset)));
+  }
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
@@ -599,7 +626,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
-            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFilteredCount === filteredAccountIds.length ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...filteredAccountIds])])}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
+            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản trên mọi trang" onClick={toggleAllFilteredAccounts}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
             <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span className="artifact-quantity-header invoice-count-header"><strong>Số lượng</strong><span><b>Tổng quan</b><b>Chi tiết</b></span></span><span>Tiến trình</span><span>Trạng thái đồng bộ</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
@@ -613,7 +640,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                 <span className="invoice-count-value invoice-count-value--overview">{formatInvoiceCount(row.syncState?.invoice_count ?? 0)}</span>
                 <span className="invoice-count-value invoice-count-value--detail">{formatInvoiceCount(row.syncState?.detail_invoice_count ?? 0)}</span>
                 <ProgressCell row={row} />
-                <SyncStatusCell state={row.syncState} />
+                <SyncStatusCell state={row.syncState} wantsDetails={resultScopes.includes('detail')} />
                 {account ? <span className="row-action-group">
                   <button className="row-result-button" type="button" onClick={() => {
                     const resultDateFrom = dateFrom;
@@ -628,8 +655,9 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
           </div>
         </div>
         <footer className="pagination">
+          <label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={accountPageSize} onChange={(event) => { setAccountPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select></label>
           <span>{`Hiển thị ${filteredRows.length ? firstRowIndex + 1 : 0}–${lastRowIndex} trên tổng ${filteredRows.length} tài khoản`}</span>
-          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div>
+          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => moveAccountPage(-1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => moveAccountPage(1)}>›</button></div>
         </footer>
       </section>
       {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}

@@ -12,6 +12,7 @@ import { XmlHtmlPage, type ArtifactSelectionState } from './features/artifacts/X
 import { useArtifactDownloadLifecycle } from './features/artifacts/use-artifact-download-lifecycle';
 import { VatReturnExportPage } from './features/artifacts/VatReturnExportPage';
 import { LicenseGate } from './features/licensing/LicenseGate';
+import { OfflineAuthGate } from './features/offline-auth/OfflineAuthGate';
 import { currentYearDateRange } from './components/date-input-utils';
 import type { WorkspaceTask } from './lib/workspace-task';
 import './styles/delete-progress.css';
@@ -216,5 +217,5 @@ function WorkspaceApp() {
 }
 
 export default function App() {
-  return <LicenseGate><WorkspaceApp /></LicenseGate>;
+  return <LicenseGate><OfflineAuthGate><WorkspaceApp /></OfflineAuthGate></LicenseGate>;
 }

@@ -30,6 +30,63 @@ def hardware(changed=()) -> dict[str, str]:
 
 
 class SharedMiaV2Tests(unittest.TestCase):
+    def test_supported_old_mia2_key_migrates_to_mia_without_mutating_mia2(self):
+        original = f"{LEGACY_KEY}|v|31/12/2028|contact|0123456789|old MIA2"
+        mia2 = self.base / "MIA2" / "vip.txt"
+        mia2.write_text(original + "\n", encoding="utf-8")
+        before = mia2.read_bytes()
+        response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+        self.assertTrue(response["valid"])
+        self.assertTrue(response["migrated"])
+        self.assertEqual(response["entitlements"]["allowed_tax_codes"], ["0123456789"])
+        self.assertEqual(mia2.read_bytes(), before)
+        self.assertIn(EXPECTED_KEY, (self.base / "MIA" / "vip.txt").read_text(encoding="utf-8"))
+
+    def test_trial_policy_survives_migration_and_subsequent_verify(self):
+        for plan, ids, limit in [("TEST", "0123456789", 1), ("TEST1", "0123456789", 1), ("TEST2", "0123456789,0987654321-001", 2)]:
+            with self.subTest(plan=plan):
+                device = "trial-" + plan
+                legacy = "key" + hashlib.sha256(plan.encode()).hexdigest()[:29]
+                with (self.base / "MIA" / "vip.txt").open("a", encoding="utf-8") as stream:
+                    stream.write(f"{legacy}|{plan}|31/12/2027|contact|{ids}|note\n")
+                response = self.verify(device, legacy_keys=[legacy], signals={name: hashlib.sha256((plan + name).encode()).hexdigest() for name in hardware()})
+                self.assertTrue(response["valid"])
+                self.assertTrue(response["migrated"])
+                self.assertEqual(response["entitlements"], {
+                    "version": 1, "plan": plan, "trial": True, "max_tax_codes": limit,
+                    "allowed_tax_codes": ids.split(","), "date_from": "2026-08-01", "date_to": "2026-08-31",
+                })
+                again = self.verify(device, signals={name: hashlib.sha256((plan + name).encode()).hexdigest() for name in hardware()})
+                self.assertEqual(again["entitlements"], response["entitlements"])
+
+    def test_invalid_trial_scope_does_not_grant_unlimited_access(self):
+        for scope in ["", "o", "contact", "0123456789,0987654321"]:
+            (self.base / "MIA" / "vip.txt").write_text(f"{key(DEVICE_ID)}|TEST1|31/12/2027|contact|{scope}\n", encoding="utf-8")
+            response = self.verify(DEVICE_ID)
+            self.assertFalse(response["valid"])
+            self.assertEqual(response["reason"], "license_policy_invalid")
+
+    def test_old_expiry_second_column_is_not_treated_as_unlimited(self):
+        (self.base / "MIA" / "vip.txt").write_text(f"{LEGACY_KEY}|31/12/2024|l|contact|0123456789\n", encoding="utf-8")
+        response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+        self.assertFalse(response["valid"])
+        self.assertEqual(response["reason"], "legacy_key_expired")
+
+    def test_paid_legacy_multi_mst_scope_preserved(self):
+        (self.base / "MIA" / "vip.txt").write_text(f"{LEGACY_KEY}|31/12/2028|l|contact|0123456789,0987654321-001\n", encoding="utf-8")
+        response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+        self.assertTrue(response["valid"])
+        self.assertEqual(response["expires_at"], "31/12/2028")
+        self.assertEqual(response["entitlements"]["allowed_tax_codes"], ["0123456789", "0987654321-001"])
+        self.assertIsNone(response["entitlements"]["date_from"])
+
+    def test_renewed_phone_key_not_hidden_by_expired_disk_key(self):
+        phone_key = "KEY" + "a" * 29 + PHONE
+        (self.base / "MIA" / "vip.txt").write_text(f"{LEGACY_KEY}|v|31/12/2024|contact|o\n{phone_key}|v|31/12/2028|contact|0123456789\n", encoding="utf-8")
+        response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY, phone_key])
+        self.assertTrue(response["valid"])
+        self.assertEqual(response["entitlements"]["allowed_tax_codes"], ["0123456789"])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.base = Path(self.temp.name)

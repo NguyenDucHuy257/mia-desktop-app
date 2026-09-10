@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
-const { buildMiaV1Candidates } = require('./legacy-formulas.cjs');
+const { buildMiaV1Candidates, buildSerialPhoneHashes } = require('./legacy-formulas.cjs');
 
 const HARDWARE_FIELDS = Object.freeze([
   'system_uuid', 'bios_serial', 'baseboard_serial',
@@ -61,6 +61,7 @@ function buildDeviceEvidence(payload) {
     legacy: Object.freeze({
       exact_key_candidates: Object.freeze(candidates.map((item) => item.exact_key)),
       hash29_candidates: Object.freeze(candidates.map((item) => item.hash29)),
+      serial_phone_hash29_candidates: Object.freeze(buildSerialPhoneHashes(disks)),
       detected_schema: Object.freeze(candidates.length ? ['mia_v1_disk_hash29'] : []),
     }),
   });

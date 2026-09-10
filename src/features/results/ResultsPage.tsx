@@ -49,7 +49,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   ).current;
   const [mode, setMode] = useState<ResultMode>('overview');
   const [direction, setDirection] = useState<'purchase' | 'sold' | ''>('');
-  const [queryType, setQueryType] = useState<ResultQueryTypeSelection>('query');
+  const [queryType, setQueryType] = useState<ResultQueryTypeSelection>('combined');
   const queryTypeContract = useMemo(() => queryType === 'combined'
     ? { query_type: null, query_types: ['query', 'sco-query'] as InvoiceQueryType[] }
     : { query_type: queryType, query_types: undefined }, [queryType]);

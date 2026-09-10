@@ -67,6 +67,22 @@ function savedLicense(deviceId = FIXTURE_DEVICE_ID, phone = FIXTURE_PHONE) {
 }
 
 describe('MIA License V2 full synthetic acceptance', () => {
+  it('fails closed when an older server omits policy and preserves the existing key', async () => {
+    const server = new FakeLicenseServer((request) => activeResponse(request, { entitlements: undefined }));
+    const store = memoryStore(savedLicense(), profile());
+    const harness = createHarness({ server, store });
+    expect(await harness.instance.initialize()).toMatchObject({ state: 'error', active: false, reason: 'license_policy_missing' });
+    expect(store.inspect().license.canonical_key).toBe(FIXTURE_V2_KEY);
+  });
+
+  it('persists trial scope on migration and re-verifies it on restart', async () => {
+    const entitlements = { version: 1, plan: 'TEST1', trial: true, max_tax_codes: 1, allowed_tax_codes: ['0123456789'], date_from: '2026-08-01', date_to: '2026-08-31' };
+    const server = new FakeLicenseServer((request) => activeResponse(request, { migrated: true, entitlements }));
+    const store = memoryStore(savedLicense(), profile());
+    expect((await createHarness({ server, store }).instance.initialize()).entitlements).toEqual(entitlements);
+    expect(store.inspect().license.entitlements).toEqual(entitlements);
+    expect((await createHarness({ server, store }).instance.initialize()).entitlements).toEqual(entitlements);
+  });
   it('A: reconstructs the exact V1 fixture and waits locally for legacy phone', async () => {
     expect(createMiaV1Hash29(FIXTURE_DISK_SERIAL, FIXTURE_DISK_SIZE)).toBe(FIXTURE_HASH29);
     expect(createMiaV1Key(FIXTURE_DISK_SERIAL, FIXTURE_DISK_SIZE)).toBe(FIXTURE_LEGACY_KEY);
