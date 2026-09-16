@@ -13,9 +13,13 @@ import mia_runtime
 from app.job_engine.models import JobRecord
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
-from app.services.overview_downloader import _find_header_row
+from app.services.overview_downloader import PROCESSING_STATUS_LABELS, _find_header_row
 from mia_backend import ProductionBackend
-from mia_source_results import _DETAIL_EXPORT_COLUMNS, _available_path
+from mia_source_results import (
+    _DETAIL_EXPORT_COLUMNS,
+    _available_path,
+    _combined_overview_schema,
+)
 
 
 class SourceJobIntentTests(unittest.TestCase):
@@ -467,6 +471,9 @@ class ResultViewTests(unittest.TestCase):
                 "mia_source_results._write_overview_excel_from_source_template",
                 side_effect=overview_writer,
             ), patch(
+                "mia_source_results._write_combined_overview_excel",
+                side_effect=overview_writer,
+            ), patch(
                 "app.repositories.invoice_detail_query_repository.InvoiceDetailQueryRepository",
                 return_value=detail_repository,
             ), patch(
@@ -741,16 +748,20 @@ class ResultViewTests(unittest.TestCase):
             raw = root / "overview.json"
             raw.write_text("{}", encoding="utf-8")
 
-            for query_type, shdon, partner in (
-                ("query", "000101", "0300000001"),
-                ("sco-query", "000202", "0300000002"),
+            for query_type, shdon, partner, processing_status, model, taxable, citizen_id in (
+                ("query", "000101", "0300000001", 5, "1", 100, ""),
+                ("query", "000102", "0300000002", 6, "1", 100, ""),
+                ("query", "000103", "0300000003", 8, "2", None, ""),
+                ("sco-query", "000103", "0300000003", 8, "2", None, "012345678901"),
             ):
                 public = {
-                    "khmshdon": "1", "khhdon": "K26T", "shdon": shdon,
+                    "khmshdon": model, "khhdon": "K26T", "shdon": shdon,
                     "tdlap": "2026-01-10T08:00:00+07:00", "nbmst": partner,
                     "nbten": f"Nguồn {query_type}", "nmmst": "0100000000",
-                    "nmten": "Công ty kiểm thử", "tgtcthue": 100,
-                    "tgtthue": 10, "tgtttbso": 110, "tthai": 1,
+                    "nmten": "Công ty kiểm thử", "nmcmnd": citizen_id,
+                    "tgtcthue": taxable, "tgtthue": 10,
+                    "tgtttbso": 235000 if model == "2" else 110,
+                    "tthai": 1, "ttxly": processing_status,
                 }
                 repository.upsert_items(
                     company_tax_code="0100000000", direction="purchase",
@@ -759,7 +770,7 @@ class ResultViewTests(unittest.TestCase):
                     raw_json_path=raw,
                     items=[{
                         "nbmst": partner, "khhdon": "K26T", "shdon": shdon,
-                        "khmshdon": "1", "nlap": public["tdlap"],
+                        "khmshdon": model, "nlap": public["tdlap"],
                         "nlap_date": "2026-01-10", "_public_fields": public,
                     }],
                     timestamp=timestamp,
@@ -779,14 +790,38 @@ class ResultViewTests(unittest.TestCase):
                 self.assertEqual(len(workbook.sheetnames), 1)
                 worksheet = workbook.active
                 header_row = _find_header_row(worksheet)
-                headers = [worksheet.cell(header_row, column).value for column in range(1, worksheet.max_column + 1)]
-                invoice_column = headers.index("Số hóa đơn") + 1
+                schema = _combined_overview_schema("purchase")
+                columns = {key: index for index, (key, _label) in enumerate(schema, start=1)}
                 values = {
-                    str(worksheet.cell(row, invoice_column).value)
+                    str(worksheet.cell(row, columns["shdon"]).value)
                     for row in range(header_row + 1, worksheet.max_row + 1)
-                    if worksheet.cell(row, invoice_column).value is not None
+                    if worksheet.cell(row, columns["shdon"]).value is not None
                 }
-                self.assertEqual(values, {"000101", "000202"})
+                self.assertEqual(values, {"000101", "000102", "000103"})
+                rows = {
+                    str(worksheet.cell(row, columns["shdon"]).value): row
+                    for row in range(header_row + 1, worksheet.max_row + 1)
+                }
+                self.assertEqual(
+                    worksheet.cell(rows["000101"], columns["kqcht"]).value,
+                    PROCESSING_STATUS_LABELS[5],
+                )
+                self.assertEqual(
+                    worksheet.cell(rows["000102"], columns["kqcht"]).value,
+                    PROCESSING_STATUS_LABELS[6],
+                )
+                self.assertEqual(
+                    worksheet.cell(rows["000103"], columns["kqcht"]).value,
+                    PROCESSING_STATUS_LABELS[8],
+                )
+                self.assertEqual(
+                    worksheet.cell(rows["000103"], columns["nmcmnd"]).value,
+                    "012345678901",
+                )
+                self.assertEqual(
+                    worksheet.cell(rows["000103"], columns["tgtcthue"]).value,
+                    235000,
+                )
             finally:
                 workbook.close()
             fixture_path = os.environ.get("MIA_COMBINED_RESULT_FIXTURE")

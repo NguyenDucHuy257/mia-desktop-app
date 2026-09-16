@@ -29,14 +29,16 @@ type ResultExportScope = 'overview' | 'details' | 'reconciliation';
 type ResultItem = OverviewResult | DetailResult | ReconciliationResult;
 type ResultQueryTypeSelection = InvoiceQueryType | 'combined';
 
-const PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 50;
+const ALL_PAGE_SIZE = 10000;
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
 
-export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, crawlItem, resultExports, activeWorkspaceTask, onBack }: {
+export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, initialDirection = 'purchase', crawlItem, resultExports, activeWorkspaceTask, onBack }: {
   connectionId: string;
   exportFolder: string;
   initialDateFrom?: string;
   initialDateTo?: string;
+  initialDirection?: 'purchase' | 'sold';
   crawlItem?: BatchItem;
   resultExports: ResultExportLifecycle;
   activeWorkspaceTask?: WorkspaceTask | null;
@@ -48,7 +50,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       : currentYearDateRange(),
   ).current;
   const [mode, setMode] = useState<ResultMode>('overview');
-  const [direction, setDirection] = useState<'purchase' | 'sold' | ''>('');
+  const [direction, setDirection] = useState<'purchase' | 'sold'>(initialDirection);
   const [queryType, setQueryType] = useState<ResultQueryTypeSelection>('combined');
   const queryTypeContract = useMemo(() => queryType === 'combined'
     ? { query_type: null, query_types: ['query', 'sco-query'] as InvoiceQueryType[] }
@@ -73,6 +75,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [aggregate, setAggregate] = useState<NonNullable<LocalResultPage<ResultItem>['aggregate']> | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationSummary | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [exportOpen, setExportOpen] = useState(false);
   const [exportScopes, setExportScopes] = useState<ResultExportScope[]>(['overview', 'details']);
@@ -142,7 +145,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     const query = {
       connection_id: connectionId,
       cursor,
-      limit: PAGE_SIZE,
+      limit: pageSize,
       search: debouncedSearch,
       column_filters: columnFilters,
       sort: resultSort,
@@ -181,7 +184,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         },
       )
     )));
-  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, mode, queryType, queryTypeContract, resultSort]);
+  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, mode, pageSize, queryType, queryTypeContract, resultSort]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
     setItems(result.items);
@@ -323,7 +326,6 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
   function changeQueryType(value: ResultQueryTypeSelection) {
     setQueryType(value);
-    if (value === 'sco-query' && direction === '') setDirection('purchase');
   }
 
   function setSearch(value: string) {
@@ -352,7 +354,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const currentResultQuery = useCallback((scope: ResultMode = mode): ResultQuery => ({
     connection_id: connectionId,
     cursor: null,
-    limit: PAGE_SIZE,
+    limit: pageSize,
     search: filtersByMode[scope].search.trim(),
     column_filters: filtersByMode[scope].column_filters,
     sort: filtersByMode[scope].sort,
@@ -360,7 +362,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     ...queryTypeContract,
     date_from: dateFrom,
     date_to: dateTo,
-  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, queryType, queryTypeContract]);
+  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, pageSize, queryType, queryTypeContract]);
 
   const loadFacet = useCallback(async (column: string) => {
     const bridge = window.miaRuntime?.results;
@@ -579,7 +581,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     }
   }
 
-  const exactTotalPages = totalCount !== null ? Math.max(1, Math.ceil(totalCount / PAGE_SIZE)) : null;
+  const exactTotalPages = totalCount !== null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
   const knownLastPage = Math.max(
     pageNumber,
     ...Array.from(pageCache.current.keys()),
@@ -665,7 +667,6 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         <option value="combined">HĐĐT &amp; Máy tính tiền</option>
       </select>
       <select aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}>
-        <option value="" disabled={queryType === 'sco-query'}>Mua vào và bán ra</option>
         <option value="purchase">Mua vào</option>
         <option value="sold">Bán ra</option>
       </select>
@@ -755,7 +756,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         {columns.map((column, columnIndex) => {
           const cellKey = `${columnIndex}:${column}`;
           const rawValue = column === 'stt' && (item.fields[column] === null || item.fields[column] === undefined)
-            ? (pageNumber - 1) * PAGE_SIZE + rowIndex + 1
+            ? (pageNumber - 1) * pageSize + rowIndex + 1
             : item.fields[column];
           const display = formatResultCell(column, rawValue, columnTypes[column]);
           if (column === 'url' && typeof rawValue === 'string' && safeExternalHttpUrl(rawValue)) {
@@ -792,7 +793,13 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     </div> : null}
 
     {(items.length > 0 || pageNumber > 1) ? <footer className="results-pager artifact-pager">
-      <span>{totalCount !== null ? `Tổng ${totalCount} hàng · tối đa ${PAGE_SIZE} hàng/trang` : `Trang ${pageNumber} · tối đa ${PAGE_SIZE} hàng/trang`}</span>
+      <label className="results-page-size">Số dòng/trang:
+        <select aria-label="Số dòng kết quả mỗi trang" value={pageSize} onChange={(event) => {
+          setPageSize(Number(event.target.value));
+          pageCache.current.clear(); cursorByPage.current = new Map([[1, null]]); setPageNumber(1);
+        }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_PAGE_SIZE}>Toàn bộ</option></select>
+      </label>
+      <span>{totalCount !== null ? `Tổng ${totalCount} hàng` : `Trang ${pageNumber}`}</span>
       <div>
         <span>Chọn trang:</span>
         <button type="button" aria-label="Trang trước" disabled={pageNumber === 1 || state === 'loading'} onClick={() => void loadPage(pageNumber - 1)}><img src={previousIcon} alt="" /></button>

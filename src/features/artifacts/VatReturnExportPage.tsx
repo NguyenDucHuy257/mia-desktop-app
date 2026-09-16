@@ -6,12 +6,13 @@ import { DownloadIcon } from '../../components/InvoiceActionIcons';
 import { pageBounds, paginationTokens } from '../../components/pagination-utils';
 import searchIcon from '../../assets/figma/search.png';
 import type { AccountConnection } from '../../lib/api/contracts';
-import type { VatReturnCoverageAccount, VatReturnMissingRange } from '../../lib/runtime-bridge';
+import type { VatReturnCoverageAccount, VatReturnIssue, VatReturnMissingRange } from '../../lib/runtime-bridge';
 import { workspaceTaskConflictMessage, type WorkspaceTask } from '../../lib/workspace-task';
 import { CoverageBadge, formatDate } from './ArtifactCoverageBadge';
 import '../../styles/xml-html.css';
 
 const PAGE_SIZE = 20;
+const ALL_ACCOUNT_ROWS = 1_000_000;
 type CoverageState = 'loading' | 'ready' | 'error';
 type StatusFilter = '' | 'ready' | 'not_ready' | 'checking' | 'error';
 
@@ -94,6 +95,37 @@ function accountMissing(account: AccountConnection, coverage?: VatReturnCoverage
   }).join('\n');
 }
 
+function VatIssueDialog({ account, selection, onClose }: { account: AccountConnection; selection: VatReturnSelectionState; onClose(): void }) {
+  const [items, setItems] = useState<VatReturnIssue[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
+  const [message, setMessage] = useState('');
+  async function reload() {
+    setLoading(true); setMessage('');
+    try {
+      const result = await window.miaRuntime!.artifacts.vatReturnIssues({ connection_id: account.connection_id, date_from: selection.dateFrom, date_to: selection.dateTo });
+      setItems(result.items);
+      setDrafts(Object.fromEntries(result.items.map((item) => [item.issue_id, Object.fromEntries(item.fields.map((field) => [field.name, field.value]))])));
+    } catch { setMessage('Không thể đọc danh sách dữ liệu cần kiểm tra.'); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { void reload(); }, [account.connection_id, selection.dateFrom, selection.dateTo]);
+  async function save(item: VatReturnIssue) {
+    try {
+      await window.miaRuntime!.artifacts.vatReturnIssueUpdate({ connection_id: account.connection_id, source: item.source, record_id: item.record_id, values: drafts[item.issue_id] || {} });
+      setEditing(null); await reload(); setMessage('Đã lưu dữ liệu hóa đơn.');
+    } catch { setMessage('Không thể lưu dữ liệu hóa đơn. Vui lòng kiểm tra giá trị vừa nhập.'); }
+  }
+  return <div className="vat-issue-backdrop" role="presentation"><section className="vat-issue-dialog" role="dialog" aria-modal="true" aria-labelledby="vat-issue-title">
+    <header><div><h2 id="vat-issue-title">Kết quả kiểm tra dữ liệu GTGT</h2><p>{account.username} · Nhấp chuột phải vào ô cần sửa.</p></div><button type="button" aria-label="Đóng" onClick={onClose}>×</button></header>
+    {message ? <div className="vat-issue-message" role="status">{message}</div> : null}
+    <div className="vat-issue-table-wrap"><table className="vat-issue-table"><thead><tr><th>Loại</th><th>Số hóa đơn</th><th>Ngày</th><th>Vấn đề</th><th>Dữ liệu có thể sửa</th><th /></tr></thead><tbody>{items.map((item) => <tr key={item.issue_id}><td>{item.direction === 'purchase' ? 'Mua vào' : 'Bán ra'}</td><td>{item.invoice_number || '—'}</td><td>{formatDate(item.invoice_date)}</td><td>{item.reason}</td><td><div className="vat-issue-fields">{item.fields.map((field) => { const editKey = `${item.issue_id}:${field.name}`; return <label key={field.name} onContextMenu={(event) => { event.preventDefault(); setEditing(editKey); }}><span>{field.label}</span>{editing === editKey ? <input autoFocus value={drafts[item.issue_id]?.[field.name] ?? ''} onChange={(event) => setDrafts((current) => ({ ...current, [item.issue_id]: { ...(current[item.issue_id] || {}), [field.name]: event.target.value } }))} /> : <button type="button" title="Nhấp chuột phải để sửa" onContextMenu={(event) => { event.preventDefault(); setEditing(editKey); }}>{drafts[item.issue_id]?.[field.name] || '0'}</button>}</label>; })}</div></td><td><button className="vat-issue-save" type="button" onClick={() => void save(item)}>Lưu</button></td></tr>)}</tbody></table>
+      {!loading && !items.length ? <div className="vat-issue-empty">Không còn hóa đơn nào cần kiểm tra trong khoảng đã chọn.</div> : null}{loading ? <div className="vat-issue-empty">Đang kiểm tra dữ liệu…</div> : null}</div>
+    <footer><button type="button" onClick={onClose}>Đóng</button></footer>
+  </section></div>;
+}
+
 export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectAccount, onSelectAccounts, folder, onFolder, selection, onSelectionChange, coverageRevision, activeWorkspaceTask, onExportingChange }: {
   accounts: AccountConnection[];
   selectedConnectionIds: string[];
@@ -112,9 +144,11 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [feedback, setFeedback] = useState<VatReturnFeedback | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportStates, setExportStates] = useState<Record<string, string>>({});
+  const [issueAccountId, setIssueAccountId] = useState<string | null>(null);
   const generation = useRef(0);
   const initialForm = useRef({ selection, folder });
   const accountIds = useMemo(() => accounts.map((account) => account.connection_id), [accounts]);
@@ -141,7 +175,7 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${account.username} ${account.company_name ?? ''}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || status === statusFilter);
   });
-  const { currentPage, totalPages, start, end } = pageBounds(filteredRows.length, page, PAGE_SIZE);
+  const { currentPage, totalPages, start, end } = pageBounds(filteredRows.length, page, pageSize);
   const pageRows = filteredRows.slice(start, end);
   const tokens = paginationTokens(totalPages, currentPage);
   const filteredIds = filteredRows.map((row) => row.account.connection_id);
@@ -154,11 +188,12 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
     const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'vat-return-export');
     if (conflict) { setFeedback({ kind: 'warning', message: conflict }); return; }
     if (exporting) { setFeedback({ kind: 'warning', message: 'Đang xuất tờ khai thuế GTGT. Vui lòng chờ tiến trình hiện tại hoàn tất.' }); return; }
-    if (selectedConnectionIds.length !== 1) { setFeedback({ kind: 'warning', message: 'Vui lòng chỉ chọn một tài khoản cho mỗi workbook tờ khai thuế GTGT.' }); return; }
+    const exportIds = [...new Set(selectedConnectionIds)].filter((id) => accounts.some((account) => account.connection_id === id));
+    if (!exportIds.length) { setFeedback({ kind: 'warning', message: 'Vui lòng chọn ít nhất một tài khoản để xuất tờ khai thuế GTGT.' }); return; }
     if (!validIsoDate(selection.dateFrom) || !validIsoDate(selection.dateTo) || selection.dateFrom > selection.dateTo) { setFeedback({ kind: 'warning', message: 'Khoảng ngày xuất tờ khai không hợp lệ. Vui lòng kiểm tra ngày bắt đầu và ngày kết thúc.' }); return; }
     if (!folder.trim()) { setFeedback({ kind: 'warning', message: 'Vui lòng chọn thư mục lưu trữ.' }); return; }
     if (coverageState !== 'ready') { setFeedback({ kind: 'error', message: 'Không thể xác nhận dữ liệu đã đồng bộ. Vui lòng thử lại.' }); return; }
-    const missing = selectedConnectionIds.flatMap((id) => {
+    const missing = exportIds.flatMap((id) => {
       const account = accounts.find((item) => item.connection_id === id);
       return account ? accountMissing(account, coverage[id]) : [];
     }).filter(Boolean);
@@ -167,19 +202,59 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
       return;
     }
     setExporting(true);
-    const exportingId = selectedConnectionIds[0]!;
-    setExportStates((current) => ({ ...current, [exportingId]: 'Đang tạo tờ khai…' }));
     onExportingChange?.(true);
+    const completedFiles: string[] = [];
+    const failures: Array<{ id: string; feedback: VatReturnFeedback }> = [];
     try {
-      const result = await window.miaRuntime!.artifacts.vatReturnExport({ destination: folder, connection_ids: selectedConnectionIds, date_from: selection.dateFrom, date_to: selection.dateTo, ...(allowIncomplete ? { allow_incomplete: true } : {}) });
-      setFeedback(result.count === 1 && result.files[0]
-        ? { kind: 'success', message: 'Đã tạo tờ khai thuế GTGT thành công.', path: result.files[0] }
-        : { kind: 'error', message: 'Không thể tạo tờ khai thuế GTGT: exporter không trả về file kết quả hợp lệ.' });
-      setExportStates((current) => ({ ...current, [exportingId]: result.count === 1 && result.files[0] ? 'Hoàn thành' : 'Xuất thất bại' }));
-    } catch (error) {
-      const failure = vatReturnExportErrorFeedback(error);
-      setFeedback(failure);
-      setExportStates((current) => ({ ...current, [exportingId]: failure.canContinue ? 'Chờ xác nhận' : 'Xuất thất bại' }));
+      for (let index = 0; index < exportIds.length; index += 1) {
+        const id = exportIds[index]!;
+        setExportStates((current) => ({ ...current, [id]: `Đang xuất ${index + 1}/${exportIds.length}…` }));
+        try {
+          // The runtime deliberately accepts one account per workbook. Queue
+          // selected accounts here so exports never compete for the same file.
+          const result = await window.miaRuntime!.artifacts.vatReturnExport({
+            destination: folder, connection_ids: [id],
+            date_from: selection.dateFrom, date_to: selection.dateTo,
+            ...(allowIncomplete ? { allow_incomplete: true } : {}),
+          });
+          if (result.count !== 1 || !result.files[0]) {
+            throw new Error('Exporter không trả về file kết quả hợp lệ.');
+          }
+          completedFiles.push(result.files[0]);
+          setExportStates((current) => ({ ...current, [id]: 'Hoàn thành' }));
+        } catch (error) {
+          const failure = vatReturnExportErrorFeedback(error);
+          failures.push({ id, feedback: failure });
+          setExportStates((current) => ({ ...current, [id]: failure.canContinue ? 'Chờ xác nhận' : 'Xuất thất bại' }));
+          if (failure.canContinue) break;
+        }
+      }
+
+      const confirmable = failures.find((item) => item.feedback.canContinue);
+      if (confirmable) {
+        const account = accounts.find((item) => item.connection_id === confirmable.id);
+        setFeedback({
+          ...confirmable.feedback,
+          message: `${account?.username || confirmable.id}: ${confirmable.feedback.message}`,
+        });
+      } else if (failures.length === 1 && exportIds.length === 1) {
+        setFeedback(failures[0]!.feedback);
+      } else if (failures.length) {
+        const failedLabels = failures.map(({ id }) => accounts.find((item) => item.connection_id === id)?.username || id);
+        setFeedback({
+          kind: 'error',
+          message: `Đã xuất ${completedFiles.length}/${exportIds.length} tờ khai. Không thể xuất: ${failedLabels.join(', ')}.`,
+          path: folder,
+        });
+      } else {
+        setFeedback({
+          kind: 'success',
+          message: exportIds.length === 1
+            ? 'Đã tạo tờ khai thuế GTGT thành công.'
+            : `Đã tạo ${completedFiles.length} tờ khai thuế GTGT thành công theo thứ tự.`,
+          path: exportIds.length === 1 ? completedFiles[0] : folder,
+        });
+      }
     } finally {
       setExporting(false);
       onExportingChange?.(false);
@@ -197,11 +272,12 @@ export function VatReturnExportPage({ accounts, selectedConnectionIds, onSelectA
       <div className="artifact-account-filters filters"><div className="filters-left"><label className="search-box"><img src={searchIcon} alt="" /><input aria-label="Tìm kiếm tài khoản tờ khai" placeholder="Tìm kiếm MST, Tên công ty..." value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label><select className="status-filter" aria-label="Lọc trạng thái tờ khai" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as StatusFilter); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="checking">Đang kiểm tra</option><option value="ready">Đã đồng bộ</option><option value="not_ready">Chưa đồng bộ</option><option value="error">Không thể kiểm tra</option></select></div></div>
       <div className="artifact-account-table vat-return-table data-card">
         <div className="artifact-account-row artifact-account-row--head table-header table-grid"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span className="vat-coverage-header"><strong>Trạng thái đồng bộ</strong><span><b>Mua vào</b><b>Bán ra</b></span></span><span>Tiến trình</span><span>Xem kết quả</span></div>
-        <div className="artifact-account-body table-body">{pageRows.map(({ account, coverage: item }) => <div className="artifact-account-row table-row table-grid" key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><span className="vat-direction-coverages"><CoverageBadge snapshot={item?.purchase} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><CoverageBadge snapshot={item?.sold} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /></span><span className="artifact-row-progress" role="status"><em>{exportStates[account.connection_id] ?? 'Chưa xuất'}</em></span><span className="artifact-row-action row-action-group"><span className="row-action-placeholder">—</span></span></div>)}</div>
+        <div className="artifact-account-body table-body">{pageRows.map(({ account, coverage: item }) => <div className="artifact-account-row table-row table-grid" key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><span className="vat-direction-coverages"><CoverageBadge snapshot={item?.purchase} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><CoverageBadge snapshot={item?.sold} state={coverageState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /></span><span className="artifact-row-progress" role="status"><em>{exportStates[account.connection_id] ?? 'Chưa xuất'}</em></span><span className="artifact-row-action row-action-group"><button className="row-result-button" type="button" onClick={() => setIssueAccountId(account.connection_id)}>Xem kết quả</button></span></div>)}</div>
         {coverageState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{coverageState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra coverage tờ khai.</div> : null}{coverageState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
       </div>
-      <footer className="pagination"><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
+      <footer className="pagination"><label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_ACCOUNT_ROWS}>Toàn bộ</option></select></label><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
     </section>
     {feedback ? <NoticeDialog kind={feedback.kind} message={feedback.message} path={feedback.path} actionLabel={feedback.canContinue ? 'Tiếp tục tải' : undefined} onAction={feedback.canContinue ? () => { setFeedback(null); void prepareExport(true); } : undefined} onClose={() => setFeedback(null)} /> : null}
+    {issueAccountId ? <VatIssueDialog account={accounts.find((item) => item.connection_id === issueAccountId)!} selection={selection} onClose={() => setIssueAccountId(null)} /> : null}
   </section>;
 }

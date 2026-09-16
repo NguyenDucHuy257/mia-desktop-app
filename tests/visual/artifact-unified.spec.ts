@@ -77,6 +77,8 @@ test('unified artifact screen uses local coverage and starts one multi-format ba
   await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('white-space', 'nowrap');
   await expect(page.locator('.artifact-direction-select .compact-select')).toHaveCSS('border-radius', '6px');
   await expect(page.locator('.artifact-account-table')).toHaveCSS('border-radius', '6px');
+  await expect(page.locator('.artifact-account-table')).toHaveCSS('overflow-y', 'scroll');
+  await expect(page.locator('.artifact-account-table')).toHaveCSS('scrollbar-gutter', 'stable');
   const dateBox = await page.locator('.artifact-toolbar-card .date-range-trigger').boundingBox();
   const directionBox = await page.locator('.artifact-toolbar-card .artifact-direction-field').boundingBox();
   const folderBox = await page.locator('.artifact-toolbar-card .invoice-export-folder').boundingBox();

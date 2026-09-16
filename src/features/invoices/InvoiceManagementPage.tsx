@@ -33,6 +33,7 @@ interface InvoiceRow {
 }
 
 const ACCOUNT_PAGE_SIZE = 20;
+const ALL_ACCOUNT_ROWS = 1_000_000;
 
 interface ResultExportSnapshot {
   connectionIds: string[];
@@ -172,7 +173,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
   onSelectAccounts(ids: string[]): void;
-  onViewResults(id: string, dateFrom: string, dateTo: string): void;
+  onViewResults(id: string, dateFrom: string, dateTo: string, direction: InvoiceDirection): void;
   initialDateFrom?: string;
   initialDateTo?: string;
   initialDirection?: InvoiceDirection;
@@ -180,7 +181,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   onDirectionChange?(direction: InvoiceDirection): void;
 }) {
   const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : currentYearDateRange()).current;
-  const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | null>(null);
+  const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | 'sync-export' | null>(null);
   const [resultScopes, setResultScopes] = useState<Array<'overview' | 'detail'>>(['overview']);
   const [direction, setDirection] = useState<InvoiceDirection>(initialDirection);
   const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
@@ -564,15 +565,22 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
             />
           </div>
           <div className="invoice-toolbar-actions">
-            <button
-              className="sync-button invoice-sync-export-button"
-              type="button"
-              disabled={batchActive || resultExports.active || selectedAccountIds.length === 0}
-              onClick={() => startJob('supplement', true)}
-              title="Đồng bộ bổ sung, sau đó tự tải các bảng kê đã chọn"
-            >
-              <DownloadIcon /> Đồng bộ &amp; tải xuống
-            </button>
+            <div className="select-wrap sync-menu-wrap sync-export-menu-wrap">
+              <button
+                className="sync-button invoice-sync-export-button"
+                type="button"
+                aria-label="Đồng bộ và tải xuống"
+                aria-expanded={menu === 'sync-export'}
+                disabled={batchActive || resultExports.active || selectedAccountIds.length === 0}
+                onClick={() => setMenu(menu === 'sync-export' ? null : 'sync-export')}
+              >
+                <DownloadIcon /> Đồng bộ &amp; tải xuống <i className="chevron" />
+              </button>
+              {menu === 'sync-export' ? <div className="sync-mode-menu" role="menu" aria-label="Chọn cách đồng bộ và tải xuống">
+                <button type="button" role="menuitem" onClick={() => startJob('new', true)}><SyncNewIcon /><span><strong>Đồng bộ mới &amp; tải xuống</strong><small>Tải lại toàn bộ dữ liệu trong khoảng thời gian đã chọn, sau đó tự xuất các bảng kê Excel.</small></span></button>
+                <button type="button" role="menuitem" onClick={() => startJob('supplement', true)}><SyncSupplementIcon /><span><strong>Đồng bộ bổ sung &amp; tải xuống</strong><small>Chỉ bổ sung dữ liệu còn thiếu hoặc cần cập nhật, sau đó tự xuất các bảng kê Excel.</small></span></button>
+              </div> : null}
+            </div>
             <div className="select-wrap sync-menu-wrap">
               <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" aria-expanded={menu === 'sync'} disabled={batchActive} aria-busy={batchActive} onClick={() => setMenu(menu === 'sync' ? null : 'sync')}>
                 <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
@@ -646,7 +654,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                     const resultDateFrom = dateFrom;
                     const resultDateTo = dateTo;
                     diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: resultDateFrom, date_to: resultDateTo });
-                    onViewResults(account.connection_id, resultDateFrom, resultDateTo);
+                    onViewResults(account.connection_id, resultDateFrom, resultDateTo, direction);
                   }}>Xem kết quả</button>
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
@@ -655,7 +663,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
           </div>
         </div>
         <footer className="pagination">
-          <label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={accountPageSize} onChange={(event) => { setAccountPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select></label>
+          <label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={accountPageSize} onChange={(event) => { setAccountPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_ACCOUNT_ROWS}>Toàn bộ</option></select></label>
           <span>{`Hiển thị ${filteredRows.length ? firstRowIndex + 1 : 0}–${lastRowIndex} trên tổng ${filteredRows.length} tài khoản`}</span>
           <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => moveAccountPage(-1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => moveAccountPage(1)}>›</button></div>
         </footer>

@@ -1,14 +1,25 @@
 import { createRequire } from 'node:module';
 import { describe, it, expect, vi } from 'vitest';
 const require = createRequire(import.meta.url);
-const { createLicenseRequestGuard, validateEntitlements } = require('../../electron/license/entitlements.cjs');
+const { createLicenseRequestGuard, isLicenseDataRequest, validateEntitlements } = require('../../electron/license/entitlements.cjs');
 const { runBrokerCommand } = require('../../electron/account-connection-broker.cjs');
 const trial = (ids = ['0123456789'], plan = 'TEST1') => ({ version: 1, plan, trial: true,
   max_tax_codes: Number(plan.replace('TEST', '') || 1), allowed_tax_codes: ids,
   date_from: '2026-08-01', date_to: '2026-08-31' });
-const guard = (policy = trial()) => createLicenseRequestGuard(() => ({ active: true, reason: 'ok', entitlements: policy }));
+const guard = (policy: any = trial()) => createLicenseRequestGuard(() => ({ active: true, reason: 'ok', entitlements: policy }));
 const call = vi.fn(async (_: string, query: any) => ({ username: query.connection_id === 'conn_other' ? '0987654321' : '0123456789' }));
 describe('license data boundary', () => {
+  it('classifies every protected account/data entry point without blocking cleanup controls', () => {
+    for (const method of [
+      'source.accounts.create', 'source.accounts.reconnect', 'source.jobs.start',
+      'results.overview', 'results.details', 'results.materialStart',
+      'artifacts.export.start', 'artifacts.batch.start', 'artifacts.vat_return.export',
+    ]) expect(isLicenseDataRequest(method)).toBe(true);
+    for (const method of [
+      'source.accounts.list', 'source.accounts.purge', 'source.jobs.cancel',
+      'artifacts.export.status', 'artifacts.export.cancel', 'artifacts.export.failures',
+    ]) expect(isLicenseDataRequest(method)).toBe(false);
+  });
   it('rejects absent policy and trial configurations that silently broaden scope', () => {
     expect(() => validateEntitlements(null)).toThrow();
     expect(() => validateEntitlements(trial([]))).toThrow();
@@ -42,6 +53,12 @@ describe('license data boundary', () => {
   });
   it('preserves existing numbered VIP policies without applying the TEST month', () => {
     expect(validateEntitlements({ version: 1, plan: 'VIP2', trial: false, max_tax_codes: 2, allowed_tax_codes: ['0123456789'], date_from: null, date_to: null })).toMatchObject({ plan: 'VIP2', trial: false });
+  });
+  it('VIP1 permits only its exact fifth-field MST entitlement', async () => {
+    const vip1 = { version: 1, plan: 'VIP1', trial: false, max_tax_codes: 1, allowed_tax_codes: ['0240590043'], date_from: null, date_to: null };
+    const vipGuard = guard(vip1);
+    await expect(vipGuard('source.accounts.create', { username: '0240590043' }, call)).resolves.toBeDefined();
+    await expect(vipGuard('source.accounts.create', { username: '0240590044' }, call)).rejects.toMatchObject({ code: 'license_tax_code_denied' });
   });
   it('returns a useful Vietnamese broker error instead of internal_error', async () => {
     const result = await runBrokerCommand(() => guard()('source.accounts.create', { username: '0987654321' }, call));

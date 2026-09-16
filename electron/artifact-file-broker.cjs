@@ -145,6 +145,26 @@ function validateVatReturnExportRequest(value) {
   return { ...coverage, destination: path.resolve(value.destination), ...(value.allow_incomplete === true ? { allow_incomplete: true } : {}) };
 }
 
+function validateVatReturnIssuesRequest(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['connection_id', 'date_from', 'date_to'].includes(key))
+      || typeof value.connection_id !== 'string' || !value.connection_id.trim()) throw new TypeError('invalid_vat_return_issues');
+  const range = validateVatReturnCoverageRequest({ connection_ids: [value.connection_id], date_from: value.date_from, date_to: value.date_to });
+  return { connection_id: range.connection_ids[0], date_from: range.date_from, date_to: range.date_to };
+}
+
+function validateVatReturnIssueUpdate(value) {
+  const allowed = { overview: new Set(['tgtcthue', 'tgtthue']), detail: new Set(['ten', 'tsuat', 'thtien', 'tthue']) };
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['connection_id', 'source', 'record_id', 'values'].includes(key))
+      || typeof value.connection_id !== 'string' || !value.connection_id.trim()
+      || !allowed[value.source] || !Number.isInteger(value.record_id) || value.record_id <= 0
+      || !value.values || typeof value.values !== 'object' || Array.isArray(value.values)) throw new TypeError('invalid_vat_return_issue_update');
+  const entries = Object.entries(value.values);
+  if (!entries.length || entries.some(([key, item]) => !allowed[value.source].has(key) || typeof item !== 'string' || item.length > 500)) throw new TypeError('invalid_vat_return_issue_update');
+  return { connection_id: value.connection_id.trim(), source: value.source, record_id: value.record_id, values: Object.fromEntries(entries) };
+}
+
 function checkedExportResult(result) {
   if (result && typeof result === 'object' && typeof result.error_code === 'string' && result.error_code) {
     const error = new Error(result.error_code);
@@ -205,6 +225,14 @@ function createArtifactBroker(getRuntime) {
       'artifacts.vat_return.coverage', validateVatReturnCoverageRequest(value),
       { timeoutMs: 30_000 },
     )),
+    vatReturnIssues: (value) => runBrokerCommand(() => getRuntime().invoke(
+      'artifacts.vat_return.issues', validateVatReturnIssuesRequest(value),
+      { timeoutMs: 30_000 },
+    )),
+    vatReturnIssueUpdate: (value) => runBrokerCommand(() => getRuntime().invoke(
+      'artifacts.vat_return.issue_update', validateVatReturnIssueUpdate(value),
+      { timeoutMs: 30_000 },
+    )),
     vatReturnExport: (value) => runBrokerCommand(async () => {
       const request = validateVatReturnExportRequest(value);
       assertIdle();
@@ -245,7 +273,7 @@ function createArtifactBroker(getRuntime) {
       if (typeof value.connection_id !== 'string' || !CONNECTION_ID.test(value.connection_id)) throw new TypeError('invalid_artifact_account');
       const offset = value.offset ?? 0;
       const limit = value.limit ?? 50;
-      if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new TypeError('invalid_artifact_failure_page');
+      if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 10000) throw new TypeError('invalid_artifact_failure_page');
       return getRuntime().invoke('artifacts.batch.failures', {
         task_id: value.task_id, connection_id: value.connection_id, offset, limit,
       });
@@ -294,4 +322,4 @@ function createArtifactBroker(getRuntime) {
   });
 }
 
-module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest, validateVatReturnCoverageRequest, validateVatReturnExportRequest };
+module.exports = { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest, validateVatReturnCoverageRequest, validateVatReturnExportRequest, validateVatReturnIssuesRequest, validateVatReturnIssueUpdate };

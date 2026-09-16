@@ -66,6 +66,30 @@ class SharedMiaV2Tests(unittest.TestCase):
             self.assertFalse(response["valid"])
             self.assertEqual(response["reason"], "license_policy_invalid")
 
+    def test_vip1_limits_one_exact_mst_without_trial_date_window(self):
+        (self.base / "MIA" / "vip.txt").write_text(
+            f"{key(DEVICE_ID)}|VIP1|31/12/2027|security test|0123456789\n",
+            encoding="utf-8",
+        )
+        response = self.verify(DEVICE_ID)
+        self.assertTrue(response["valid"])
+        self.assertEqual(response["entitlements"], {
+            "version": 1, "plan": "VIP1", "trial": False,
+            "max_tax_codes": 1, "allowed_tax_codes": ["0123456789"],
+            "date_from": None, "date_to": None,
+        })
+
+    def test_vip1_missing_unlimited_or_oversized_scope_fails_closed(self):
+        for scope in ["", "o", "0123456789,0987654321"]:
+            with self.subTest(scope=scope):
+                (self.base / "MIA" / "vip.txt").write_text(
+                    f"{key(DEVICE_ID)}|VIP1|31/12/2027|security test|{scope}\n",
+                    encoding="utf-8",
+                )
+                response = self.verify(DEVICE_ID)
+                self.assertFalse(response["valid"])
+                self.assertEqual(response["reason"], "license_policy_invalid")
+
     def test_old_expiry_second_column_is_not_treated_as_unlimited(self):
         (self.base / "MIA" / "vip.txt").write_text(f"{LEGACY_KEY}|31/12/2024|l|contact|0123456789\n", encoding="utf-8")
         response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
@@ -160,6 +184,40 @@ class SharedMiaV2Tests(unittest.TestCase):
         self.assertEqual(second["reason"], "ok")
         self.assertEqual(second["device_id"], device_id)
         self.assertEqual(second["key"], key(device_id))
+
+    def test_corrupt_server_state_never_rebinds_an_activated_key(self):
+        device_id = "fail-closed-device"
+        mia = self.base / "MIA"
+        mia.joinpath("vip.txt").write_text(
+            f"{key(device_id)}|VIP|31/12/2027|security test|o\n",
+            encoding="utf-8",
+        )
+        self.assertTrue(self.verify(device_id)["valid"])
+        mia.joinpath("device_bindings.json").write_text("{broken", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Corrupt MIA license state"):
+            self.verify(device_id)
+
+    def test_malformed_existing_binding_never_becomes_first_activation(self):
+        device_id = "malformed-binding-device"
+        mia = self.base / "MIA"
+        canonical = key(device_id)
+        mia.joinpath("vip.txt").write_text(
+            f"{canonical}|VIP|31/12/2027|security test|o\n",
+            encoding="utf-8",
+        )
+        mia.joinpath("device_bindings.json").write_text(
+            json.dumps({canonical: []}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Corrupt MIA license binding"):
+            self.verify(device_id)
+
+        mia.joinpath("device_bindings.json").write_text(
+            json.dumps({canonical: {}}),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Corrupt MIA license binding"):
+            self.verify(device_id)
 
     def test_recovery_accepts_three_of_six_and_rejects_two_of_six(self):
         canonical = "canonical-device"

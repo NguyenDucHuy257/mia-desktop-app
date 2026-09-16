@@ -689,6 +689,16 @@ class InvoiceOverviewStorageService:
             nlap = item.get('tdlap')
             if InvoiceOverviewStorageService._is_missing(nlap):
                 nlap = item.get('ntao')
+            public_fields = public_source_fields(item)
+            if (
+                str(item.get('khmshdon') or '').strip() in {'2', '2.0'}
+                and InvoiceOverviewStorageService._is_missing(item.get('tgtcthue'))
+                and not InvoiceOverviewStorageService._is_missing(item.get('tgtttbso'))
+            ):
+                # Direct invoices may omit the pre-tax total in the Overview
+                # endpoint although the Detail endpoint contains the amount.
+                # Persist the portal payment total as the documented fallback.
+                public_fields['tgtcthue'] = item.get('tgtttbso')
             normalized.append({
                 'nbmst': item['nbmst'],
                 'khhdon': item['khhdon'],
@@ -696,7 +706,7 @@ class InvoiceOverviewStorageService:
                 'khmshdon': item['khmshdon'],
                 'nlap': None if InvoiceOverviewStorageService._is_missing(nlap) else str(nlap),
                 'nlap_date': normalize_business_date(nlap),
-                '_public_fields': public_source_fields(item),
+                '_public_fields': public_fields,
             })
         return normalized
 

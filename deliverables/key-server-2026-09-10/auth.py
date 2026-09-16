@@ -69,6 +69,8 @@ MST_RE = re.compile(r"^(?:[0-9]{10}(?:-[0-9]{3})?|[0-9]{12})$")
 PHONE_RE = re.compile(r"^0[0-9]{9}$")
 TEST_DATE_FROM = "2026-08-01"
 TEST_DATE_TO = "2026-08-31"
+MIN_LIMITED_MIA_VERSION = (4, 0, 8)
+MIN_LIMITED_GSOFT_VERSION = (2, 8, 0)
 
 
 def _path(relative: str) -> Path:
@@ -108,13 +110,27 @@ def _atomic_json(path: Path, payload: dict) -> None:
     _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
 
 
-def _load_json(path: Path) -> dict:
-    if not path.exists() or path.stat().st_size <= 0:
+def _load_json(
+    path: Path, *, fail_closed: bool = False, state_label: str = "license",
+) -> dict:
+    if not path.exists():
+        return {}
+    if path.stat().st_size <= 0:
+        if fail_closed:
+            raise RuntimeError(f"Corrupt {state_label} license state: {path.name}")
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except Exception:
+        if isinstance(value, dict):
+            return value
+        if fail_closed:
+            raise RuntimeError(f"Corrupt {state_label} license state: {path.name}")
+        return {}
+    except RuntimeError:
+        raise
+    except Exception as error:
+        if fail_closed:
+            raise RuntimeError(f"Corrupt {state_label} license state: {path.name}") from error
         return {}
 
 
@@ -219,7 +235,7 @@ def _v2_paths(tool: str) -> dict[str, Path]:
 
 
 
-def _policy_from_line(line: str) -> dict:
+def _policy_from_line(line: str, *, preserve_bare_test: bool = False) -> dict:
     """Parse field #2 of vip.txt into a stable license policy.
 
     Legacy ``v`` remains unlimited. New limited policies are VIP<N> and
@@ -241,8 +257,10 @@ def _policy_from_line(line: str) -> dict:
     if not match:
         raise ValueError("Invalid license policy")
     kind = match.group(1).upper()
-    limit = int(match.group(2) or 1)
-    return {"raw": f"{kind}{limit}", "type": kind, "limit": limit, "test": kind == "TEST"}
+    suffix = match.group(2)
+    limit = int(suffix or 1)
+    policy_name = kind if preserve_bare_test and not suffix else f"{kind}{limit}"
+    return {"raw": policy_name, "type": kind, "limit": limit, "test": kind == "TEST"}
 
 
 def _normalize_mst(mst: str) -> str:
@@ -399,12 +417,18 @@ def _test_date_state(policy: dict, date_from: str = "", date_to: str = "") -> di
     }
 
 
-def _entitlements_from_state(line: str, paths: dict[str, Path], key: str, policy: dict) -> dict:
+def _entitlements_from_state(
+    line: str, paths: dict[str, Path], key: str, policy: dict,
+    *, require_declared_scope: bool = False,
+) -> dict:
     declared_msts, unlimited_scope = _declared_msts(line)
     _lines, _records, bound_msts = _binding_state(paths, key)
     allowed = declared_msts or sorted(bound_msts)
     limit = policy["limit"]
-    if limit is not None and (not allowed or len(allowed) > limit):
+    if limit is not None and (
+            not allowed or len(allowed) > limit
+            or require_declared_scope and unlimited_scope
+    ):
         raise ValueError("Invalid limited license MST scope")
     if policy["test"] and unlimited_scope and not bound_msts:
         raise ValueError("TEST license requires an MST")
@@ -422,6 +446,22 @@ def _entitlements_from_state(line: str, paths: dict[str, Path], key: str, policy
 def _extract_semver(value: str) -> Optional[tuple[int, int, int]]:
     match = SEMVER_RE.search(str(value or ""))
     return tuple(int(part) for part in match.groups()) if match else None
+
+
+def _limited_client_supported(tool: str, policy: dict, current_version: str) -> bool:
+    tool = str(tool or "").upper()
+    # A bare VIP is unlimited only when field #5 is "o"/empty. If field #5
+    # explicitly scopes MSTs, old clients must not be allowed to ignore it.
+    if policy.get("limit") is None and not policy.get("declared_msts"):
+        return True
+    minimum = {
+        "MIA": MIN_LIMITED_MIA_VERSION,
+        "GSOFT": MIN_LIMITED_GSOFT_VERSION,
+    }.get(tool)
+    if minimum is None:
+        return True
+    version = _extract_semver(current_version)
+    return version is not None and version >= minimum
 
 
 def _safe_update_url(value: str) -> str:
@@ -474,8 +514,9 @@ def _finalize_v2_response(
     result = dict(result)
     result["license_valid"] = bool(result.get("valid"))
     result["update"] = _update_info(vip_lines, current_version)
+    is_mia = paths["vip"].parent.name.upper() == "MIA"
     try:
-        policy = _policy_from_line(line)
+        policy = _policy_from_line(line, preserve_bare_test=True)
         declared_msts, _unlimited_scope = _declared_msts(line)
         policy["declared_msts"] = declared_msts
     except ValueError:
@@ -487,6 +528,40 @@ def _finalize_v2_response(
         })
         return result
 
+    # Limited plans must be explicitly scoped in field #5. Reject before the
+    # quota helper can create any dynamic mst_bindings row.
+    if policy["limit"] is not None and (
+            not policy["declared_msts"]
+            or len(policy["declared_msts"]) > policy["limit"]
+    ):
+        result.update({
+            "valid": False,
+            "license_valid": False,
+            "authorized": False,
+            "reason": "license_policy_invalid",
+            "license_policy": policy["raw"],
+            "license_type": policy["type"],
+            "entitlements": None,
+        })
+        return result
+
+    # Older desktop clients do not refresh/enforce a changed VIP quota at the
+    # account-creation boundary. Fail closed for every limited MIA policy so a
+    # VIP -> VIP1/TEST server change cannot be bypassed by keeping an old build.
+    # Keep the version floor scoped to the V2 tools and only limited policies.
+    tool_name = "MIA" if is_mia else "GSOFT"
+    if not _limited_client_supported(tool_name, policy, current_version):
+        result.update({
+            "valid": False,
+            "license_valid": False,
+            "authorized": False,
+            "reason": "client_update_required",
+            "license_policy": policy["raw"],
+            "license_type": policy["type"],
+            "entitlements": None,
+        })
+        return result
+
     # Expose current quota even for a base key verification with no MST.
     mst_state = _mst_policy_state(paths, key, policy, mst if result.get("valid") else "")
     date_state = _test_date_state(policy, date_from if result.get("valid") else "", date_to if result.get("valid") else "")
@@ -494,7 +569,10 @@ def _finalize_v2_response(
     result.update(date_state)
 
     try:
-        result["entitlements"] = _entitlements_from_state(line, paths, key, policy)
+        result["entitlements"] = _entitlements_from_state(
+            line, paths, key, policy,
+            require_declared_scope=policy["limit"] is not None,
+        )
     except ValueError:
         result.update({
             "valid": False, "license_valid": False, "authorized": False,
@@ -638,6 +716,8 @@ def verify_key_v2(
     device_id = str(device_id or "").strip()
     if not device_id:
         raise ValueError("Missing device_id")
+    if tool == "MIA" and len(device_id) > 128:
+        raise ValueError("Missing or invalid device_id")
     current_hw = _sanitize_hardware(hardware)
     supplied_key = str(key or "").strip()
     clean_phone = _clean_phone(phone)
@@ -665,7 +745,9 @@ def verify_key_v2(
                     "hardware_match": 1.0,
                     "reason": "key_not_activated",
                 }
-            bindings = _load_json(paths["bindings"])
+            bindings = _load_json(
+                paths["bindings"], fail_closed=True, state_label=tool,
+            )
             binding = dict(bindings.get(interim_key) or {})
             if not binding:
                 binding = _binding_payload(device_id, "", current_hw, "interim_v2_activation")
@@ -690,17 +772,40 @@ def verify_key_v2(
     with _LOCK, _process_lock(paths["lock"]):
         _ensure_legacy_seed(tool, paths)
         vip_lines = _read_lines(paths["vip"])
-        bindings = _load_json(paths["bindings"])
-        migrations = _load_json(paths["migrations"])
+        strict_v2_state = tool in V2_TOOLS
+        bindings = _load_json(
+            paths["bindings"], fail_closed=strict_v2_state, state_label=tool,
+        )
+        migrations = _load_json(
+            paths["migrations"], fail_closed=strict_v2_state, state_label=tool,
+        )
 
         # 1) Normal verification. A manually-added new key is bound on first use.
         active_line = _find_key_line(vip_lines, expected_key)
         if active_line:
-            binding = dict(bindings.get(expected_key) or {})
-            if not binding:
-                binding = _binding_payload(device_id, clean_phone, current_hw, "manual_activation")
-                bindings[expected_key] = binding
-                _atomic_json(paths["bindings"], bindings)
+            if strict_v2_state:
+                if expected_key not in bindings:
+                    binding = _binding_payload(device_id, clean_phone, current_hw, "manual_activation")
+                    bindings[expected_key] = binding
+                    _atomic_json(paths["bindings"], bindings)
+                else:
+                    raw_binding = bindings[expected_key]
+                    if not isinstance(raw_binding, dict):
+                        raise RuntimeError(f"Corrupt {tool} license binding")
+                    binding = dict(raw_binding)
+                    try:
+                        saved_hardware = _sanitize_hardware(binding.get("hardware") or {})
+                    except (TypeError, ValueError) as error:
+                        raise RuntimeError(f"Corrupt {tool} license binding") from error
+                    if not str(binding.get("device_id") or "").strip() or len(saved_hardware) < MIN_HARDWARE_FIELDS:
+                        raise RuntimeError(f"Corrupt {tool} license binding")
+            else:
+                # Preserve the exact pre-existing Taxsoft/GSOFT behavior.
+                binding = dict(bindings.get(expected_key) or {})
+                if not binding:
+                    binding = _binding_payload(device_id, clean_phone, current_hw, "manual_activation")
+                    bindings[expected_key] = binding
+                    _atomic_json(paths["bindings"], bindings)
             return _finalize_v2_response(
                 _response_for_binding(
                     key=expected_key,
@@ -862,8 +967,11 @@ def verify_key_v2(
 
             # Reject malformed/over-broad TEST metadata before writing a new key.
             try:
-                candidate_policy = _policy_from_line(selected_legacy_line)
+                candidate_policy = _policy_from_line(
+                    selected_legacy_line, preserve_bare_test=True,
+                )
                 declared_msts, unlimited_scope = _declared_msts(selected_legacy_line)
+                candidate_policy["declared_msts"] = declared_msts
                 if candidate_policy["limit"] is not None and (
                         not declared_msts or len(declared_msts) > candidate_policy["limit"]
                 ):
@@ -875,6 +983,15 @@ def verify_key_v2(
                     "valid": False, "key": expected_key, "device_id": device_id,
                     "phone": clean_phone, "expired": False, "migrated": False,
                     "reason": "license_policy_invalid",
+                }
+
+            # Do not create a canonical key/binding for an old MIA client that
+            # cannot enforce limited account scope locally.
+            if not _limited_client_supported(tool, candidate_policy, current_version):
+                return {
+                    "valid": False, "key": expected_key, "device_id": device_id,
+                    "phone": clean_phone, "expired": False, "migrated": False,
+                    "authorized": False, "reason": "client_update_required",
                 }
 
             parts = selected_legacy_line.split("|")

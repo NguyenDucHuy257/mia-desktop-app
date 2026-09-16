@@ -155,6 +155,46 @@ class InvoiceOverviewRepository:
                     );
                     """
                 )
+                self._backfill_direct_invoice_taxable_totals(connection)
+
+    @staticmethod
+    def _backfill_direct_invoice_taxable_totals(connection: sqlite3.Connection) -> None:
+        """Repair already-synced direct invoices without requiring a fresh crawl."""
+        connection.execute(
+            """
+            UPDATE invoice_overview_attributes
+               SET value_json = (
+                   SELECT payment.value_json
+                     FROM invoice_overview_attributes AS payment
+                    WHERE payment.invoice_item_id = invoice_overview_attributes.invoice_item_id
+                      AND payment.field_name = 'tgtttbso'
+               )
+             WHERE field_name = 'tgtcthue'
+               AND lower(trim(value_json)) IN ('null', '""')
+               AND invoice_item_id IN (
+                   SELECT item.id
+                     FROM invoice_overview_items AS item
+                     JOIN invoice_overview_attributes AS payment
+                       ON payment.invoice_item_id = item.id
+                      AND payment.field_name = 'tgtttbso'
+                    WHERE trim(item.khmshdon) IN ('2', '2.0')
+                      AND lower(trim(payment.value_json)) NOT IN ('null', '""')
+               )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO invoice_overview_attributes
+                (invoice_item_id, field_name, value_json)
+            SELECT item.id, 'tgtcthue', payment.value_json
+              FROM invoice_overview_items AS item
+              JOIN invoice_overview_attributes AS payment
+                ON payment.invoice_item_id = item.id
+               AND payment.field_name = 'tgtttbso'
+             WHERE trim(item.khmshdon) IN ('2', '2.0')
+               AND lower(trim(payment.value_json)) NOT IN ('null', '""')
+            """
+        )
 
     def upsert_items(
         self,

@@ -57,7 +57,7 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await expect(popup).not.toContainText('MST:');
   await expect(popup).not.toContainText('SĐT:');
   await expect(popup).not.toContainText('Đăng xuất');
-  await expect(popup).toContainText('MIA TOOL 2026 4.0.7');
+  await expect(popup).toContainText('MIA TOOL 2026 4.0.8');
   await expect(popup.locator('code')).not.toContainText('20cd0a15');
   await popup.getByRole('button', { name: 'Hiện' }).click();
   await expect(popup.locator('code')).toHaveText('KEYV2-20cd0a15bc1ab172b385707877c0f82b-0987654321');
@@ -73,7 +73,6 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await page.getByRole('button', { name: 'Tra cứu PDF gốc', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Tra cứu PDF gốc' })).toBeVisible();
   await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
-  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
   await page.getByRole('button', { name: 'Cài đặt hệ thống', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Mật khẩu đăng nhập' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Đổi mật khẩu' })).toBeVisible();
@@ -87,6 +86,11 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   const guide = page.getByRole('button', { name: 'Hướng dẫn sử dụng', exact: true });
   await expect(guide.locator('svg')).toHaveCount(1);
   await guide.click();
-  await expect(page.getByRole('heading', { name: 'Hướng dẫn sử dụng' })).toBeVisible();
-  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Hướng dẫn sử dụng', exact: true })).toBeVisible();
+  await expect(page.getByTitle('Hướng dẫn sử dụng MIA TOOL 2026')).toBeVisible();
+  const openGuideVideo = page.getByRole('button', { name: 'Mở video trên YouTube' });
+  await expect(openGuideVideo).toBeVisible();
+  await openGuideVideo.click();
+  expect(await page.evaluate(() => (window as unknown as { __shellTest: { external: string[] } }).__shellTest.external))
+    .toContain('https://www.youtube.com/watch?v=17FEQpNv4Tw');
 });

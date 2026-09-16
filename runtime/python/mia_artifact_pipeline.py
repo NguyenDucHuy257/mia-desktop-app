@@ -199,9 +199,16 @@ def _local_reference(root: Path, value: str) -> Path | None:
     return candidate
 
 
+def _nonempty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def html_dependency_files(html_path: Path) -> tuple[Path, ...] | None:
     """Return a verified offline bundle for one HTML invoice."""
-    if not html_path.is_file():
+    if not _nonempty_file(html_path):
         return None
     try:
         html_bytes = html_path.read_bytes()
@@ -1097,7 +1104,7 @@ class ArtifactBatchCoordinator:
                 continue
             xml_path = Path(str(package.get("xml_path") or ""))
             html_path = Path(str(package.get("html_path") or ""))
-            if int(package.get("xml_fetched") or 0) == 1 and xml_path.is_file():
+            if int(package.get("xml_fetched") or 0) == 1 and _nonempty_file(xml_path):
                 cache_keys["xml"].add(key)
             if int(package.get("html_fetched") or 0) == 1 and html_dependency_files(html_path) is not None:
                 cache_keys["html"].add(key)
@@ -1125,10 +1132,6 @@ class ArtifactBatchCoordinator:
             export_basename = build_invoice_export_basename(target)
             display = " - ".join(str(target.get(name) or "") for name in ("khhdon", "shdon", "nbmst"))
             if state == "missing_original" or outcome == "missing_original":
-                self._record_failure(
-                    connection_id, target, self.value["kinds"],
-                    "missing_original", "Không tồn tại hồ sơ gốc",
-                )
                 for kind in self.value["kinds"]:
                     self._skip(kind, display)
                 return
@@ -1174,49 +1177,52 @@ class ArtifactBatchCoordinator:
                 return
             xml_path = Path(str(package.get("xml_path") or ""))
             html_path = Path(str(package.get("html_path") or ""))
+            xml_ready = _nonempty_file(xml_path)
             html_ready = html_dependency_files(html_path) is not None
-            self._mark_cached(connection_id, "xml", key, xml_path.is_file(), cache_keys)
+            self._mark_cached(connection_id, "xml", key, xml_ready, cache_keys)
             self._mark_cached(connection_id, "html", key, html_ready, cache_keys)
             if "xml" in self.value["kinds"] and not self.format_cancel["xml"].is_set():
-                try:
-                    if not xml_path.is_file():
-                        raise FileNotFoundError("xml_cache_missing")
-                    _copy_atomically(xml_path, output_roots["xml"], export_basename)
-                    self._advance("xml", display)
-                except OSError as error:
-                    if self.logger is not None:
-                        self.logger.warning(
-                            "artifact_copy_failed format=XML account_ref=%s invoice_ref=%s error_type=%s message=%s",
-                            connection_id[-8:], _safe_filename(display)[:80],
-                            type(error).__name__, str(error)[:200],
+                if not xml_ready:
+                    self._skip("xml", display)
+                else:
+                    try:
+                        _copy_atomically(xml_path, output_roots["xml"], export_basename)
+                        self._advance("xml", display)
+                    except OSError as error:
+                        if self.logger is not None:
+                            self.logger.warning(
+                                "artifact_copy_failed format=XML account_ref=%s invoice_ref=%s error_type=%s message=%s",
+                                connection_id[-8:], _safe_filename(display)[:80],
+                                type(error).__name__, str(error)[:200],
+                            )
+                        self._record_failure(
+                            connection_id, target, ["xml"], "xml_export_failed",
+                            str(error)[:240] or type(error).__name__,
                         )
-                    self._record_failure(
-                        connection_id, target, ["xml"], "xml_export_failed",
-                        str(error)[:240] or type(error).__name__,
-                    )
-                    self._advance("xml", display, failed=True)
+                        self._advance("xml", display, failed=True)
             if "html" in self.value["kinds"] and not self.format_cancel["html"].is_set():
-                try:
-                    if not html_ready:
-                        raise FileNotFoundError("html_bundle_incomplete")
-                    _copy_atomically(html_path, output_roots["html"], export_basename)
-                    source_root = html_path.parent.resolve()
-                    if source_root not in exported_asset_roots:
-                        self._copy_html_assets(source_root, output_roots["html"])
-                        exported_asset_roots.add(source_root)
-                    self._advance("html", display)
-                except OSError as error:
-                    if self.logger is not None:
-                        self.logger.warning(
-                            "artifact_copy_failed format=HTML account_ref=%s invoice_ref=%s error_type=%s message=%s",
-                            connection_id[-8:], _safe_filename(display)[:80],
-                            type(error).__name__, str(error)[:200],
+                if not html_ready:
+                    self._skip("html", display)
+                else:
+                    try:
+                        _copy_atomically(html_path, output_roots["html"], export_basename)
+                        source_root = html_path.parent.resolve()
+                        if source_root not in exported_asset_roots:
+                            self._copy_html_assets(source_root, output_roots["html"])
+                            exported_asset_roots.add(source_root)
+                        self._advance("html", display)
+                    except OSError as error:
+                        if self.logger is not None:
+                            self.logger.warning(
+                                "artifact_copy_failed format=HTML account_ref=%s invoice_ref=%s error_type=%s message=%s",
+                                connection_id[-8:], _safe_filename(display)[:80],
+                                type(error).__name__, str(error)[:200],
+                            )
+                        self._record_failure(
+                            connection_id, target, ["html"], "html_export_failed",
+                            str(error)[:240] or type(error).__name__,
                         )
-                    self._record_failure(
-                        connection_id, target, ["html"], "html_export_failed",
-                        str(error)[:240] or type(error).__name__,
-                    )
-                    self._advance("html", display, failed=True)
+                        self._advance("html", display, failed=True)
             if "pdf" in self.value["kinds"] and not self.format_cancel["pdf"].is_set():
                 if html_ready and pdf_pool is not None:
                     with self.lock:
@@ -1224,16 +1230,7 @@ class ArtifactBatchCoordinator:
                     pdf_pool.submit({"target": target, "html_path": html_path, "display": display, "connection_id": connection_id, "cache_keys": cache_keys})
                     self._emit()
                 else:
-                    if self.logger is not None:
-                        self.logger.warning(
-                            "artifact_dependency_missing format=PDF account_ref=%s invoice_ref=%s error_type=FileNotFoundError message=html_bundle_incomplete",
-                            connection_id[-8:], _safe_filename(display)[:80],
-                        )
-                    self._record_failure(
-                        connection_id, target, ["pdf"], "pdf_dependency_missing",
-                        "HTML thiếu tài nguyên cần thiết",
-                    )
-                    self._advance("pdf", display, failed=True)
+                    self._skip("pdf", display)
 
         target_keys = set(target_map)
         for direction in self.value["directions"]:

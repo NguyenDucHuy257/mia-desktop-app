@@ -4,7 +4,7 @@ import { AddAccountPage } from './features/accounts/AddAccountPage';
 import { InvoiceManagementPage } from './features/invoices/InvoiceManagementPage';
 import { createAccountConnectionGateway } from './features/accounts/account-gateway';
 import { useBatchJobLifecycle } from './features/jobs/use-batch-job-lifecycle';
-import type { AccountConnection } from './lib/api/contracts';
+import type { AccountConnection, InvoiceDirection } from './lib/api/contracts';
 import { ResultsPage } from './features/results/ResultsPage';
 import { useResultExportLifecycle } from './features/results/use-result-export-lifecycle';
 import { UtilityPage } from './features/artifacts/ArtifactPages';
@@ -68,7 +68,7 @@ function WorkspaceApp() {
   const [exportFolder, setExportFolder] = useState(DEFAULT_EXPORT_FOLDER);
   const [pdfConcurrency, setPdfConcurrency] = useState(5);
   const [artifactSelection, setArtifactSelection] = useState<ArtifactSelectionState>({ ...defaultDateRange, direction: 'purchase' });
-  const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string } | null>(null);
+  const [resultRange, setResultRange] = useState<{ dateFrom: string; dateTo: string; direction: InvoiceDirection } | null>(null);
   const [deleteProgress, setDeleteProgress] = useState<DeleteProgress>({ active: false, total: 0, completed: 0, failed: 0 });
   const [vatReturnExporting, setVatReturnExporting] = useState(false);
   const gateway = useMemo(() => createAccountConnectionGateway(), []);
@@ -181,6 +181,7 @@ function WorkspaceApp() {
             exportFolder={exportFolder}
             initialDateFrom={resultRange?.dateFrom}
             initialDateTo={resultRange?.dateTo}
+            initialDirection={resultRange?.direction}
             crawlItem={invoiceJobs.items[connectionId]}
             resultExports={resultExports}
             activeWorkspaceTask={activeWorkspaceTask}
@@ -200,7 +201,7 @@ function WorkspaceApp() {
             onDeleteAccount={async (id) => { deleteAccount(id); }}
             onSelectAccount={(id) => setSelectedAccountIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id])}
             onSelectAccounts={setSelectedAccountIds}
-            onViewResults={(id, dateFrom, dateTo) => { setConnectionId(id); setResultRange({ dateFrom, dateTo }); setView('results'); }}
+            onViewResults={(id, dateFrom, dateTo, resultDirection) => { setConnectionId(id); setResultRange({ dateFrom, dateTo, direction: resultDirection }); setView('results'); }}
             initialDateFrom={artifactSelection.dateFrom}
             initialDateTo={artifactSelection.dateTo}
             initialDirection={artifactSelection.direction}

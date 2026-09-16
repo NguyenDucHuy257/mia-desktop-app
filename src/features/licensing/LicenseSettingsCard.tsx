@@ -7,6 +7,12 @@ function formatDate(value: string | null) {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
+function packageName(details: LicenseDetails | null) {
+  if (!details?.plan) return 'Chưa xác định';
+  if (details.max_tax_codes === null) return `${details.plan} · Nhiều MST`;
+  return `${details.plan} · ${details.max_tax_codes === 1 ? '01 MST' : `${details.max_tax_codes} MST`}`;
+}
+
 export function LicenseSettingsCard() {
   const [details, setDetails] = useState<LicenseDetails | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -22,6 +28,8 @@ export function LicenseSettingsCard() {
     <dl>
       <div><dt>Số điện thoại</dt><dd>{details?.phone || 'Chưa bổ sung'}</dd></div>
       <div><dt>Hạn sử dụng</dt><dd>{formatDate(details?.expires_at || null)}</dd></div>
+      <div><dt>Gói đăng ký</dt><dd>{packageName(details)}</dd></div>
+      <div><dt>Ngày kích hoạt sử dụng</dt><dd>{formatDate(details?.activated_at || null)}</dd></div>
       <div><dt>Thiết bị</dt><dd>{details?.device_bound ? 'Đã liên kết' : 'Chưa liên kết'}</dd></div>
       <div><dt>Mã bản quyền</dt><dd>{details?.canonical_key || 'Chưa có'}</dd></div>
     </dl>

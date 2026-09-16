@@ -192,6 +192,7 @@ export function AddAccountPage({ onBack, onConnectionCreated, gateway: gatewayOv
               <label htmlFor="account-password">Mật khẩu: (mật khẩu vào trang hoadondientu.gdt.gov.vn)</label>
               <PasswordInput
                 id="account-password"
+                aria-label="Mật khẩu"
                 value={password}
                 autoComplete="current-password"
                 aria-invalid={Boolean(errors.password)}

@@ -74,6 +74,11 @@ và lưu binding/migration JSON chỉ dưới `/opt/keys_app/MIA`.
 - `TEST` / `TEST1`: tối đa 1 MST khai báo ở trường thứ 5 của dòng key.
 - `TEST2`, `TEST<n>`: tối đa n MST trong danh sách trường thứ 5, phân cách dấu phẩy.
 - Các key TEST chỉ cho phép dữ liệu **01/08/2026–31/08/2026**, độc lập ngày hết hạn key.
+- `VIP1`, `VIP<n>`: không giới hạn ngày dữ liệu, nhưng chỉ cho phép tối đa n MST
+  cụ thể trong danh sách trường thứ 5; không cho phép `o` hoặc scope trống.
+- Riêng MIA, mọi policy giới hạn (`VIP1+`, `TEST/TEST1+`) yêu cầu desktop gửi
+  `current_version` từ `4.0.8` trở lên. Client cũ hoặc thiếu phiên bản nhận
+  `client_update_required`; quy tắc này không áp dụng cho GSOFT/Taxsoft.
 - `v` / `VIP`: không giới hạn ngày dữ liệu; MST là danh sách trường thứ 5.
   `o` hoặc thiếu trường này ở key trả phí giữ nghĩa không giới hạn MST của kho cũ.
 - MST chi nhánh là định danh riêng, không tự mở quyền tất cả chi nhánh của MST mẹ.

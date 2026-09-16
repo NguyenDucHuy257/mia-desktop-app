@@ -2,7 +2,8 @@ import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { isTrustedAppUrl } = require('../../electron/security-policy.cjs') as {
+const { guideVideoRequestHeaders, isTrustedAppUrl } = require('../../electron/security-policy.cjs') as {
+  guideVideoRequestHeaders(url: string, headers?: Record<string, string>): Record<string, string>;
   isTrustedAppUrl(
     candidateUrl: string,
     options: { devServerUrl?: string; productionEntryUrl: string },
@@ -24,5 +25,12 @@ describe('Electron URL trust policy', () => {
     expect(isTrustedAppUrl('file:///opt/mia/dist/index.html#settings', options)).toBe(true);
     expect(isTrustedAppUrl('file:///opt/mia/dist/other.html', options)).toBe(false);
     expect(isTrustedAppUrl('https://example.com/', options)).toBe(false);
+  });
+
+  it('adds a public app referrer only to the privacy-enhanced guide embed', () => {
+    expect(guideVideoRequestHeaders('https://www.youtube-nocookie.com/embed/17FEQpNv4Tw', { Accept: '*/*' }))
+      .toEqual({ Accept: '*/*', Referer: 'https://gotax.vn/' });
+    expect(guideVideoRequestHeaders('https://evil.example/embed/17FEQpNv4Tw', { Accept: '*/*' }))
+      .toEqual({ Accept: '*/*' });
   });
 });

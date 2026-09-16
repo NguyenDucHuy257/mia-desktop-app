@@ -333,6 +333,16 @@ button { color: inherit; }
 .pdf-actions button:nth-child(2) img { width: 13px; height: 10px; }
 .utility-page { min-height: 100%; padding: 32px; background: #fff; }
 .utility-panel { margin-top: 22px; }
+.guide-video-card { width: min(1000px, 100%); margin-right: auto; margin-left: auto; padding: 22px; border: 1px solid var(--mia-border-cool); border-radius: 12px; background: #fff; box-shadow: 0 8px 26px rgb(15 23 42 / 7%); }
+.guide-video-card h2 { margin: 0; color: #17251d; font-size: 19px; }
+.guide-video-card p { margin: 5px 0 18px; color: #64748b; font-size: 13px; }
+.guide-video-frame { position: relative; overflow: hidden; aspect-ratio: 16 / 9; border-radius: 10px; background: #07120c; }
+.guide-video-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.guide-video-external { min-height: 38px; margin-top: 14px; padding: 0 16px; border: 1px solid #cbd8d0; border-radius: 8px; color: #0f5132; background: #fff; font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
+.guide-video-external:hover, .guide-video-external:focus-visible { border-color: var(--mia-green-700); background: #f0fdf4; outline: none; }
+.pagination > label, .results-page-size { display: inline-flex; align-items: center; gap: 8px; color: #53645a; font-size: 12px; font-weight: 650; }
+.pagination select, .results-page-size select { min-width: 76px; height: 34px; padding: 0 28px 0 10px; border: 1px solid #cbd8d0; border-radius: 8px; color: #183a27; background: #fff; font: inherit; font-weight: 750; cursor: pointer; outline: 0; }
+.pagination select:focus, .results-page-size select:focus { border-color: var(--mia-green-700); box-shadow: 0 0 0 3px rgb(22 101 52 / 12%); }
 .utility-page--settings { height: 100%; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; background: #f7f9fb; }
 .utility-page--settings > h1, .utility-page--settings > p, .utility-settings-panel { width: min(980px, 100%); margin-right: auto; margin-left: auto; }
 .utility-settings-panel { padding-bottom: 36px; }

@@ -177,17 +177,26 @@ test('detail results retain total rows on page two and empty export is stopped b
         cancel: async () => ({}), clear: async () => undefined,
       },
       results: { overview: async (query: { cursor?: string | null; search?: string }) => resultPage(query), details: async (query: { cursor?: string | null; search?: string }) => resultPage(query) },
-      artifacts: { export: async () => { exportCalls += 1; return { count: 1, files: ['D:\\MIA\\result.xlsx'] }; } },
+      artifacts: {
+        vatReturnCoverage: async (request: { connection_ids: string[] }) => ({
+          accounts: request.connection_ids.map((connection_id) => ({
+            connection_id,
+            purchase: { direction: 'purchase', ready: true, missing_overview_ranges: [], missing_detail_ranges: [] },
+            sold: { direction: 'sold', ready: true, missing_overview_ranges: [], missing_detail_ranges: [] },
+          })),
+        }),
+        export: async () => { exportCalls += 1; return { count: 1, files: ['D:\\MIA\\result.xlsx'] }; },
+      },
     } });
   });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Xem kết quả' })).toBeVisible();
   await page.getByRole('button', { name: 'Xem kết quả' }).click();
   await page.getByRole('tab', { name: /^Chi tiết$/ }).click();
-  await expect(page.getByText('Tổng 73 hàng · tối đa 50 hàng/trang')).toBeVisible();
+  await expect(page.getByText('Tổng 73 hàng')).toBeVisible();
   await page.getByRole('button', { name: 'Trang sau' }).click();
   await expect(page.locator('.results-row:not(.results-row--header)')).toHaveCount(23);
-  await expect(page.getByText('Tổng 73 hàng · tối đa 50 hàng/trang')).toBeVisible();
+  await expect(page.getByText('Tổng 73 hàng')).toBeVisible();
 
   await page.getByLabel('Tìm kiếm kết quả').fill('không-có');
   await expect(page.getByText('Không có dữ liệu phù hợp với bộ lọc hiện tại.')).toBeVisible();
@@ -376,7 +385,8 @@ test('sync and download waits for successful completion then exports the capture
     } });
   });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Đồng bộ & tải xuống' }).click();
+  await page.getByRole('button', { name: 'Đồng bộ và tải xuống' }).click();
+  await page.getByRole('menuitem', { name: /Đồng bộ bổ sung & tải xuống/ }).click();
   await expect.poll(() => page.evaluate(() => Boolean(
     (window as typeof window & { autoExportRequest?: unknown }).autoExportRequest,
   )), { timeout: 10_000 }).toBe(true);
@@ -649,7 +659,7 @@ test.skip('legacy XML HTML navigation read overview rows directly', async ({ pag
   })));
   expect(columnEdges[1]).toEqual(columnEdges[0]);
   expect(columnEdges[2]).toEqual(columnEdges[0]);
-  await expect(page.getByText('Tổng 51 hàng · tối đa 50 hàng/trang')).toBeVisible();
+  await expect(page.getByText('Tổng 51 hàng')).toBeVisible();
   const download = page.getByRole('button', { name: 'Tải xuống kết quả' });
   await expect(download).toHaveCSS('background-color', 'rgb(37, 99, 184)');
   await expect(download).toHaveCSS('color', 'rgb(255, 255, 255)');

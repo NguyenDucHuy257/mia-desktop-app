@@ -28,14 +28,17 @@ function validateEntitlements(value) {
   return Object.freeze({ ...value, allowed_tax_codes: Object.freeze([...ids]) });
 }
 
+function isLicenseDataRequest(method) {
+  return method.startsWith('results.')
+    || method.startsWith('artifacts.') && !/\.(status|cancel|failures)$/.test(method)
+    || ['source.jobs.start', 'source.accounts.create', 'source.accounts.reconnect'].includes(method);
+}
+
 // This runs in Electron, before any data RPC, including exports from cached DB.
 // Resolve connection IDs using trusted runtime account records, not renderer MSTs.
 function createLicenseRequestGuard(getState) {
   return async (method, params, call) => {
-    const dataRequest = method.startsWith('results.')
-      || method.startsWith('artifacts.') && !/\.(status|cancel|failures)$/.test(method)
-      || ['source.jobs.start', 'source.accounts.create', 'source.accounts.reconnect'].includes(method);
-    if (!dataRequest) return params;
+    if (!isLicenseDataRequest(method)) return params;
     const state = getState();
     if (!state?.active || state.reason !== 'ok') throw policyError('license_policy_missing');
     const policy = validateEntitlements(state.entitlements);
@@ -62,4 +65,4 @@ function createLicenseRequestGuard(getState) {
   };
 }
 
-module.exports = { MESSAGES, policyError, validateEntitlements, createLicenseRequestGuard };
+module.exports = { MESSAGES, policyError, validateEntitlements, isLicenseDataRequest, createLicenseRequestGuard };

@@ -11,6 +11,8 @@ test.beforeEach(async ({ page }) => {
       jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
       artifacts: {
+        vatReturnIssues: async () => ({ connection_id: accountValue.connection_id, total: 1, items: [{ issue_id: 'detail:7', source: 'detail', record_id: 7, direction: 'sold', invoice_number: '46', invoice_date: '2026-02-01', reason: 'Thuế suất trống/không rõ đã được tính là 0%', fields: [{ name: 'ten', label: 'Tên hàng hóa, dịch vụ', value: 'Dịch vụ' }, { name: 'tsuat', label: 'Thuế suất', value: 'KHAC' }, { name: 'thtien', label: 'Thành tiền', value: '100' }, { name: 'tthue', label: 'Tiền thuế', value: '' }] }] }),
+        vatReturnIssueUpdate: async () => ({ saved: true, issue_id: 'detail:7' }),
         vatReturnExport: async (request: unknown) => {
           const browserWindow = window as Window & { __vatExportMode?: string };
           const destination = (request as { destination: string }).destination;
@@ -60,6 +62,8 @@ test('VAT return page has reduced controls, dual coverage and blocks incomplete 
   await expect(toolbar).not.toContainText('Mua vào');
   await expect(toolbar).not.toContainText('XML');
   const table = page.locator('.vat-return-table');
+  await expect(table).toHaveCSS('overflow-y', 'scroll');
+  await expect(table).toHaveCSS('scrollbar-gutter', 'stable');
   await expect(table.locator('.vat-coverage-header')).toContainText('Mua vào');
   await expect(table.locator('.vat-coverage-header')).toContainText('Bán ra');
   await expect(table).not.toContainText('Số lượng hóa đơn');
@@ -118,6 +122,55 @@ test('exports exactly one template workbook when both directions are ready', asy
     expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(dialogBox!.y + dialogBox!.height);
     await page.screenshot({ path: `outputs/vat-return-popup/success-${viewport.width}x${viewport.height}.png` });
   }
+});
+
+test('opens VAT issue list and allows right-click editing', async ({ page }) => {
+  await page.getByRole('button', { name: 'Xem kết quả' }).click();
+  await expect(page.getByRole('heading', { name: 'Kết quả kiểm tra dữ liệu GTGT' })).toBeVisible();
+  const taxRate = page.locator('.vat-issue-fields label').filter({ hasText: 'Thuế suất' });
+  await taxRate.getByRole('button').click({ button: 'right' });
+  await expect(taxRate.getByRole('textbox')).toBeVisible();
+  await taxRate.getByRole('textbox').fill('5%');
+  await page.locator('.vat-issue-save').click();
+  await expect(page.getByText('Đã lưu dữ liệu hóa đơn.')).toBeVisible();
+});
+
+test('exports multiple selected accounts sequentially as separate workbooks', async ({ page }) => {
+  await page.addInitScript(() => {
+    const runtime = window.miaRuntime!;
+    const accountValues = [
+      { connection_id: 'conn_vat_1', username: '0101234567', company_name: 'CÔNG TY VAT 1', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false },
+      { connection_id: 'conn_vat_2', username: '0107654321', company_name: 'CÔNG TY VAT 2', status: 'ready', token_generation: 1, created_at: 'now', updated_at: 'now', reused: false },
+    ];
+    const state = { active: 0, maxActive: 0, calls: [] as string[] };
+    (window as Window & { __vatQueueState?: typeof state }).__vatQueueState = state;
+    runtime.accountConnections.list = async () => accountValues;
+    runtime.artifacts.vatReturnCoverage = async (request) => ({
+      ...request,
+      accounts: accountValues.map((item) => ({
+        connection_id: item.connection_id,
+        purchase: { direction: 'purchase', overview_ready: true, detail_ready: true, ready: true, missing_overview_ranges: [], missing_detail_ranges: [], missing: [] },
+        sold: { direction: 'sold', overview_ready: true, detail_ready: true, ready: true, missing_overview_ranges: [], missing_detail_ranges: [], missing: [] },
+      })),
+    });
+    runtime.artifacts.vatReturnExport = async (request) => {
+      const id = request.connection_ids[0]!;
+      state.calls.push(id);
+      state.active += 1;
+      state.maxActive = Math.max(state.maxActive, state.active);
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+      state.active -= 1;
+      return { count: 1, files: [`C:\\MIA\\GTGT-${id}.xlsx`] };
+    };
+  });
+  await page.reload();
+  await page.getByLabel('Chức năng chính').getByRole('button', { name: 'Xuất tờ khai thuế GTGT', exact: true }).click();
+  await expect(page.locator('.vat-return-table .table-row')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Chọn tất cả tài khoản đã lọc' }).click();
+  await page.getByLabel('Thiết lập xuất tờ khai thuế GTGT').getByRole('button', { name: 'Xuất tờ khai thuế GTGT', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Đã tạo 2 tờ khai thuế GTGT thành công theo thứ tự.');
+  const state = await page.evaluate(() => (window as Window & { __vatQueueState?: { calls: string[]; maxActive: number } }).__vatQueueState);
+  expect(state).toEqual({ calls: ['conn_vat_1', 'conn_vat_2'], maxActive: 1, active: 0 });
 });
 
 test('locked destination uses the red error popup and never invents a suffixed path', async ({ page }) => {

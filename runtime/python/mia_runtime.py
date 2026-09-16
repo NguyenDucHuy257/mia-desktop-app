@@ -680,6 +680,24 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
 
+    if method == "artifacts.vat_return.issues":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_vat_return_export import vat_return_issues
+            return vat_return_issues(_production_backend(), dict(params)), False
+        except (KeyError, TypeError, ValueError) as error:
+            raise RpcError(-32602, str(error)) from None
+
+    if method == "artifacts.vat_return.issue_update":
+        if data_directory is None:
+            raise RpcError(-32011, "storage_not_initialized")
+        try:
+            from mia_vat_return_export import update_vat_return_issue
+            return update_vat_return_issue(_production_backend(), dict(params)), False
+        except (KeyError, TypeError, ValueError) as error:
+            raise RpcError(-32602, str(error)) from None
+
     if method == "artifacts.vat_return.export":
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
