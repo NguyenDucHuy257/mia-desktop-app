@@ -71,6 +71,7 @@ describe('invoice result control presentation', () => {
       source('src/styles/invoice-refresh.css'),
     ]);
     expect(component).toContain('Đồng bộ &amp; tải xuống');
+    expect(component).toContain("startJob('new', true)");
     expect(component).toContain("startJob('supplement', true)");
     expect(component).toContain('pendingAutoExport.current');
     expect(component).toContain("status !== 'completed' && status !== 'completed_with_warning'");
@@ -145,6 +146,7 @@ describe('invoice result control presentation', () => {
     expect(resultsPage).toContain('<option value="sco-query">Máy tính tiền</option>');
     expect(resultsPage).toContain('<option value="combined">HĐĐT &amp; Máy tính tiền</option>');
     expect(resultsPage).toContain("query_types: ['query', 'sco-query']");
+    expect(resultsPage).not.toContain('Mua vào và bán ra');
   });
 
   it('reuses the invoice-management action button for XML HTML downloads', async () => {
@@ -197,6 +199,15 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('Xem kết quả');
     expect(styles).not.toContain('translateY');
     expect(styles).not.toContain('scale(');
+  });
+
+  it('queues one VAT workbook per selected account instead of rejecting batch selection', async () => {
+    const page = await source('src/features/artifacts/VatReturnExportPage.tsx');
+    expect(page).not.toContain('selectedConnectionIds.length !== 1');
+    expect(page).not.toContain('Vui lòng chỉ chọn một tài khoản cho mỗi workbook');
+    expect(page).toContain('for (let index = 0; index < exportIds.length; index += 1)');
+    expect(page).toContain('connection_ids: [id]');
+    expect(page).toContain('Đang xuất ${index + 1}/${exportIds.length}');
   });
 
   it('uses compact full-width equal artifact progress columns without invoice-detail copy', async () => {

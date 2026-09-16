@@ -20,6 +20,7 @@ from app.parsers.invoice_detail_excel_row_builder import _to_number, resolve_tax
 from mia_vat_return_export import (MONEY_CELLS, MONEY_NUMBER_FORMAT, OBLIGATION_FORMULAS,
                                    PURCHASE_SHEET_NAME, REDUCTION_SHEET_NAME, SOLD_SHEET_NAME, TEMPLATE_NAME, aggregate_vat_return,
                                    build_vat_return_data, export_vat_return, vat_return_filename,
+                                   vat_return_issues, update_vat_return_issue,
                                    _tax_group, _template_path)
 
 
@@ -406,9 +407,42 @@ class VatReturnExportTests(unittest.TestCase):
             self.assertEqual(raw[address]["format"],"#,##0")
             self.assertNotIn(".",raw[address]["value"])
 
-    def test_unknown_rate_stops_export(self):
+    def test_unknown_rate_is_filed_in_zero_percent_group(self):
         self.invoice("sold","KHAC",100,10)
-        with self.assertRaisesRegex(ValueError,"vat_return_unknown_tax_rate:1"): aggregate_vat_return(self.db,self.tax_code,"2023-10-01","2023-10-31")
+        self.invoice("sold","không rõ",50,None,lines=[{
+            "ten": "Không rõ thuế suất", "tsuat": "không rõ",
+            "thtien": "50", "tthue": None,
+        }])
+        totals = aggregate_vat_return(self.db,self.tax_code,"2023-10-01","2023-10-31")
+        self.assertEqual(totals["0"], Decimal("150"))
+
+    def test_blank_tax_rate_is_filed_in_zero_percent_group(self):
+        self.invoice("sold", None, 100, None, lines=[{
+            "ten": "Không chịu VAT", "tsuat": None,
+            "thtien": "100", "tthue": None,
+        }])
+        totals = aggregate_vat_return(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+        self.assertEqual(totals["0"], Decimal("100"))
+
+    def test_issue_list_can_edit_and_persist_unknown_tax_rate(self):
+        self.invoice("sold", "KHAC", 100, 10)
+        backend = SimpleNamespace(
+            data_root=self.root,
+            connection_tax_code=lambda _id: self.tax_code,
+        )
+        request = {"connection_id": "conn", "date_from": "2023-10-01", "date_to": "2023-10-31"}
+        result = vat_return_issues(backend, request)
+        issue = next(item for item in result["items"] if "Thuế suất" in item["reason"])
+        update_vat_return_issue(backend, {
+            "connection_id": "conn", "source": issue["source"],
+            "record_id": issue["record_id"], "values": {"tsuat": "5%"},
+        })
+        refreshed = vat_return_issues(backend, request)
+        self.assertFalse(any(item["issue_id"] == issue["issue_id"] for item in refreshed["items"]))
+        totals = aggregate_vat_return(self.db, self.tax_code, "2023-10-01", "2023-10-31")
+        self.assertEqual(totals["5_base"], Decimal("100"))
 
     def test_missing_purchase_detail_now_blocks_full_workbook_for_reduction_sheet(self):
         self.invoice("purchase", "10%", 100, 10, save_detail=False)
@@ -419,10 +453,10 @@ class VatReturnExportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"vat_return_coverage_missing"):
                 export_vat_return(backend,{"connection_ids":["conn"],"destination":str(self.root/"out"),"date_from":"2023-10-01","date_to":"2023-10-31"})
 
-    def test_missing_valid_sold_detail_blocks_with_actionable_count(self):
+    def test_missing_valid_sold_detail_is_audited_without_blocking_aggregation(self):
         self.invoice("sold", "10%", 100, 10, save_detail=False)
-        with self.assertRaisesRegex(ValueError, r'vat_return_detail_missing:.*"direction":"sold".*"count":1'):
-            aggregate_vat_return(self.db,self.tax_code,"2023-10-01","2023-10-31")
+        totals = aggregate_vat_return(self.db,self.tax_code,"2023-10-01","2023-10-31")
+        self.assertEqual(totals["10_base"], Decimal("0"))
 
     def test_cancelled_sold_invoice_without_detail_does_not_block(self):
         self.invoice("sold", "10%", 100, 10, status=6, save_detail=False)
@@ -726,12 +760,16 @@ class VatReturnExportTests(unittest.TestCase):
                              for row in range(7,sheet.max_row+1)))
         book.close()
 
-    def test_purchase_missing_required_overview_money_blocks_export(self):
+    def test_purchase_missing_overview_money_is_zero_filled_and_included(self):
         self.invoice("purchase","10%",100,10,save_detail=False,
                      overview_fields={"tgtthue":None,"nbten":"Người bán"})
-        with self.assertRaisesRegex(ValueError,"vat_return_purchase_invalid"):
-            self.export_book("purchase-invalid")
-        self.assertFalse((self.root/"purchase-invalid").exists())
+        report = build_vat_return_data(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+        self.assertEqual(len(report["purchase_items"]), 1)
+        item = report["purchase_items"][0]
+        self.assertEqual((item["base"], item["tax"]), (Decimal("100"), Decimal("0")))
+        self.assertEqual(item["zero_filled_money"], ["tgtthue"])
 
     def test_purchase_null_overview_totals_use_only_balanced_complete_detail(self):
         self.invoice(
@@ -760,7 +798,7 @@ class VatReturnExportTests(unittest.TestCase):
         self.assertEqual(result["audit"]["purchase_base"], "5700000")
         self.assertEqual(result["audit"]["purchase_tax"], "0")
 
-    def test_purchase_null_overview_totals_reject_unbalanced_detail(self):
+    def test_purchase_null_overview_totals_use_zero_when_detail_is_unbalanced(self):
         self.invoice(
             "purchase", "", 5_700_000, 0, query_type="sco-query",
             overview_fields={
@@ -770,10 +808,13 @@ class VatReturnExportTests(unittest.TestCase):
             },
             lines=[("Không cân với tổng thanh toán", "", 5_700_000, 0)],
         )
-        with self.assertRaisesRegex(ValueError, "vat_return_purchase_invalid"):
-            build_vat_return_data(
-                self.db, self.tax_code, "2023-10-01", "2023-10-31",
-            )
+        report = build_vat_return_data(
+            self.db, self.tax_code, "2023-10-01", "2023-10-31",
+        )
+        self.assertEqual(len(report["purchase_items"]), 1)
+        item = report["purchase_items"][0]
+        self.assertEqual((item["base"], item["tax"]), (Decimal("0"), Decimal("0")))
+        self.assertEqual(item["zero_filled_money"], ["tgtcthue", "tgtthue"])
 
     def test_purchase_8_percent_reduction_sheet_uses_one_row_per_canonical_detail_line(self):
         mixed_lines=[
@@ -1021,27 +1062,26 @@ class VatReturnExportTests(unittest.TestCase):
         for value in ("10","10%","0.10","5%","0%","KCT",None,"không xác định"):
             self.assertNotEqual(_tax_group(value),"8",value)
 
-    def test_purchase_reduction_invalid_8_percent_name_or_tax_blocks_export(self):
+    def test_purchase_reduction_missing_name_does_not_block_export(self):
         self.invoice("purchase","8%",200,16,lines=[
             {"ten":"","tsuat":"8%","thtien":"100","tthue":"8"},
             {"ten":"Thiếu tiền thuế","tsuat":"8%","thtien":"100","tthue":None},
         ])
-        with self.assertRaisesRegex(ValueError,r'vat_return_purchase_reduction_invalid:.*"count":2'):
-            build_vat_return_data(self.db,self.tax_code,"2023-10-01","2023-10-31")
+        report = build_vat_return_data(self.db,self.tax_code,"2023-10-01","2023-10-31")
+        self.assertEqual(len(report["purchase_reduction_lines"]), 1)
+        self.assertEqual(report["purchase_reduction_lines"][0]["tax"], Decimal("0"))
 
-    def test_confirmed_incomplete_reduction_preserves_blank_excel_cells(self):
+    def test_blank_reduction_money_is_written_as_zero_without_confirmation(self):
         self.invoice("purchase", "8%", 100, 8, lines=[
             {"ten": "Narrative", "tsuat": "8%", "thtien": None, "tthue": None},
             {"ten": "Goods", "tsuat": "8%", "thtien": "100", "tthue": "8"},
         ])
-        with self.assertRaisesRegex(ValueError, 'vat_return_purchase_reduction_invalid'):
-            self.export_book()
-        result = self.export_book(allow_incomplete=True)
+        result = self.export_book()
         book = load_workbook(result["files"][0], data_only=True)
         sheet = book[REDUCTION_SHEET_NAME]
         narrative = next(row for row in sheet.iter_rows() if row[1].value == "Narrative")
-        self.assertIsNone(narrative[5].value)
-        self.assertIsNone(narrative[6].value)
+        self.assertEqual(narrative[5].value, 0)
+        self.assertEqual(narrative[6].value, 0)
         book.close()
 
     def test_purchase_reduction_empty_period_keeps_empty_part_two_frame(self):

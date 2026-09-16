@@ -706,8 +706,9 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["formats"]["xml"]["processed"], 0)
             self.assertEqual(result["formats"]["html"]["processed"], 0)
             self.assertEqual(result["formats"]["xml"]["skipped"], 1)
+            self.assertEqual(result["formats"]["html"]["skipped"], 1)
             self.assertEqual(result["warning_count"], 0)
-            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 1)
+            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 0)
             coordinator = ArtifactBatchCoordinator(Backend(root), {
                 "destination": str(root / "output-2"), "connection_ids": ["conn_1"],
                 "directions": ["purchase"], "kinds": ["xml", "html"],
@@ -717,10 +718,57 @@ class ArtifactPipelineTests(unittest.TestCase):
             with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
                 coordinator.run()
             failures, total = coordinator.failure_view("conn_1")
-            self.assertEqual(total, 1)
-            self.assertEqual(failures[0]["category"], "missing_original")
-            self.assertEqual(failures[0]["message"], "Không tồn tại hồ sơ gốc")
-            self.assertEqual(failures[0]["affected_formats"], ["html", "xml"])
+            self.assertEqual(total, 0)
+            self.assertEqual(failures, [])
+
+    def test_completed_package_with_empty_xml_and_html_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = {
+                "artifact_key": "purchase|query|0101|AA|1|1",
+                "direction": "purchase", "query_type": "query", "nbmst": "0101",
+                "khhdon": "AA", "shdon": "1", "khmshdon": "1",
+            }
+
+            class Backend(FakeBackend):
+                def artifact_targets_for_export(self, request):
+                    return [target] if request["query_type"] == "query" else []
+
+                def ensure_invoice_packages(self, _request, **kwargs):
+                    kwargs["ready_callback"](target, "completed", "downloaded")
+
+            snapshot = {"accounts": [{
+                "connection_id": "conn_1", "ready": True, "missing_ranges": [],
+                "total": 1, "cached": {"xml": 0, "html": 0, "pdf": 0},
+            }]}
+            empty_xml = root / "empty.xml"
+            empty_html = root / "empty.html"
+            empty_xml.write_bytes(b"")
+            empty_html.write_bytes(b"")
+            with (
+                patch.object(ArtifactInspector, "snapshot", return_value=snapshot),
+                patch(
+                    "mia_artifact_pipeline._package_row",
+                    return_value={
+                        "xml_path": str(empty_xml), "html_path": str(empty_html),
+                    },
+                ),
+            ):
+                coordinator = ArtifactBatchCoordinator(Backend(root), {
+                    "destination": str(root / "output"),
+                    "connection_ids": ["conn_1"], "directions": ["purchase"],
+                    "kinds": ["xml", "html"], "date_from": "2026-01-01",
+                    "date_to": "2026-01-31", "pdf_concurrency": 1,
+                })
+                result = coordinator.run()
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["formats"]["xml"]["failed"], 0)
+            self.assertEqual(result["formats"]["html"]["failed"], 0)
+            self.assertEqual(result["formats"]["xml"]["skipped"], 1)
+            self.assertEqual(result["formats"]["html"]["skipped"], 1)
+            self.assertEqual(result["warning_count"], 0)
+            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 0)
 
     def test_retry_exhausted_package_is_one_structured_terminal_failure(self):
         with tempfile.TemporaryDirectory() as directory:

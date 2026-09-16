@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -6,10 +6,10 @@ const { ensureDeviceIdentity } = require('./device-identity.cjs');
 const { collectDeviceEvidence } = require('./license/hardware-profile.cjs');
 const { createLicenseApi } = require('./license/license-api.cjs');
 const { LicenseManager } = require('./license/license-manager.cjs');
-const { createLicenseRequestGuard } = require('./license/entitlements.cjs');
+const { createLicenseRequestGuard, isLicenseDataRequest } = require('./license/entitlements.cjs');
 const { createProtectedLicenseStore } = require('./license/protected-license-store.cjs');
 const { isLicenseAccessGranted, licenseRequiredError } = require('./license/access-control.cjs');
-const { isTrustedAppUrl } = require('./security-policy.cjs');
+const { GUIDE_VIDEO_EMBED_PREFIX, guideVideoRequestHeaders, isTrustedAppUrl } = require('./security-policy.cjs');
 const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
 const { createOfflineAuthManager } = require('./offline-auth.cjs');
@@ -342,6 +342,16 @@ ipcMain.handle('mia:artifacts:vat-return-coverage', (event, request) => {
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
   return artifactBroker.vatReturnCoverage(request);
 });
+ipcMain.handle('mia:artifacts:vat-return-issues', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.vatReturnIssues(request);
+});
+ipcMain.handle('mia:artifacts:vat-return-issue-update', (event, request) => {
+  assertTrustedSender(event);
+  if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
+  return artifactBroker.vatReturnIssueUpdate(request);
+});
 ipcMain.handle('mia:artifacts:vat-return-export', (event, request) => {
   assertTrustedSender(event);
   if (!artifactBroker) artifactBroker = createArtifactBroker(() => offlineRuntime);
@@ -397,7 +407,21 @@ for (const [channel, method] of [['mia:updates:status', 'status'], ['mia:updates
   ipcMain.handle(channel, (event, ...args) => { assertTrustedSender(event); return releaseUpdater[method](...args); });
 }
 function localAccounts() {
-  if (!localAccountBroker) localAccountBroker = createLocalAccountBroker(() => offlineRuntime, secureProtector());
+  if (!localAccountBroker) localAccountBroker = createLocalAccountBroker(
+    () => offlineRuntime,
+    async (username) => {
+      // A server-side VIP -> VIP1/TEST policy change must take effect without
+      // relying on a desktop restart or a stale encrypted license snapshot.
+      const state = await licenses().verifyTaxCode(username);
+      if (['mst_not_authorized', 'mst_limit_reached', 'invalid_mst'].includes(state.reason)) {
+        throw Object.assign(new Error('MST is not licensed.'), { code: 'license_tax_code_denied' });
+      }
+      const guard = createLicenseRequestGuard(() => state);
+      await guard('source.accounts.create', { username }, async () => {
+        throw new Error('unexpected_account_lookup');
+      });
+    },
+  );
   return localAccountBroker;
 }
 function results() {
@@ -444,7 +468,16 @@ for (const [channel, method] of [['mia:results:materialStart', 'materialStart'],
 function ensureOfflineRuntimeStarted() {
   if (!offlineRuntime) {
     offlineRuntime = new OfflineRuntimeManager({
-      authorizeRequest: createLicenseRequestGuard(() => licenses().status()),
+      authorizeRequest: async (method, params, call) => {
+        // Refresh server policy before every protected data operation. Account
+        // create/reconnect already refresh at the outer broker boundary, then
+        // pass through this guard as a second independent MST check.
+        if (isLicenseDataRequest(method)
+            && !['source.accounts.create', 'source.accounts.reconnect'].includes(method)) {
+          await licenses().initialize();
+        }
+        return createLicenseRequestGuard(() => licenses().status())(method, params, call);
+      },
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
@@ -490,6 +523,15 @@ if (!hasSingleInstanceLock) {
 
   void app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    // YouTube rejects embedded playback from Electron's file:// origin with
+    // player error 153 unless the initial embed request identifies the app.
+    // Scope the override to the single privacy-enhanced embed endpoint only.
+    session.defaultSession.webRequest.onBeforeSendHeaders(
+      { urls: [`${GUIDE_VIDEO_EMBED_PREFIX}*`] },
+      (details, callback) => callback({
+        requestHeaders: guideVideoRequestHeaders(details.url, details.requestHeaders),
+      }),
+    );
     electronLog().info('app_ready', {
       app_version: app.getVersion(),
       electron_version: process.versions.electron,

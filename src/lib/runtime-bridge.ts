@@ -52,6 +52,9 @@ export interface LicenseDetails {
   phone: string | null;
   phone_status: 'verified' | 'legacy' | 'pending' | null;
   expires_at: string | null;
+  activated_at?: string | null;
+  plan?: string | null;
+  max_tax_codes?: number | null;
   device_bound: boolean;
   canonical_key: string | null;
   reason: string | null;
@@ -117,6 +120,8 @@ export interface MiaRuntimeBridge {
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     coverage(request: ArtifactSnapshotRequest): Promise<ArtifactCoverage>;
     vatReturnCoverage(request: VatReturnCoverageRequest): Promise<VatReturnCoverage>;
+    vatReturnIssues(request: VatReturnIssuesRequest): Promise<VatReturnIssueList>;
+    vatReturnIssueUpdate(request: VatReturnIssueUpdateRequest): Promise<{ saved: boolean; issue_id: string }>;
     vatReturnExport(request: VatReturnExportRequest): Promise<VatReturnExportResult>;
     snapshot(request: ArtifactSnapshotRequest): Promise<ArtifactSnapshot>;
     startBatch(request: ArtifactBatchRequest): Promise<{ task_id: string; status: string }>;
@@ -194,6 +199,11 @@ export interface VatReturnDirectionCoverage { direction: InvoiceDirection; overv
 export interface VatReturnCoverageAccount { connection_id: string; purchase: VatReturnDirectionCoverage; sold: VatReturnDirectionCoverage }
 export interface VatReturnCoverageRequest { connection_ids: string[]; date_from: string; date_to: string }
 export interface VatReturnCoverage extends VatReturnCoverageRequest { accounts: VatReturnCoverageAccount[] }
+export interface VatReturnIssueField { name: string; label: string; value: string }
+export interface VatReturnIssue { issue_id: string; source: 'overview' | 'detail'; record_id: number; direction: InvoiceDirection; invoice_number: string; invoice_date: string; reason: string; fields: VatReturnIssueField[] }
+export interface VatReturnIssuesRequest { connection_id: string; date_from: string; date_to: string }
+export interface VatReturnIssueList { connection_id: string; items: VatReturnIssue[]; total: number }
+export interface VatReturnIssueUpdateRequest { connection_id: string; source: 'overview' | 'detail'; record_id: number; values: Record<string, string> }
 export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string; allow_incomplete?: boolean }
 export interface VatReturnReductionAnomaly {
   canonical_invoice_identity: string;

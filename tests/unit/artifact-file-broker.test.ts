@@ -5,7 +5,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest, validateVatReturnCoverageRequest, validateVatReturnExportRequest } = require('../../electron/artifact-file-broker.cjs');
+const { atomicWrite, createArtifactBroker, resolveInside, validateArtifactName, validateExportRequest, validateListRequest, validateArtifactSnapshotRequest, validateArtifactBatchRequest, validateVatReturnCoverageRequest, validateVatReturnExportRequest, validateVatReturnIssuesRequest, validateVatReturnIssueUpdate } = require('../../electron/artifact-file-broker.cjs');
 
 describe('artifact filesystem boundary', () => {
   it.each(['../escape.xml', 'C:\\escape.xml', 'CON.pdf', 'name.exe', 'a/b.html'])('rejects unsafe name %s', (name) => {
@@ -264,6 +264,13 @@ describe('artifact filesystem boundary', () => {
     const runtime = { invoke: vi.fn().mockResolvedValue({ ...request, accounts: [] }) };
     await expect(createArtifactBroker(() => runtime).vatReturnCoverage(request)).resolves.toMatchObject({ ok: true });
     expect(runtime.invoke).toHaveBeenCalledWith('artifacts.vat_return.coverage', request, { timeoutMs: 30000 });
+  });
+
+  it('validates VAT issue reads and field-whitelisted updates', () => {
+    const request = { connection_id: 'conn_1', date_from: '2026-01-01', date_to: '2026-03-31' };
+    expect(validateVatReturnIssuesRequest(request)).toEqual(request);
+    expect(validateVatReturnIssueUpdate({ connection_id: 'conn_1', source: 'detail', record_id: 7, values: { tsuat: '5%' } })).toEqual({ connection_id: 'conn_1', source: 'detail', record_id: 7, values: { tsuat: '5%' } });
+    expect(() => validateVatReturnIssueUpdate({ connection_id: 'conn_1', source: 'detail', record_id: 7, values: { dangerous_column: 'x' } })).toThrow();
   });
 
   it('validates and forwards one VAT return workbook export', async () => {

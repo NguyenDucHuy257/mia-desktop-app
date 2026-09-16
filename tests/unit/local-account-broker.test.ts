@@ -51,4 +51,33 @@ describe('local account broker', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid_credentials' } });
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it('refreshes and enforces the licensed MST before contacting the portal', async () => {
+    const invoke = vi.fn();
+    const authorizeUsername = vi.fn(async (username: string) => {
+      if (username !== '0977030925') {
+        throw Object.assign(new Error('denied'), { code: 'license_tax_code_denied' });
+      }
+    });
+    const broker = createLocalAccountBroker(() => ({ invoke }), authorizeUsername);
+    const denied = await broker.create({ username: '0101234567', password: 'portal-password' });
+    expect(denied).toMatchObject({ ok: false, error: { code: 'license_tax_code_denied' } });
+    expect(authorizeUsername).toHaveBeenCalledWith('0101234567');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('applies the same licensed-MST check when reconnecting an account', async () => {
+    const invoke = vi.fn();
+    const authorizeUsername = vi.fn(async () => {
+      throw Object.assign(new Error('denied'), { code: 'license_tax_code_denied' });
+    });
+    const broker = createLocalAccountBroker(() => ({ invoke }), authorizeUsername);
+    const denied = await broker.reconnect(
+      'conn_account_1',
+      { username: '0240590044', password: 'portal-password' },
+    );
+    expect(denied).toMatchObject({ ok: false, error: { code: 'license_tax_code_denied' } });
+    expect(authorizeUsername).toHaveBeenCalledWith('0240590044');
+    expect(invoke).not.toHaveBeenCalled();
+  });
 });

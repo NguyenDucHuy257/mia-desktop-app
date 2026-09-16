@@ -14,4 +14,12 @@ function isTrustedAppUrl(candidateUrl, { devServerUrl, productionEntryUrl }) {
   }
 }
 
-module.exports = { isTrustedAppUrl };
+const GUIDE_VIDEO_EMBED_PREFIX = 'https://www.youtube-nocookie.com/embed/';
+const GUIDE_VIDEO_REFERRER = 'https://gotax.vn/';
+
+function guideVideoRequestHeaders(url, requestHeaders = {}) {
+  if (typeof url !== 'string' || !url.startsWith(GUIDE_VIDEO_EMBED_PREFIX)) return requestHeaders;
+  return { ...requestHeaders, Referer: GUIDE_VIDEO_REFERRER };
+}
+
+module.exports = { GUIDE_VIDEO_EMBED_PREFIX, guideVideoRequestHeaders, isTrustedAppUrl };

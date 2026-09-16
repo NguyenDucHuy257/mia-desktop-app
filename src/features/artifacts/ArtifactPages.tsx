@@ -56,7 +56,7 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
   const isLogs = title === 'Nhật ký';
   const isPausedHistory = title === 'Lịch sử tải xuống';
   const isGuide = title === 'Hướng dẫn sử dụng';
-  const isComingSoon = isGuide || isPausedHistory || title === 'Tra cứu MVT' || title === 'Tra cứu PDF gốc';
+  const isComingSoon = isPausedHistory || title === 'Tra cứu MVT' || title === 'Tra cứu PDF gốc';
 
   useEffect(() => {
     if (isSettings) void window.miaRuntime?.preferences?.get().then((value) => {
@@ -146,6 +146,10 @@ export function UtilityPage({ title, description, onPdfConcurrencyChange }: {
         <div><strong>{logTitle(entry)}</strong><span>{formatTimestamp(entry.timestamp)} · {entry.source}</span>{entry.details ? <pre>{entry.details}</pre> : null}</div>
         <div className="utility-log-meta"><code>{entry.event}</code>{entry.level === 'error' ? <button type="button" onClick={() => void copyLog(entry)}>Sao chép lỗi</button> : null}</div>
       </article>)}</div> : <div className="utility-empty"><strong>Chưa có nhật ký phù hợp</strong><span>Lịch sử đăng nhập, đồng bộ, tải dữ liệu và lỗi kỹ thuật sẽ xuất hiện tại đây.</span></div>}
+    </div> : isGuide ? <div className="utility-panel guide-video-card">
+      <div><h2>Video hướng dẫn sử dụng MIA TOOL 2026</h2><p>Xem trực tiếp hoặc mở toàn màn hình để thao tác theo từng bước.</p></div>
+      <div className="guide-video-frame"><iframe title="Hướng dẫn sử dụng MIA TOOL 2026" src="https://www.youtube-nocookie.com/embed/17FEQpNv4Tw?origin=https%3A%2F%2Fgotax.vn" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerPolicy="strict-origin-when-cross-origin" allowFullScreen /></div>
+      <button className="guide-video-external" type="button" onClick={() => void window.miaRuntime?.external.open('https://www.youtube.com/watch?v=17FEQpNv4Tw')}>Mở video trên YouTube</button>
     </div> : <div className="utility-panel"><div className="utility-empty"><strong>{isComingSoon ? 'Chức năng đang cập nhật' : 'Chưa có dữ liệu'}</strong></div></div>}
     {message ? <NoticeDialog kind={message.startsWith('Đã ') ? 'success' : 'notice'} message={message} onClose={() => setMessage(null)} /> : null}
   </section>;

@@ -5,6 +5,7 @@ const path = require('node:path');
 const PROFILE_FILE = 'device-profile.bin';
 const LICENSE_FILE = 'license-state.bin';
 const MIGRATION_FILE = 'migration-state.json';
+const FIRST_USE_FILE = 'first-use.txt';
 
 function atomicWrite(filename, content, mode = 0o600) {
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
@@ -53,6 +54,27 @@ function createProtectedLicenseStore(directory, protector) {
     saveProfile: (profile) => writeEncrypted(PROFILE_FILE, profile),
     loadLicense: () => readEncrypted(LICENSE_FILE, 'license_state_corrupt'),
     saveLicense: (license) => writeEncrypted(LICENSE_FILE, license),
+    loadFirstUseDate() {
+      const filename = encryptedPath(FIRST_USE_FILE);
+      if (!fs.existsSync(filename)) return null;
+      const value = fs.readFileSync(filename, 'utf8').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const error = new Error('first_use_date_corrupt');
+        error.code = 'first_use_date_corrupt';
+        throw error;
+      }
+      return value;
+    },
+    saveFirstUseDate(value) {
+      const normalized = String(value || '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+        throw new TypeError('invalid_first_use_date');
+      }
+      const existing = this.loadFirstUseDate();
+      if (existing) return existing;
+      atomicWrite(encryptedPath(FIRST_USE_FILE), Buffer.from(`${normalized}\n`, 'utf8'));
+      return normalized;
+    },
     loadMigrationState() {
       const filename = encryptedPath(MIGRATION_FILE);
       if (!fs.existsSync(filename)) return null;

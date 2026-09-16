@@ -312,6 +312,51 @@ describe('MIA shared-key-server client', () => {
     expect((verifyKeyV2 as any).mock.calls[0][0].key).toBe(saved.canonical_key);
   });
 
+  it('refreshes an in-session VIP policy instead of reusing stale entitlements', async () => {
+    const deviceId = 'policy-refresh-device';
+    const phone = '0981234567';
+    const profile = { version: 3, device_id: deviceId, phone, hardware: evidence().hardware };
+    const verifyKeyV2 = vi.fn()
+      .mockResolvedValueOnce(activeResponse(deviceId, { phone }))
+      .mockResolvedValueOnce(activeResponse(deviceId, {
+        phone,
+        entitlements: {
+          version: 1, plan: 'VIP1', trial: false, max_tax_codes: 1,
+          allowed_tax_codes: ['0240590043'], date_from: null, date_to: null,
+        },
+      }));
+    const setup = manager({
+      currentVersion: '4.0.8', store: memoryStore(null, profile), api: api({ verifyKeyV2 }),
+    });
+
+    expect((await setup.instance.initialize()).entitlements.plan).toBe('V');
+    expect((await setup.instance.initialize()).entitlements).toMatchObject({
+      plan: 'VIP1', max_tax_codes: 1, allowed_tax_codes: ['0240590043'],
+    });
+    expect(verifyKeyV2).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks the server to authorize the exact MST before account access', async () => {
+    const deviceId = 'operation-mst-device';
+    const phone = '0981234567';
+    const profile = { version: 3, device_id: deviceId, phone, hardware: evidence().hardware };
+    const verifyKeyV2 = vi.fn(async (payload: any) => payload.mst === '0240590043'
+      ? activeResponse(deviceId, {
+        phone, authorized: true, mst_authorized: true,
+        entitlements: { version: 1, plan: 'VIP1', trial: false, max_tax_codes: 1, allowed_tax_codes: ['0240590043'], date_from: null, date_to: null },
+      })
+      : { valid: false, expired: false, reason: 'mst_not_authorized', authorized: false, mst_authorized: false });
+    const setup = manager({
+      currentVersion: '4.0.8', store: memoryStore(null, profile), api: api({ verifyKeyV2 }),
+    });
+
+    expect((await setup.instance.verifyTaxCode('0240590043')).state).toBe('active');
+    expect((verifyKeyV2 as any).mock.calls[0][0]).toMatchObject({
+      tool: 'MIA', mst: '0240590043', current_version: '4.0.8',
+    });
+    expect((await setup.instance.verifyTaxCode('0240590044')).reason).toBe('mst_not_authorized');
+  });
+
   it('syncs the canonical device id returned by shared-server hardware recovery', async () => {
     const temporaryId = 'e2fe4915-ed2e-443d-9316-ef58e0bbed5a';
     const canonicalId = 'ec655b34-dd87-4271-ac69-7c46c197e7df';

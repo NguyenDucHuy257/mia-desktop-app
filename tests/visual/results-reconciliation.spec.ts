@@ -60,8 +60,8 @@ test('reconciliation tab shows full-scope warning data in the compact native res
   await page.getByRole('button', { name: 'Xem kết quả' }).click();
   const tab = page.getByRole('tab', { name: /Đối chiếu Tổng quan & Chi tiết/ });
   await expect(tab).toBeVisible();
-  await expect(tab.locator('.results-reconciliation-indicator')).toHaveCount(1);
   await tab.click();
+  await expect(tab.locator('.results-reconciliation-indicator')).toHaveCount(1);
   await expect(page.locator('.results-reconciliation-summary')).toContainText('Dữ liệu hiện có:');
   await expect(page.locator('.results-reconciliation-summary')).toContainText('Tổng quan: 1.960 hóa đơn · Chi tiết: 1.767 hóa đơn');
   await expect(page.locator('.results-reconciliation-summary')).toContainText('Chênh lệch dữ liệu hiện có: +193 hóa đơn');

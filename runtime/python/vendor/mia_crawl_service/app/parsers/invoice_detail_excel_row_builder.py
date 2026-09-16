@@ -180,8 +180,12 @@ class InvoiceDetailExcelRowBuilder:
         )
         signed_date = format_vietnamese_date(data_ct.get('nky')) or created_date
         invoice_status = _mapped_status(data_ct.get('tthai'), INVOICE_STATUS_LABELS)
+        # Some detail payloads omit ttxly although the persisted overview row
+        # contains it. Preserve the source result instead of exporting a blank
+        # "Kết quả kiểm tra hóa đơn" column.
         processing_status = _mapped_status(
-            data_ct.get('ttxly'), PROCESSING_STATUS_LABELS
+            data_ct.get('ttxly') if data_ct.get('ttxly') not in (None, '') else detail_record.get('ttxly'),
+            PROCESSING_STATUS_LABELS,
         )
         search_code = extract_search_code(data_ct)
         adjustment_note = build_adjustment_note(data_ct)

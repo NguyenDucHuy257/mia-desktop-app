@@ -5,14 +5,15 @@ const require = createRequire(import.meta.url);
 const { MAX_RESULT_CURSOR_LENGTH, createResultBroker, validateQuery } = require('../../electron/result-broker.cjs');
 
 describe('result IPC broker', () => {
-  it('normalizes safe cursor queries and enforces 50 rows per page', () => {
+  it('normalizes safe cursor queries and supports the all-rows page option', () => {
     expect(validateQuery({ connection_id: 'account-1' })).toEqual({
       connection_id: 'account-1', cursor: null, limit: 50, search: '', direction: null,
       query_type: null, query_types: null, date_from: null, date_to: null,
       column_filters: {}, exclusion: { keys: [], rules: [] }, sort: null,
     });
     expect(validateQuery({ connection_id: 'account-1', limit: 50 }).limit).toBe(50);
-    expect(() => validateQuery({ connection_id: 'account-1', limit: 51 })).toThrow();
+    expect(validateQuery({ connection_id: 'account-1', limit: 10000 }).limit).toBe(10000);
+    expect(() => validateQuery({ connection_id: 'account-1', limit: 10001 })).toThrow();
     expect(() => validateQuery({ connection_id: 'account-1', offset: 10 })).toThrow();
     expect(() => validateQuery({ connection_id: '../bad' })).toThrow();
   });

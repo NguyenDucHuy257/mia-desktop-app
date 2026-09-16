@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     list: (request) => invokeResult('mia:artifacts:list', request),
     coverage: (request) => invokeResult('mia:artifacts:coverage', request),
     vatReturnCoverage: (request) => invokeResult('mia:artifacts:vat-return-coverage', request),
+    vatReturnIssues: (request) => invokeResult('mia:artifacts:vat-return-issues', request),
+    vatReturnIssueUpdate: (request) => invokeResult('mia:artifacts:vat-return-issue-update', request),
     vatReturnExport: (request) => invokeResult('mia:artifacts:vat-return-export', request),
     snapshot: (request) => invokeResult('mia:artifacts:snapshot', request),
     startBatch: (request) => invokeResult('mia:artifacts:batch-start', request),

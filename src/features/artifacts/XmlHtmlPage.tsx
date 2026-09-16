@@ -17,6 +17,7 @@ import '../../styles/results-enhancements.css';
 import '../../styles/results-luxury.css';
 
 const ACCOUNT_PAGE_SIZE = 20;
+const ALL_ACCOUNT_ROWS = 1_000_000;
 type RowStatus = 'checking' | 'ready' | 'not_ready' | 'downloading' | 'completed' | 'error' | 'stopped';
 
 export interface ArtifactSelectionState {
@@ -84,6 +85,7 @@ function ProgressCard({ kind, lifecycle }: { kind: InvoiceArtifactKind; lifecycl
 }
 
 const FAILURE_PAGE_SIZE = 50;
+const ALL_FAILURE_ROWS = 10000;
 
 function failureDate(value: string) {
   const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -98,10 +100,11 @@ function ArtifactFailureView({ account, lifecycle, onBack }: {
   const [items, setItems] = useState<ArtifactFailureRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(FAILURE_PAGE_SIZE);
   const [loading, setLoading] = useState(true);
   const taskId = lifecycle.status?.task_id;
   const failureCount = lifecycle.status?.accounts[account.connection_id]?.failure_count ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / FAILURE_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.min(page, totalPages);
   const tokens = paginationTokens(totalPages, currentPage);
 
@@ -111,7 +114,7 @@ function ArtifactFailureView({ account, lifecycle, onBack }: {
     setLoading(true);
     void window.miaRuntime!.artifacts.batchFailures({
       task_id: taskId, connection_id: account.connection_id,
-      offset: (currentPage - 1) * FAILURE_PAGE_SIZE, limit: FAILURE_PAGE_SIZE,
+      offset: (currentPage - 1) * pageSize, limit: pageSize,
     }).then((result) => {
       if (!current) return;
       setItems(result.items);
@@ -119,11 +122,11 @@ function ArtifactFailureView({ account, lifecycle, onBack }: {
       setLoading(false);
     }).catch(() => { if (current) setLoading(false); });
     return () => { current = false; };
-  }, [account.connection_id, currentPage, failureCount, taskId]);
+  }, [account.connection_id, currentPage, failureCount, pageSize, taskId]);
 
   const gridTemplateColumns = '140px 150px 150px 150px 180px 220px 150px minmax(300px, 1fr)';
-  const first = total ? (currentPage - 1) * FAILURE_PAGE_SIZE + 1 : 0;
-  const last = Math.min(total, currentPage * FAILURE_PAGE_SIZE);
+  const first = total ? (currentPage - 1) * pageSize + 1 : 0;
+  const last = Math.min(total, currentPage * pageSize);
   return <section className="results-page results-page--figma artifact-failure-page" aria-label="Xem kết quả tải hóa đơn">
     <button className="results-back" type="button" onClick={onBack}><img src={backIcon} alt="" /> Quay lại XML/HTML/PDF</button>
     <header className="results-header results-header--figma"><div><h1>Xem kết quả</h1><p>{account.username} · {account.company_name || 'Chưa có tên công ty'}</p></div></header>
@@ -132,7 +135,7 @@ function ArtifactFailureView({ account, lifecycle, onBack }: {
       {items.map((item) => <div className="results-row" style={{ gridTemplateColumns }} key={item.invoice_key}><span>{failureDate(item.date)}</span><span>{item.khmshdon || '—'}</span><span>{item.khhdon || '—'}</span><span>{item.shdon || '—'}</span><span>{item.nbmst || '—'}</span><span title={item.partner_name}>{item.partner_name || '—'}</span><span>{item.affected_formats.map((kind) => kind.toUpperCase()).join(', ')}</span><span title={item.message}>{item.message || 'Không thể tạo file'}</span></div>)}
       {loading ? <div className="results-state" role="status">Đang tải danh sách...</div> : !items.length ? <div className="results-state results-empty">Không có hóa đơn không tạo được file.</div> : null}
     </div>
-    <footer className="results-pager artifact-pager"><span>Hiển thị {first}–{last} trên tổng {total} hóa đơn</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
+    <footer className="results-pager artifact-pager"><label className="results-page-size">Số dòng/trang: <select aria-label="Số dòng lỗi mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_FAILURE_ROWS}>Toàn bộ</option></select></label><span>Hiển thị {first}–{last} trên tổng {total} hóa đơn</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
   </section>;
 }
 
@@ -158,6 +161,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(ACCOUNT_PAGE_SIZE);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [failureAccountId, setFailureAccountId] = useState<string | null>(null);
   const generation = useRef(0);
@@ -248,7 +252,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${account.username} ${account.company_name ?? ''}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || status === statusFilter);
   });
-  const { currentPage, totalPages, start, end } = pageBounds(filteredRows.length, page, ACCOUNT_PAGE_SIZE);
+  const { currentPage, totalPages, start, end } = pageBounds(filteredRows.length, page, pageSize);
   const pageRows = filteredRows.slice(start, end);
   const tokens = paginationTokens(totalPages, currentPage);
   const filteredIds = filteredRows.map((row) => row.account.connection_id);
@@ -312,7 +316,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
         })}</div>
         {snapshotState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{snapshotState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra trạng thái tải xuống.</div> : null}{snapshotState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
       </div>
-      <footer className="pagination"><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
+      <footer className="pagination"><label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_ACCOUNT_ROWS}>Toàn bộ</option></select></label><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
     </section>
     {(feedback || lifecycle.message) ? <NoticeDialog kind={lifecycle.status?.status === 'completed' ? 'success' : 'notice'} message={feedback || lifecycle.message || ''} onClose={() => { setFeedback(null); lifecycle.clearMessage(); }} /> : null}
   </section>;

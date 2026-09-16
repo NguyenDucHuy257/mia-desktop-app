@@ -14,6 +14,10 @@ const copy: Record<string, { title: string; description: string }> = {
 };
 
 const reasonCopy: Record<string, { title: string; description: string }> = {
+  client_update_required: {
+    title: 'Cần cập nhật MIA TOOL 2026',
+    description: 'Key giới hạn VIP/TEST yêu cầu phiên bản 4.0.8 trở lên để bảo đảm đúng phạm vi MST. Vui lòng cài bản mới trước khi tiếp tục.',
+  },
   license_policy_missing: {
     title: 'Máy chủ chưa trả quyền sử dụng',
     description: 'Cần cập nhật máy chủ bản quyền để trả giới hạn MST và thời gian. Key đang có vẫn được giữ nguyên, không cần cấp lại.',

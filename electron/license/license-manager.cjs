@@ -118,13 +118,18 @@ class LicenseManager {
   details() {
     const details = this.current.details || {};
     let saved = null;
+    let firstUseDate = null;
     try { saved = this.store.loadLicense(); } catch { saved = null; }
+    try { firstUseDate = this.store.loadFirstUseDate?.() || null; } catch { firstUseDate = null; }
     return {
       state: this.current.state,
       active: this.current.active,
       phone: maskPhone(details.phone),
       phone_status: details.phone_status || null,
       expires_at: details.expires_at || null,
+      activated_at: firstUseDate || details.activated_at || null,
+      plan: details.plan || saved?.entitlements?.plan || null,
+      max_tax_codes: details.max_tax_codes ?? saved?.entitlements?.max_tax_codes ?? null,
       device_bound: Boolean(details.device_id),
       canonical_key: maskKey(saved?.canonical_key || details.canonical_key),
       reason: this.current.reason || null,
@@ -184,6 +189,12 @@ class LicenseManager {
       throw Object.assign(new Error('active license response is incomplete'), { code: 'invalid_response' });
     }
     const phone = normalizePhone(response.phone) || this.profile.phone || null;
+    let firstUseDate = null;
+    try { firstUseDate = this.store.loadFirstUseDate?.() || null; } catch { firstUseDate = null; }
+    if (!firstUseDate) {
+      firstUseDate = this.now().toISOString().slice(0, 10);
+      firstUseDate = this.store.saveFirstUseDate?.(firstUseDate) || firstUseDate;
+    }
     this.profile = {
       ...this.profile,
       version: 3,
@@ -201,6 +212,7 @@ class LicenseManager {
       phone,
       phone_status: response.phone_status || (phone ? 'verified' : 'pending'),
       expires_at: response.expires_at || null,
+      activated_at: firstUseDate,
       last_verified_at: this.now().toISOString(),
       source,
       entitlements,
@@ -217,6 +229,9 @@ class LicenseManager {
         phone,
         phone_status: response.phone_status || (phone ? 'verified' : 'pending'),
         expires_at: response.expires_at || null,
+        activated_at: firstUseDate,
+        plan: entitlements.plan,
+        max_tax_codes: entitlements.max_tax_codes,
       },
     });
     return this.current;
@@ -248,6 +263,52 @@ class LicenseManager {
     if (this.inFlight) return this.inFlight;
     this.inFlight = this.initializeOnce().finally(() => { this.inFlight = null; });
     return this.inFlight;
+  }
+
+  async verifyTaxCode(value) {
+    if (!this.enabled) return this.current;
+    const mst = String(value || '').trim();
+    try {
+      if (!this.identity || !this.evidence || !this.profile) await this.prepareLocalState();
+      let saved;
+      try { saved = this.store.loadLicense(); } catch (error) {
+        this.current = safeState('error', { reason: error.code || 'license_state_corrupt' });
+        return this.current;
+      }
+      const phone = normalizePhone(saved?.phone)
+        || normalizePhone(this.profile?.phone)
+        || this.detection?.phones?.[0]
+        || null;
+      if (!phone) {
+        this.current = safeState('error', { reason: 'license_policy_missing' });
+        return this.current;
+      }
+      const response = await this.api.verifyKeyV2({
+        ...this.requestPayload({
+          phone,
+          legacyKeys: this.detection?.exact_key_candidates || [],
+        }),
+        mst,
+      });
+      this.log('license_operation_verify_response', { ...responseDiagnostic(response), has_mst: Boolean(mst) });
+      if (responseGrantsLicense(response) && response.authorized !== false && response.mst_authorized !== false) {
+        return this.persistActive(response, response.migrated
+          ? 'legacy_migration'
+          : response.recovered ? 'device_recovery' : 'v2_verify');
+      }
+      this.current = safeState('error', {
+        valid: false,
+        expired: Boolean(response?.expired),
+        reason: String(response?.reason || 'license_policy_missing'),
+      });
+      return this.current;
+    } catch (error) {
+      this.log('license_operation_verify_failed', {
+        code: error.code || 'license_request_failed', error_type: error?.name || 'Error',
+      });
+      this.current = safeState('error', { valid: false, expired: false, reason: 'license_policy_missing' });
+      return this.current;
+    }
   }
 
   async initializeOnce() {

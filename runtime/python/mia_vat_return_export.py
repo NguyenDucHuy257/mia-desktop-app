@@ -96,6 +96,8 @@ def _decimal_exact(value: Any, field: str) -> Decimal:
         return Decimal(value)
     text = unicodedata.normalize("NFKC", str(value)).strip()
     text = re.sub(r"[\s\u00a0]", "", text)
+    if not text:
+        return Decimal(0)
     if "," in text and "." in text:
         decimal_separator = "," if text.rfind(",") > text.rfind(".") else "."
         grouping_separator = "." if decimal_separator == "," else ","
@@ -594,7 +596,7 @@ def _excluded_status(value: Any) -> bool:
     return invoice_status_is_excluded(value)
 
 
-def _tax_group(value: Any) -> str | None:
+def _classified_tax_group(value: Any) -> str | None:
     text = _normalized_text(value)
     semantic = text.replace(" ", "")
     if semantic in {"kct", "khôngchịuthuế", "khongchiuthue"}: return "kct"
@@ -613,6 +615,11 @@ def _tax_group(value: Any) -> str | None:
     if percent == 8: return "8"
     if percent == 10: return "10"
     return None
+
+
+def _tax_group(value: Any) -> str:
+    """Map every absent/unrecognised source tax-rate to the 0% bucket."""
+    return _classified_tax_group(value) or "0"
 
 
 def _attributes(connection: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
@@ -928,6 +935,7 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                 except ValueError:
                     required_missing.append("ngày lập không hợp lệ")
                 totals_source = "overview"
+                recovered_detail_id = None
                 missing_money = [
                     field_name for field_name in ("tgtcthue", "tgtthue")
                     if fields.get(field_name) in (None, "")
@@ -946,9 +954,16 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                         totals_source = "detail_verified_fallback"
                     else:
                         recovered_detail_id = None
+                # Empty monetary cells mean zero. Keep the verified-detail
+                # fallback above when it is available; otherwise normalize all
+                # overview totals to zero and retain the invoice in aggregation.
+                zero_filled_money = []
                 for field_name in ("tgtcthue", "tgtthue"):
                     if fields.get(field_name) in (None, ""):
-                        required_missing.append(field_name)
+                        fields[field_name] = Decimal(0)
+                        zero_filled_money.append(field_name)
+                if zero_filled_money and totals_source == "overview":
+                    totals_source = "overview_zero_filled"
                 if required_missing:
                     invalid_purchase.append({
                         "identity": masked_invoice_identity(identity),
@@ -990,6 +1005,7 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "status_normalized": _normalized_text(fields.get("tthai")),
                     "totals_source": totals_source,
                     "totals_detail_id": recovered_detail_id if totals_source != "overview" else None,
+                    "zero_filled_money": zero_filled_money,
                 }
                 purchase_items.append(item)
                 eligible_purchase_parents[identity] = (row, fields)
@@ -1008,6 +1024,7 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "exported": True,
                     "reason": "" if totals_source == "overview" else totals_source,
                     "totals_source": totals_source,
+                    "zero_filled_money": zero_filled_money,
                 })
                 for duplicate_row, duplicate_fields in eligible[1:]:
                     purchase_audit.append({
@@ -1260,10 +1277,6 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                 missing_fields = []
                 if not audit_item["name"]:
                     missing_fields.append("tên hàng hóa, dịch vụ")
-                if raw_base in (None, ""):
-                    missing_fields.append("thtien")
-                if raw_tax in (None, ""):
-                    missing_fields.append("tthue")
                 if missing_fields:
                     invalid_purchase_reduction_lines.append({
                         "parent_invoice_identity": masked_invoice_identity(identity),
@@ -1284,7 +1297,12 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "khhdon": str(parent_row["khhdon"] or ""),
                     "shdon": str(parent_row["shdon"] or ""),
                     "name": audit_item["name"], "base": base, "tax": tax,
-                    "base_blank": raw_base in (None, ""), "tax_blank": raw_tax in (None, ""),
+                    "base_blank": False, "tax_blank": False,
+                    "zero_filled_money": [
+                        field_name for field_name, raw_value in
+                        (("thtien", raw_base), ("tthue", raw_tax))
+                        if raw_value in (None, "")
+                    ],
                     "difference_from_8_percent": difference,
                 }
                 purchase_reduction_lines.append(output)
@@ -1297,26 +1315,8 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "identity": masked_invoice_identity(identity),
                     "shdon_masked": "*" * max(0, len(number) - 3) + number[-3:],
                 })
-    if invalid_purchase:
-        raise ValueError('vat_return_purchase_invalid:' + json.dumps({
-            'direction': 'purchase', 'count': len(invalid_purchase),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': invalid_purchase[:5],
-        }, ensure_ascii=False, separators=(',', ':')))
-    if invalid_purchase_reduction_lines and not allow_incomplete:
-        raise ValueError('vat_return_purchase_reduction_invalid:' + json.dumps({
-            'direction': 'purchase', 'count': len(invalid_purchase_reduction_lines),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': invalid_purchase_reduction_lines[:5],
-        }, ensure_ascii=False, separators=(',', ':')))
-    if missing_sold:
-        raise ValueError('vat_return_detail_missing:' + json.dumps({
-            'direction': 'sold', 'count': len(missing_sold),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': missing_sold[:3],
-        }, ensure_ascii=False, separators=(',', ':')))
-    if unknown:
-        raise ValueError(f"vat_return_unknown_tax_rate:{len(unknown)}")
+    # Data-quality issues are reported for review but never block workbook
+    # creation. Rows that cannot be safely aggregated remain in the audit list.
     sold_groups = {key: [] for key in ("kct", "0", "5", "10")}
     for item in grouped.values():
         item["base"] = _decimal(item.pop("base_exact"), "group_base")
@@ -1428,6 +1428,121 @@ def vat_return_filename(tax_code: str, date_from: str, date_to: str) -> str:
     return f"To_khai_thue_GTGT_{tax_code}_{from_value}_{to_value}.xlsx"
 
 
+def vat_return_issues(backend, value: dict[str, Any]) -> dict[str, Any]:
+    """List editable local data-quality issues without blocking export."""
+    connection_id = str(value.get("connection_id") or "").strip()
+    date_from, date_to = str(value.get("date_from") or ""), str(value.get("date_to") or "")
+    if not connection_id or not date_from or not date_to or date_from > date_to:
+        raise ValueError("invalid_vat_return_issues")
+    tax_code = backend.connection_tax_code(connection_id)
+    database = backend.data_root / tax_code / "db" / "invoices.sqlite3"
+    items: list[dict[str, Any]] = []
+    with closing(sqlite3.connect(database)) as connection:
+        connection.row_factory = sqlite3.Row
+        overview_rows = connection.execute(
+            """SELECT * FROM invoice_overview_items WHERE company_tax_code=?
+               AND nlap_date BETWEEN ? AND ? AND direction IN ('purchase','sold')
+               AND query_type IN ('query','sco-query') ORDER BY nlap_date,id""",
+            (tax_code, date_from, date_to),
+        ).fetchall()
+        for row in overview_rows:
+            fields = _attributes(connection, int(row["id"]))
+            missing = [name for name in ("tgtcthue", "tgtthue") if fields.get(name) in (None, "")]
+            if missing:
+                items.append({
+                    "issue_id": f"overview:{row['id']}", "source": "overview",
+                    "record_id": int(row["id"]), "direction": str(row["direction"]),
+                    "invoice_number": str(row["shdon"] or ""),
+                    "invoice_date": str(row["nlap_date"] or "")[:10],
+                    "reason": "Ô tiền trống đã được tính là 0",
+                    "fields": [
+                        {"name": name, "label": {"tgtcthue": "Tiền trước thuế", "tgtthue": "Tiền thuế"}[name],
+                         "value": "" if fields.get(name) is None else str(fields.get(name))}
+                        for name in ("tgtcthue", "tgtthue")
+                    ],
+                })
+        detail_rows = connection.execute(
+            """SELECT l.id,l.ten,CAST(l.tsuat AS TEXT) tsuat,
+                      CAST(l.thtien AS TEXT) thtien,CAST(l.tthue AS TEXT) tthue,
+                      d.direction,d.shdon,d.nlap_date
+               FROM invoice_detail_lines l JOIN invoice_detail_items d ON d.id=l.detail_item_id
+               WHERE d.company_tax_code=? AND d.nlap_date BETWEEN ? AND ?
+                 AND d.direction IN ('purchase','sold') ORDER BY d.nlap_date,d.id,l.line_number""",
+            (tax_code, date_from, date_to),
+        ).fetchall()
+        for row in detail_rows:
+            reasons = []
+            if _classified_tax_group(row["tsuat"]) is None:
+                reasons.append("Thuế suất trống/không rõ đã được tính là 0%")
+            if row["thtien"] in (None, "") or row["tthue"] in (None, ""):
+                reasons.append("Ô tiền trống đã được tính là 0")
+            if not str(row["ten"] or "").strip():
+                reasons.append("Thiếu tên hàng hóa, dịch vụ")
+            if not reasons:
+                continue
+            items.append({
+                "issue_id": f"detail:{row['id']}", "source": "detail",
+                "record_id": int(row["id"]), "direction": str(row["direction"]),
+                "invoice_number": str(row["shdon"] or ""),
+                "invoice_date": str(row["nlap_date"] or "")[:10],
+                "reason": "; ".join(reasons),
+                "fields": [
+                    {"name": "ten", "label": "Tên hàng hóa, dịch vụ", "value": str(row["ten"] or "")},
+                    {"name": "tsuat", "label": "Thuế suất", "value": str(row["tsuat"] or "")},
+                    {"name": "thtien", "label": "Thành tiền", "value": str(row["thtien"] or "")},
+                    {"name": "tthue", "label": "Tiền thuế", "value": str(row["tthue"] or "")},
+                ],
+            })
+    return {"connection_id": connection_id, "items": items, "total": len(items)}
+
+
+def update_vat_return_issue(backend, value: dict[str, Any]) -> dict[str, Any]:
+    """Persist an explicitly edited issue row in the account's local SQLite DB."""
+    connection_id = str(value.get("connection_id") or "").strip()
+    source = str(value.get("source") or "")
+    record_id = value.get("record_id")
+    values = value.get("values")
+    allowed = {"overview": {"tgtcthue", "tgtthue"}, "detail": {"ten", "tsuat", "thtien", "tthue"}}
+    if (not connection_id or source not in allowed or not isinstance(record_id, int)
+            or record_id <= 0 or not isinstance(values, dict) or not values
+            or set(values) - allowed[source]):
+        raise ValueError("invalid_vat_return_issue_update")
+    clean = {name: str(raw or "").strip()[:500] for name, raw in values.items()}
+    tax_code = backend.connection_tax_code(connection_id)
+    database = backend.data_root / tax_code / "db" / "invoices.sqlite3"
+    with closing(sqlite3.connect(database, timeout=30)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if source == "overview":
+            exists = connection.execute(
+                "SELECT 1 FROM invoice_overview_items WHERE id=? AND company_tax_code=?",
+                (record_id, tax_code),
+            ).fetchone()
+            if not exists:
+                raise ValueError("vat_return_issue_not_found")
+            for name, raw in clean.items():
+                connection.execute(
+                    """INSERT INTO invoice_overview_attributes(invoice_item_id,field_name,value_json)
+                       VALUES(?,?,?) ON CONFLICT(invoice_item_id,field_name)
+                       DO UPDATE SET value_json=excluded.value_json""",
+                    (record_id, name, json.dumps(raw, ensure_ascii=False)),
+                )
+        else:
+            exists = connection.execute(
+                """SELECT 1 FROM invoice_detail_lines l JOIN invoice_detail_items d
+                   ON d.id=l.detail_item_id WHERE l.id=? AND d.company_tax_code=?""",
+                (record_id, tax_code),
+            ).fetchone()
+            if not exists:
+                raise ValueError("vat_return_issue_not_found")
+            assignments = ",".join(f"{name}=?" for name in clean)
+            connection.execute(
+                f"UPDATE invoice_detail_lines SET {assignments},updated_at=datetime('now') WHERE id=?",
+                (*clean.values(), record_id),
+            )
+        connection.commit()
+    return {"saved": True, "issue_id": f"{source}:{record_id}"}
+
+
 def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
     connection_ids = list(value.get("connection_ids") or ())
     if len(connection_ids) != 1: raise ValueError("invalid_vat_return_account")
@@ -1456,12 +1571,6 @@ def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
         backend.data_root / tax_code / "db" / "invoices.sqlite3",
         tax_code, date_from, date_to, allow_incomplete=value.get("allow_incomplete") is True,
     )
-    if report["missing_purchase_detail"]:
-        raise ValueError('vat_return_detail_missing:' + json.dumps({
-            'direction': 'purchase', 'count': len(report["missing_purchase_detail"]),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': report["missing_purchase_detail"][:3],
-        }, ensure_ascii=False, separators=(',', ':')))
     totals = report["totals"]
     template = _template_path()
     if not template.is_file(): raise FileNotFoundError(template)
