@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from uuid import uuid4
 
 import requests
+
+PORTAL_ROOT_URL = 'https://hoadondientu.gdt.gov.vn/'
+INVOICE_LOOKUP_URL = f'{PORTAL_ROOT_URL}tra-cuu/tra-cuu-hoa-don'
+DEFAULT_USER_AGENT = (
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/152.0.0.0 Safari/537.36'
+)
 
 class WebClient:
     def __init__(
@@ -21,16 +30,20 @@ class WebClient:
         if proxy:
             self.session.proxies.update({'http': proxy, 'https': proxy})
 
-    def build_headers(self, 
-        authorization: str | None = None, 
+    def build_headers(
+        self,
+        authorization: str | None = None,
         endpoint: str | None = '/tra-cuu/tra-cuu-hoa-don',
-        ua: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36'
-        ) -> dict[str,str]:
+        ua: str = DEFAULT_USER_AGENT,
+        referer: str = INVOICE_LOOKUP_URL,
+        action: str | None = None,
+    ) -> dict[str, str]:
         headers = {
             "accept": "application/json, text/plain, */*",
             "accept-language": "vi",
-            "referer": "https://hoadondientu.gdt.gov.vn/tra-cuu/tra-cuu-hoa-don",
-            "sec-ch-ua": '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"',
+            "referer": referer,
+            "request-id": str(uuid4()),
+            "sec-ch-ua": '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
             "sec-fetch-dest": "empty",
@@ -45,7 +58,20 @@ class WebClient:
         if endpoint:
             headers["end-point"] = endpoint
 
+        if action is not None:
+            headers["action"] = action
+
         return headers
+
+    @staticmethod
+    def _fresh_request_headers(headers: dict[str, str] | None) -> dict[str, str]:
+        """Clone headers and assign one correlation id to this wire attempt."""
+        prepared = dict(headers or {})
+        for name in list(prepared):
+            if name.lower() == 'request-id':
+                del prepared[name]
+        prepared['request-id'] = str(uuid4())
+        return prepared
         
     def get(self,
         url: str, 
@@ -69,7 +95,7 @@ class WebClient:
         for _ in range(normal_limit + rate_limit - 1):
             try:
                 response = self.session.get(
-                    url, params=params, headers=headers,
+                    url, params=params, headers=self._fresh_request_headers(headers),
                     timeout=self.timeout if timeout is None else timeout,
                 )
                 response.raise_for_status()
@@ -105,7 +131,7 @@ class WebClient:
         response = self.session.post(
             url,
             data = payload,
-            headers = headers,
+            headers = self._fresh_request_headers(headers),
             json = json_payload,
             timeout=self.timeout if timeout is None else timeout,
         )

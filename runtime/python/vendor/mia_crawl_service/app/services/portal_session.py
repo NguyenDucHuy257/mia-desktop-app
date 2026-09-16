@@ -15,7 +15,7 @@ from app.config.crawl_config import (
 )
 from app.crawlers.auth_crawler import AuthCrawler
 from app.crawlers.endpoints import GET_COMPANY_INFO_API
-from app.crawlers.web_client import WebClient
+from app.crawlers.web_client import PORTAL_ROOT_URL, WebClient
 from app.services.rate_limit_diagnostics import (
     RateLimitEvidenceLog,
     decode_jwt_claims,
@@ -67,7 +67,7 @@ class TaxPortalSession:
         self.user_agent = user_agent or (
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/149.0.0.0 Safari/537.36'
+            'Chrome/152.0.0.0 Safari/537.36'
         )
         if isinstance(proxies, str):
             configured_proxies = parse_proxy_list(proxies)
@@ -139,6 +139,18 @@ class TaxPortalSession:
             raise RuntimeError('Not authenticated')
         return self.client.build_headers(authorization=self.token, ua=self.user_agent)
 
+    @property
+    def authentication_headers(self) -> dict[str, str]:
+        if not self.token:
+            raise RuntimeError('Not authenticated')
+        return self.client.build_headers(
+            authorization=self.token,
+            endpoint='/',
+            ua=self.user_agent,
+            referer=PORTAL_ROOT_URL,
+            action='',
+        )
+
     def login(self) -> str:
         if self.token_provider is not None:
             snapshot = self.token_provider.get_token()
@@ -164,9 +176,9 @@ class TaxPortalSession:
 
     def get_company_info(self) -> dict[str, str]:
         if self.auth is not None:
-            self.company_info = self.auth.get_company_info(self.headers)
+            self.company_info = self.auth.get_company_info(self.authentication_headers)
             return self.company_info
-        response = self.get(GET_COMPANY_INFO_API)
+        response = self.get(GET_COMPANY_INFO_API, headers=self.authentication_headers)
         try:
             payload = response.json()
         except (requests.JSONDecodeError, ValueError) as error:

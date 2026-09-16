@@ -51,9 +51,9 @@ def build_detail_headers(
     set_header('End-Point', '/tra-cuu/tra-cuu-hoa-don')
     set_header('Accept-Language', 'vi')
     action = (
-        'In hóa đơn (hóa đơn bán ra)'
+        'Xem hóa đơn (hóa đơn bán ra)'
         if direction == 'sold'
-        else 'In hóa đơn (hóa đơn mua vào)'
+        else 'Xem hóa đơn (hóa đơn mua vào)'
     )
     # The portal sends this custom header in percent-encoded UTF-8 form.
     # Keeping parentheses unescaped matches its browser request exactly.

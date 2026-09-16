@@ -6,7 +6,7 @@ from __future__ import annotations
 # - Lấy access_token
 # - Tạo auth headers
 
-from app.crawlers.web_client import WebClient
+from app.crawlers.web_client import PORTAL_ROOT_URL, WebClient
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -132,7 +132,12 @@ class AuthCrawler:
         on_rate_limit: Callable[[], object] | None = None,
     ) -> str:
         """Solve one fresh captcha and make exactly one login request per task attempt."""
-        headers = self.client.build_headers(ua=ua)
+        headers = self.client.build_headers(
+            ua=ua,
+            endpoint='/',
+            referer=PORTAL_ROOT_URL,
+            action='',
+        )
         captcha = self.get_captcha(headers)
         try:
             return self.login(
