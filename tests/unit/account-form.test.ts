@@ -8,6 +8,8 @@ import {
 describe('account form validation', () => {
   it('accepts Vietnamese 10-digit and branch tax codes', () => {
     expect(validateCredentials({ username: '0101234567', password: 'secret' })).toEqual({});
+    expect(validateCredentials({ username: '001234567890', password: 'secret' })).toEqual({});
+    expect(parseBulkAccounts('001234567890|secret').errors).toEqual([]);
     expect(validateCredentials({ username: '0101234567-001', password: 'secret' })).toEqual({});
   });
 

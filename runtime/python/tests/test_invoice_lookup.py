@@ -55,6 +55,12 @@ class InvoiceLookupResolverTests(unittest.TestCase):
         fallback = resolve_invoice_lookup(self.payload(nbmst="999", tvandnkntt="0312303803"))
         self.assertEqual((fallback.url, fallback.matched_by), (HTTPS + "tracuu.wininvoice.vn", "tvandnkntt"))
 
+    def test_source_workbook_dynamic_and_root_rules(self):
+        provider_template = resolve_invoice_lookup(self.payload(nbmst="0310000000", msttcgp="0100684378"))
+        self.assertEqual(provider_template.url, HTTPS + "0310000000-tt78.vnpt-invoice.com.vn/")
+        ajinomoto = resolve_invoice_lookup(self.payload(nbmst="3600244645-001"))
+        self.assertEqual(ajinomoto.url, HTTPS + "ajinomotosg-tt78.vnpt-invoice.com.vn/")
+
     def test_manual_lookup_does_not_invent_code(self):
         result = resolve_invoice_lookup(self.payload(nbmst="0304741634", mhdon="SHOULD-NOT-BE-CODE"))
         self.assertEqual(result.mode, "manual")

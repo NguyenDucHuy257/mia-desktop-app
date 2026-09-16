@@ -116,6 +116,7 @@ class _ExcelSafeDetailRowBuilder:
         from app.parsers.invoice_detail_excel_row_builder import InvoiceDetailExcelRowBuilder
 
         self._delegate = InvoiceDetailExcelRowBuilder()
+        self.material_database = None
 
     def build_rows(
         self, payload: dict[str, Any], record: dict[str, Any]
@@ -127,13 +128,26 @@ class _ExcelSafeDetailRowBuilder:
             record,
             available_xml=record.get("xml_path"),
         )
+        rows = self._delegate.build_rows(payload, record)
+        if self.material_database is not None:
+            from types import SimpleNamespace
+            from mia_material_lookup import enrich_materials
+            job = SimpleNamespace(
+                company_tax_code=record.get('company_tax_code'),
+                parameters={'directions': [record.get('direction')], 'query_types': [record.get('query_type')]},
+            )
+            # Use the same persisted exact-name mapping as the Results table.
+            enriched = [{**record, **row} for row in rows]
+            enrich_materials(self.material_database, enriched, job)
+            for row, material in zip(rows, enriched):
+                row['m_VT'] = material.get('m_VT', row.get('m_VT', ''))
         return [
             _excel_safe_record({
                 **row,
                 "url": lookup.url or "",
                 "mk": lookup.code or "",
             })
-            for row in self._delegate.build_rows(payload, record)
+            for row in rows
         ]
 
 
@@ -154,6 +168,8 @@ class _LookupEnrichedResultReader:
         self._revision = _database_revision(self.database_path)
         page = self.delegate.detail_page(job, limit=limit, cursor=cursor)
         items = page.get("items") or []
+        from mia_material_lookup import enrich_materials
+        enrich_materials(self.database_path, items, job)
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -254,11 +270,18 @@ def _safe_fields(item: dict[str, Any]) -> dict[str, Any]:
     if isinstance(attributes, dict):
         for key, attribute in attributes.items():
             value.setdefault(str(key), attribute)
-    return {
+    safe = {
         str(key): field_value
         for key, field_value in value.items()
         if _public_field_name(str(key))
     }
+    if (
+        str(safe.get("khmshdon") or "").strip() in {"2", "2.0"}
+        and safe.get("tgtcthue") in (None, "")
+        and safe.get("tgtttbso") not in (None, "")
+    ):
+        safe["tgtcthue"] = safe["tgtttbso"]
+    return safe
 
 
 def _search_matches(fields: dict[str, Any], search: str) -> bool:
@@ -590,6 +613,27 @@ def _overview_template_schema(
     return tuple((key, title or key) for key, title in zip(keys, titles))
 
 
+@lru_cache(maxsize=2)
+def _combined_overview_schema(direction: str) -> tuple[tuple[str, str], ...]:
+    """Return one stable union of electronic and cash-register columns."""
+    electronic = list(_overview_template_schema("electronic", direction))
+    cash = list(_overview_template_schema("cash_register", direction))
+    merged = list(electronic)
+    keys = [key for key, _label in merged]
+    for cash_index, (key, label) in enumerate(cash):
+        if key in keys:
+            continue
+        preceding = next(
+            (cash[position][0] for position in range(cash_index - 1, -1, -1)
+             if cash[position][0] in keys),
+            None,
+        )
+        insert_at = keys.index(preceding) + 1 if preceding else len(merged)
+        merged.insert(insert_at, (key, label))
+        keys.insert(insert_at, key)
+    return tuple(merged)
+
+
 @lru_cache(maxsize=1)
 def _detail_template_schema() -> tuple[tuple[str, str], ...]:
     from openpyxl import load_workbook
@@ -626,6 +670,9 @@ def _result_schema(kind: str, context) -> tuple[tuple[str, str], ...]:
 
     from app.config.crawl_config import query_type_to_category
 
+    if len(context["query_types"]) > 1:
+        direction = context["directions"][0] if context["directions"] else "purchase"
+        return _combined_overview_schema(direction)
     query_type = context["query_types"][0]
     category = query_type_to_category(query_type)
     direction = context["directions"][0] if context["directions"] else "purchase"
@@ -633,9 +680,15 @@ def _result_schema(kind: str, context) -> tuple[tuple[str, str], ...]:
 
 
 def _overview_display_value(
-    fields: dict[str, Any], key: str, *, category: str
+    fields: dict[str, Any], key: str, *, category: str, direction: str
 ) -> Any:
-    from app.services.overview_downloader import INVOICE_STATUS_LABELS, OverviewDownloader
+    from app.services.overview_downloader import (
+        INVOICE_STATUS_LABELS,
+        OverviewDownloader,
+        _cash_register_buyer_name,
+        _processing_result,
+        _taxable_total,
+    )
 
     if key == "stt":
         return fields.get("stt")
@@ -645,11 +698,16 @@ def _overview_display_value(
     if key == "tthai":
         value = fields.get(key)
         return INVOICE_STATUS_LABELS.get(value, str(value or ""))
-    if key == "kqcht" and category == "cash_register":
-        return (
-            fields.get(key)
-            or "Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền"
-        )
+    if key == "nmten" and category == "cash_register" and direction == "sold":
+        return _cash_register_buyer_name(fields)
+    if key == "tgtcthue":
+        # Also repair historical sales invoices at export time, without a re-crawl.
+        return _taxable_total(fields)
+    if key == "kqcht":
+        result = _processing_result(fields)
+        if result or category != "cash_register":
+            return result
+        return "Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền"
     return fields.get(key)
 
 
@@ -671,9 +729,15 @@ def _project_fields(
 
     from app.config.crawl_config import query_type_to_category
 
-    category = query_type_to_category(context["query_types"][0])
+    source_query_type = str(fields.get("query_type") or context["query_types"][0])
+    category = query_type_to_category(source_query_type)
+    direction = str(fields.get("direction") or (
+        context["directions"][0] if context["directions"] else "purchase"
+    ))
     return {
-        key: _overview_display_value(fields, key, category=category)
+        key: _overview_display_value(
+            fields, key, category=category, direction=direction
+        )
         for key, _ in schema
     }
 
@@ -929,7 +993,7 @@ def read_results(backend, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     if kind not in {"overview", "details"}:
         raise ValueError("invalid_result_kind")
     limit = int(query.get("limit", 50))
-    if not 1 <= limit <= 50:
+    if not 1 <= limit <= 10000:
         raise ValueError("invalid_result_limit")
 
     context = _result_context(backend, query)
@@ -1530,7 +1594,7 @@ def _filtered_reconciliation_items(dataset: dict[str, Any], query: dict[str, Any
 
 def read_reconciliation(backend, query: dict[str, Any]) -> dict[str, Any]:
     limit = int(query.get("limit", 50))
-    if not 1 <= limit <= 50:
+    if not 1 <= limit <= 10000:
         raise ValueError("invalid_result_limit")
     dataset = _reconciliation_dataset(backend, query)
     items = _filtered_reconciliation_items(dataset, query)
@@ -1672,6 +1736,8 @@ def read_artifact_targets(backend, query: dict[str, Any]) -> list[dict[str, Any]
     required by package persistence.  It never exposes these payloads to the
     renderer.
     """
+    from app.services.overview_downloader import _cash_register_buyer_name
+
     context = _result_context(backend, query)
     if context is None:
         return []
@@ -1689,7 +1755,9 @@ def read_artifact_targets(backend, query: dict[str, Any]) -> list[dict[str, Any]
                     "khmshdon": str(fields.get("khmshdon") or ""),
                     "nlap": fields.get("nlap") or fields.get("tdlap"),
                     "nlap_date": fields.get("nlap_date"),
-                    "partner_name": fields.get("nbten") if direction == "purchase" else fields.get("nmten"),
+                    "partner_name": fields.get("nbten") if direction == "purchase"
+                    else _cash_register_buyer_name(fields) if query_type == "sco-query"
+                    else fields.get("nmten"),
                 }
                 target["artifact_key"] = "|".join(str(target[name]) for name in (
                     "direction", "query_type", "nbmst", "khhdon", "shdon", "khmshdon",
@@ -1970,7 +2038,7 @@ def _detail_source_columns(worksheet: Any, header_row: int) -> list[int]:
     return source_columns
 
 
-def _normalize_detail_excel_atomically(target: Path) -> None:
+def _normalize_detail_excel_atomically(target: Path, progress=None) -> None:
     """Convert source Detail sheets to the customer's fixed 37-column form."""
     import urllib.parse
 
@@ -1985,6 +2053,9 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
     output_sheet.title = "Sheet1"
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    body_font = Font(size=12, bold=False)
+    body_fill = PatternFill(fill_type=None)
+    body_alignment = Alignment(wrap_text=False)
 
     for column_index, ((_key, label), width) in enumerate(
         zip(_DETAIL_EXPORT_COLUMNS, _DETAIL_EXPORT_WIDTHS, strict=True), start=1
@@ -2000,25 +2071,52 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
         output_sheet.column_dimensions[get_column_letter(column_index)].width = width
 
     output_row = 2
+    payment_column = next(
+        index for index, (key, _label) in enumerate(_DETAIL_EXPORT_COLUMNS, start=1)
+        if key == "tgtttbso"
+    )
+    merge_groups: list[tuple[int, int]] = []
+    total_rows = sum(sheet.max_row for sheet in source_workbook.worksheets)
+    processed_rows = 0
     try:
         for source_sheet in source_workbook.worksheets:
             header_row = InvoiceDetailExcelExporter._find_header_row(source_sheet)
             source_columns = _detail_source_columns(source_sheet, header_row)
+            group_start: int | None = None
+            group_identity: tuple[Any, ...] | None = None
+            group_payment: Any = None
             for source_row in range(header_row + 1, source_sheet.max_row + 1):
+                processed_rows += 1
+                if progress is not None and processed_rows % 100 == 0:
+                    progress("format", processed_rows, total_rows)
                 values = [
                     source_sheet.cell(source_row, source_column).value
                     for source_column in source_columns
                 ]
                 if all(value in (None, "") for value in values):
                     continue
+                identity = tuple(values[index] for index in (0, 1, 2, 10))
+                payment = values[payment_column - 1]
+                same_group = (
+                    group_start is not None
+                    and identity == group_identity
+                    and payment not in (None, "")
+                    and payment == group_payment
+                )
+                if not same_group:
+                    if group_start is not None and output_row - 1 > group_start:
+                        merge_groups.append((group_start, output_row - 1))
+                    group_start = output_row
+                    group_identity = identity
+                    group_payment = payment
                 for column_index, (source_column, value) in enumerate(
                     zip(source_columns, values, strict=True), start=1
                 ):
                     source_cell = source_sheet.cell(source_row, source_column)
                     target_cell = output_sheet.cell(output_row, column_index, value)
-                    target_cell.font = Font(size=12, bold=False)
-                    target_cell.fill = PatternFill(fill_type=None)
-                    target_cell.alignment = Alignment(wrap_text=False)
+                    target_cell.font = body_font
+                    target_cell.fill = body_fill
+                    target_cell.alignment = body_alignment
                     target_cell.border = border
                     target_cell.number_format = (
                         "#,##0" if column_index in {20, 21, 23, 24, 27} else "General"
@@ -2032,6 +2130,8 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
                         if urllib.parse.urlsplit(hyperlink).scheme in {"http", "https"}:
                             target_cell.hyperlink = hyperlink
                 output_row += 1
+            if group_start is not None and output_row - 1 > group_start:
+                merge_groups.append((group_start, output_row - 1))
     except Exception:
         output_workbook.close()
         raise
@@ -2040,6 +2140,14 @@ def _normalize_detail_excel_atomically(target: Path) -> None:
 
     output_sheet.auto_filter.ref = None
     output_sheet.freeze_panes = None
+    for first_row, last_row in merge_groups:
+        output_sheet.merge_cells(
+            start_row=first_row, start_column=payment_column,
+            end_row=last_row, end_column=payment_column,
+        )
+        output_sheet.cell(first_row, payment_column).alignment = Alignment(
+            horizontal="right", vertical="center", wrap_text=False
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{target.stem}-", suffix=".xlsx", dir=target.parent
@@ -2255,6 +2363,85 @@ def _write_overview_excel_from_source_template(
     )
 
 
+def _write_combined_overview_excel(
+    rows: list[dict[str, Any]],
+    *,
+    direction: str,
+    date_from: str,
+    date_to: str,
+    target: Path,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> None:
+    """Write one union-schema sheet for electronic and cash-register invoices."""
+    from app.config.crawl_config import query_type_to_category
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    schema = _combined_overview_schema(direction)
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Tổng quan"
+    last_column = get_column_letter(len(schema))
+    worksheet.merge_cells(f"A1:{last_column}1")
+    worksheet["A1"] = "DANH SÁCH HÓA ĐƠN TỔNG QUAN"
+    worksheet["A1"].font = Font(bold=True, size=15)
+    worksheet["A1"].alignment = Alignment(horizontal="center")
+    worksheet.merge_cells(f"A3:{last_column}3")
+    worksheet["A3"] = (
+        f"Từ ngày {date.fromisoformat(date_from):%d/%m/%Y} "
+        f"đến ngày {date.fromisoformat(date_to):%d/%m/%Y}"
+    )
+    worksheet["A3"].alignment = Alignment(horizontal="center")
+    header_row = 5
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill("solid", fgColor="FFC000")
+    for column_index, (key, label) in enumerate(schema, start=1):
+        cell = worksheet.cell(header_row, column_index, label)
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        worksheet.column_dimensions[get_column_letter(column_index)].width = (
+            9 if key == "stt" else 18 if key in NUMBER_RESULT_FIELDS else 28
+        )
+    worksheet.freeze_panes = f"A{header_row + 1}"
+    if progress:
+        progress("load_template", 1, 1)
+        progress("write_rows", 0, len(rows))
+    for row_index, record in enumerate(rows, start=1):
+        query_type = str(record.get("query_type") or "query")
+        category = query_type_to_category(query_type)
+        for column_index, (key, _label) in enumerate(schema, start=1):
+            value = row_index if key == "stt" else _overview_display_value(
+                record, key, category=category, direction=direction
+            )
+            cell = worksheet.cell(header_row + row_index, column_index, _excel_safe_value(value))
+            cell.border = border
+            if key in NUMBER_RESULT_FIELDS:
+                cell.number_format = '#,##0.###;[Red]-#,##0.###;0'
+        if progress and (row_index == len(rows) or row_index % max(1, len(rows) // 200) == 0):
+            progress("write_rows", row_index, len(rows))
+    worksheet.auto_filter.ref = f"A{header_row}:{last_column}{header_row + len(rows)}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target.stem}-", suffix=".xlsx", dir=target.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        if progress:
+            progress("save", 0, 1)
+        workbook.save(temporary)
+        os.replace(temporary, target)
+        if progress:
+            progress("save", 1, 1)
+    finally:
+        workbook.close()
+        temporary.unlink(missing_ok=True)
+
+
 def _filter_detail_records(
     records: list[dict[str, Any]], search: str
 ) -> list[dict[str, Any]]:
@@ -2309,34 +2496,71 @@ def _write_reconciliation_excel(
     if progress:
         progress("load_template", 0, 1)
     workbook = Workbook()
-    summary_sheet = workbook.active
-    summary_sheet.title = "Tong hop"
-    worksheet = workbook.create_sheet("Bao cao doi chieu")
+    worksheet = workbook.active
+    worksheet.title = "Bao cao doi chieu"
     headers = [
         _RECONCILIATION_LABELS[column]
         for column in _RECONCILIATION_EXPORT_COLUMNS
     ]
-    worksheet.append(headers)
     header_fill = PatternFill("solid", fgColor="EAF4EE")
-    for cell in worksheet[1]:
+    summary_rows = [
+        ("Dữ liệu hiện có - Tổng quan", summary.get("selected_overview_invoice_count", 0)),
+        ("Dữ liệu hiện có - Chi tiết", summary.get("selected_detail_invoice_count", 0)),
+        ("Chênh lệch dữ liệu hiện có", (
+            int(summary.get("selected_overview_invoice_count", 0) or 0)
+            - int(summary.get("selected_detail_invoice_count", 0) or 0)
+        )),
+        ("Phạm vi đủ điều kiện đối chiếu", "; ".join(
+            f"{value['date_from']} - {value['date_to']}"
+            for value in summary.get("coverage_ranges") or ()
+        )),
+        ("Trong phạm vi đối chiếu - Tổng quan", summary.get("overview_invoice_count", 0)),
+        ("Trong phạm vi đối chiếu - Chi tiết", summary.get("detail_invoice_count", 0)),
+        ("Chênh lệch số lượng", summary.get("difference", 0)),
+        ("Thiếu Chi tiết", summary.get("missing_detail_count", 0)),
+        ("Thiếu Tổng quan", summary.get("missing_overview_count", 0)),
+        ("Hóa đơn lệch tiền", summary.get("money_mismatch_count", 0)),
+        ("Khoảng chưa đủ dữ liệu 2/2", "; ".join(
+            f"{value['date_from']} - {value['date_to']}"
+            for value in summary.get("uncovered_ranges") or ()
+        )),
+    ]
+    summary_rows.extend(
+        (f"Tổng chênh lệch - {label}", value)
+        for label, value in (summary.get("difference_totals") or {}).items()
+    )
+    worksheet.append(["BÁO CÁO ĐỐI CHIẾU TỔNG QUAN & CHI TIẾT", None])
+    worksheet.merge_cells("A1:B1")
+    worksheet["A1"].font = Font(bold=True, color="155D36", size=14)
+    worksheet["A1"].fill = header_fill
+    worksheet["A1"].alignment = Alignment(horizontal="center")
+    for label, value in summary_rows:
+        worksheet.append([label, _excel_safe_value(value)])
+        worksheet.cell(worksheet.max_row, 1).font = Font(bold=True, color="374151")
+        if label.startswith("Tổng chênh lệch"):
+            worksheet.cell(worksheet.max_row, 2).number_format = '#,##0;[Red]-#,##0;0'
+
+    header_row = worksheet.max_row + 2
+    for column_index, label in enumerate(headers, start=1):
+        cell = worksheet.cell(header_row, column_index, label)
         cell.font = Font(bold=True, color="155D36")
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    worksheet.freeze_panes = "A2"
-    worksheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    worksheet.freeze_panes = f"A{header_row + 1}"
+    worksheet.auto_filter.ref = (
+        f"A{header_row}:{get_column_letter(len(headers))}{header_row + len(rows)}"
+    )
     if progress:
         progress("load_template", 1, 1)
         progress("write_rows", 0, len(rows))
     for index, item in enumerate(rows, start=1):
         fields = item.get("fields") or {}
-        worksheet.append([
-            _excel_safe_value(index if column == "stt" else fields.get(column))
-            for column in _RECONCILIATION_EXPORT_COLUMNS
-        ])
-        for column_index, column in enumerate(
-            _RECONCILIATION_EXPORT_COLUMNS, start=1
-        ):
-            cell = worksheet.cell(index + 1, column_index)
+        row_number = header_row + index
+        for column_index, column in enumerate(_RECONCILIATION_EXPORT_COLUMNS, start=1):
+            cell = worksheet.cell(
+                row_number, column_index,
+                _excel_safe_value(index if column == "stt" else fields.get(column)),
+            )
             if column == "mismatch_fields" or (
                 column.startswith("difference_") and cell.value not in (None, 0, "0")
             ):
@@ -2358,39 +2582,6 @@ def _write_reconciliation_excel(
         elif column in {"nbten", "nmten"}:
             width = 34
         worksheet.column_dimensions[get_column_letter(column_index)].width = width
-
-    summary_rows = [
-        ("Dữ liệu hiện có - Tổng quan", summary.get("selected_overview_invoice_count", 0)),
-        ("Dữ liệu hiện có - Chi tiết", summary.get("selected_detail_invoice_count", 0)),
-        ("Khoảng đối chiếu", "; ".join(
-            f"{value['date_from']} - {value['date_to']}"
-            for value in summary.get("coverage_ranges") or ()
-        )),
-        ("Số hóa đơn Tổng quan", summary.get("overview_invoice_count", 0)),
-        ("Số hóa đơn Chi tiết", summary.get("detail_invoice_count", 0)),
-        ("Chênh lệch số lượng", summary.get("difference", 0)),
-        ("Thiếu Chi tiết", summary.get("missing_detail_count", 0)),
-        ("Thiếu Tổng quan", summary.get("missing_overview_count", 0)),
-        ("Hóa đơn lệch tiền", summary.get("money_mismatch_count", 0)),
-        ("Khoảng chưa đủ dữ liệu 2/2", "; ".join(
-            f"{value['date_from']} - {value['date_to']}"
-            for value in summary.get("uncovered_ranges") or ()
-        )),
-    ]
-    summary_rows.extend(
-        (f"Tổng chênh lệch - {label}", value)
-        for label, value in (summary.get("difference_totals") or {}).items()
-    )
-    summary_sheet.append(["BÁO CÁO ĐỐI CHIẾU TỔNG QUAN & CHI TIẾT", None])
-    summary_sheet.merge_cells("A1:B1")
-    summary_sheet["A1"].font = Font(bold=True, color="155D36", size=14)
-    summary_sheet["A1"].fill = header_fill
-    summary_sheet["A1"].alignment = Alignment(horizontal="center")
-    for label, value in summary_rows:
-        summary_sheet.append([label, _excel_safe_value(value)])
-    summary_sheet.column_dimensions["A"].width = 30
-    summary_sheet.column_dimensions["B"].width = 52
-    summary_sheet.freeze_panes = "A2"
     if progress:
         progress(
             "format", len(_RECONCILIATION_EXPORT_COLUMNS),
@@ -2423,10 +2614,28 @@ def _merge_combined_export_plans(plans: list[dict[str, Any]], company_tax_code: 
         for record in plan["payload"]:
             fields = dict(record)
             fields.setdefault("company_tax_code", company_tax_code)
+            fields["query_type"] = plan["query_type"]
             identity = _invoice_key(fields, plan["direction"], plan["query_type"])
             existing = by_invoice.get(identity)
-            if existing is None or (existing[0] != "query" and plan["query_type"] == "query"):
-                by_invoice[identity] = (plan["query_type"], record)
+            if existing is None:
+                by_invoice[identity] = (plan["query_type"], fields)
+                continue
+
+            # Prefer query on conflicts, while retaining source-specific values
+            # such as nmcmnd from the matching sco-query record.
+            existing_type, existing_fields = existing
+            if plan["query_type"] == "query":
+                winner_type, winner, fallback = "query", fields, existing_fields
+            else:
+                winner_type, winner, fallback = existing_type, existing_fields, fields
+            merged_fields = dict(fallback)
+            for key, value in winner.items():
+                if value is not None and not (isinstance(value, str) and not value.strip()):
+                    merged_fields[key] = value
+                elif key not in merged_fields:
+                    merged_fields[key] = value
+            merged_fields["query_type"] = winner_type
+            by_invoice[identity] = (winner_type, merged_fields)
 
     def record_sort_key(record: dict[str, Any]):
         fields = dict(record)
@@ -2441,9 +2650,7 @@ def _merge_combined_export_plans(plans: list[dict[str, Any]], company_tax_code: 
 
     return {
         **preferred,
-        # Use the existing electronic template as the shared column contract;
-        # cash-register rows are appended into the same data region.
-        "query_type": "query",
+        "query_type": "combined" if preferred["scope"] == "overview" else "query",
         "payload": sorted((item[1] for item in by_invoice.values()), key=record_sort_key),
     }
 
@@ -2589,6 +2796,7 @@ def _export_results_impl(
                     row_builder = _FilteredExcelSafeDetailRowBuilder(
                         search=scope_search, column_filters=scope_columns
                     )
+                    row_builder.material_database = context['database_path']
                     for record in payload:
                         record.setdefault("company_tax_code", context["base_job"].company_tax_code)
                         record_key = _invoice_key(record, direction, query_type)
@@ -2648,23 +2856,32 @@ def _export_results_impl(
             staged_jobs: list[tuple[str, str, Path]] = []
             for sheet_index, plan in enumerate(group_plans, start=1):
                 query_type = plan["query_type"]
-                category = str(QUERY_TYPE_TO_CATEGORY.get(query_type) or "")
-                if category not in {"electronic", "cash_register"}:
+                category = "combined" if query_type == "combined" else str(
+                    QUERY_TYPE_TO_CATEGORY.get(query_type) or ""
+                )
+                if category not in {"electronic", "cash_register", "combined"}:
                     raise ValueError("invalid_overview_export_category")
                 reporter.start_unit(scope)
                 staged_target = staging_directory / (
                     f"{scope}-{direction}-{category}-{sheet_index}.xlsx"
                 )
                 if scope == "overview":
-                    _write_overview_excel_from_source_template(
-                        plan["payload"],
-                        direction=direction,
-                        category=category,
-                        date_from=context["date_from"],
-                        date_to=context["date_to"],
-                        target=staged_target,
-                        progress=reporter.unit,
-                    )
+                    if category == "combined":
+                        _write_combined_overview_excel(
+                            plan["payload"], direction=direction,
+                            date_from=context["date_from"], date_to=context["date_to"],
+                            target=staged_target, progress=reporter.unit,
+                        )
+                    else:
+                        _write_overview_excel_from_source_template(
+                            plan["payload"],
+                            direction=direction,
+                            category=category,
+                            date_from=context["date_from"],
+                            date_to=context["date_to"],
+                            target=staged_target,
+                            progress=reporter.unit,
+                        )
                 else:
                     export_row_builder = (
                         _FilteredExcelSafeDetailRowBuilder(
@@ -2673,6 +2890,7 @@ def _export_results_impl(
                         if plan["search"] or plan["column_filters"]
                         else _ExcelSafeDetailRowBuilder()
                     )
+                    export_row_builder.material_database = context['database_path']
                     if reporter.callback is None:
                         exporter = InvoiceDetailExcelExporter(
                             _source_template_dir() / "invoice_detail.xlsx",
@@ -2725,9 +2943,15 @@ def _export_results_impl(
                     context["date_to"],
                 ),
             )
-            _combine_source_workbooks_atomically(staged_jobs, target)
+            if scope == "details" and len(staged_jobs) == 1:
+                # Normalization replaces all sheet titles/styles below. Avoid
+                # cloning every cell into an intermediate workbook first.
+                import shutil
+                shutil.copyfile(staged_jobs[0][2], target)
+            else:
+                _combine_source_workbooks_atomically(staged_jobs, target)
             if scope == "details":
-                _normalize_detail_excel_atomically(target)
+                _normalize_detail_excel_atomically(target, progress=reporter.unit)
             reporter.unit("format", len(staged_jobs), len(staged_jobs))
             reporter.unit("save", 1, 1)
             reporter.complete_unit()

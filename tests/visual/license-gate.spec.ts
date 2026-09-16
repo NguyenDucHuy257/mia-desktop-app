@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
 
-async function installLicenseBridge(page: import('@playwright/test').Page, initialState: Record<string, unknown>) {
-  await page.addInitScript((state) => {
+async function installLicenseBridge(page: import('@playwright/test').Page, initialState: Record<string, unknown>, offlineState?: Record<string, unknown>) {
+  await page.addInitScript(({ state, localState }) => {
     let current = state;
+    let currentLocal = localState;
     Object.defineProperty(window, 'miaRuntime', {
       configurable: true,
       value: {
@@ -17,9 +18,15 @@ async function installLicenseBridge(page: import('@playwright/test').Page, initi
           details: async () => ({ state: current.state, active: current.active }),
           updatePhone: async () => current,
         },
+        offlineAuth: {
+          status: async () => currentLocal,
+          create: async () => currentLocal,
+          unlock: async () => currentLocal,
+          change: async () => currentLocal,
+        },
       },
     });
-  }, initialState);
+  }, { state: initialState, localState: offlineState ?? { state: 'locked', configured: true, unlocked: false, retry_after_seconds: 0 } });
 }
 
 test('shows the MIA legacy migration screen without asking for phone', async ({ page }) => {
@@ -89,4 +96,27 @@ test('does not accept a support hotline as the registration phone', async ({ pag
   await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
   await expect(page.getByText(/Vui lòng nhập số điện thoại hợp lệ/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toHaveCount(0);
+});
+
+test('asks the user to create a local password after a valid key is confirmed', async ({ page }) => {
+  await installLicenseBridge(page,
+    { state: 'active', active: true, valid: true, expired: false, reason: 'ok' },
+    { state: 'setup_required', configured: false, unlocked: false, retry_after_seconds: 0 });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Tạo mật khẩu đăng nhập' })).toBeVisible();
+  await expect(page.getByLabel('Mật khẩu mới', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Nhập lại mật khẩu', { exact: true })).toBeVisible();
+  await expect(page.getByText('không được gửi lên server')).toBeVisible();
+  await page.screenshot({ path: 'test-results/license/offline-password-setup.png', fullPage: true });
+});
+
+test('asks for the local password on later application launches', async ({ page }) => {
+  await installLicenseBridge(page,
+    { state: 'active', active: true, valid: true, expired: false, reason: 'ok' },
+    { state: 'locked', configured: true, unlocked: false, retry_after_seconds: 0 });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Đăng nhập trên máy này' })).toBeVisible();
+  await expect(page.getByLabel('Mật khẩu', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Đăng nhập' })).toBeVisible();
+  await page.screenshot({ path: 'test-results/license/offline-password-login.png', fullPage: true });
 });

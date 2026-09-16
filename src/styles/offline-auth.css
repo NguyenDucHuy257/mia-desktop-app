@@ -1,0 +1,39 @@
+.offline-auth-page { min-height: 100vh; padding: 28px; display: grid; place-items: center; background: radial-gradient(circle at 50% 0, #e8f8ef 0, #f4f8f6 34%, #eef3f7 100%); color: #13251b; }
+.offline-auth-card { width: min(440px, 100%); padding: 32px; display: flex; flex-direction: column; gap: 15px; border: 1px solid #d5e1da; border-radius: 18px; background: rgb(255 255 255 / 96%); box-shadow: 0 22px 60px rgb(18 54 35 / 13%); }
+.offline-auth-brand { display: flex; align-items: center; gap: 11px; }
+.offline-auth-brand img { width: 42px; height: 42px; object-fit: contain; }
+.offline-auth-brand span { display: flex; flex-direction: column; gap: 2px; }
+.offline-auth-brand strong { color: #126433; font-size: 15px; }
+.offline-auth-brand small { color: #6a7d72; font-size: 11px; }
+.offline-auth-shield { width: 62px; height: 62px; margin: 5px auto 0; display: grid; place-items: center; border-radius: 18px; color: #fff; background: linear-gradient(145deg, #178a4b, #086333); box-shadow: 0 10px 24px rgb(15 122 65 / 24%); }
+.offline-auth-shield svg { width: 34px; fill: currentColor; }
+.offline-auth-card h1 { margin: 0; text-align: center; font-size: 24px; line-height: 31px; }
+.offline-auth-card > p { margin: -5px 0 4px; color: #627168; text-align: center; font-size: 13px; line-height: 20px; }
+.offline-password-field { display: flex; flex-direction: column; gap: 7px; color: #354b3e; font-size: 12px; font-weight: 700; }
+.offline-password-field > span { height: 44px; display: flex; overflow: hidden; border: 1px solid #cad8cf; border-radius: 9px; background: #fff; transition: border-color .15s, box-shadow .15s; }
+.offline-password-field > span:focus-within { border-color: #168447; box-shadow: 0 0 0 3px rgb(22 132 71 / 12%); }
+.offline-password-field input { min-width: 0; flex: 1; padding: 0 12px; border: 0; outline: 0; font: inherit; font-weight: 500; }
+.offline-password-field button { width: 56px; border: 0; border-left: 1px solid #e1e9e4; color: #126433; background: #f5faf7; font-size: 11px; font-weight: 700; cursor: pointer; }
+.offline-auth-hint, .offline-auth-wait { color: #6b7b71; font-size: 11px; line-height: 17px; }
+.offline-auth-wait { color: #925f00; }
+.offline-auth-error { padding: 10px 12px; border: 1px solid #fecaca; border-radius: 8px; color: #9f2525; background: #fff4f4; font-size: 12px; line-height: 18px; }
+.offline-auth-submit { height: 45px; border: 0; border-radius: 9px; color: #fff; background: linear-gradient(135deg, #168447, #086333); font: inherit; font-weight: 700; cursor: pointer; box-shadow: 0 7px 16px rgb(11 111 58 / 18%); }
+.offline-auth-submit:disabled { opacity: .55; cursor: default; }
+.offline-auth-loading { height: 5px; overflow: hidden; border-radius: 99px; background: #dcf1e5; }
+.offline-auth-loading span { display: block; width: 40%; height: 100%; border-radius: inherit; background: #168447; animation: offline-auth-progress 1.2s ease-in-out infinite alternate; }
+@keyframes offline-auth-progress { to { transform: translateX(150%); } }
+.offline-password-settings-card { margin-top: 18px; padding: 20px; border: 1px solid #dbe3eb; border-radius: 8px; background: #fff; }
+.offline-password-settings-card header { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
+.offline-password-settings-card h2 { margin: 0; font-size: 18px; }
+.offline-password-settings-card p { margin: 4px 0 0; color: #64748b; font-size: 12px; }
+.offline-password-settings-card header > span { flex-shrink: 0; padding: 5px 10px; border-radius: 99px; color: #166534; background: #dcfce7; font-size: 11px; font-weight: 700; }
+.offline-password-settings-card > button { height: 38px; margin-top: 18px; padding: 0 15px; border: 1px solid #b8c9bf; border-radius: 8px; color: #145d34; background: #fff; font-weight: 700; cursor: pointer; }
+.offline-password-settings-card form { margin-top: 18px; display: grid; gap: 13px; }
+.offline-password-settings-card form > div { display: flex; justify-content: flex-end; gap: 9px; }
+.offline-password-settings-card form > div button { min-height: 38px; padding: 0 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; font-weight: 700; cursor: pointer; }
+.offline-password-settings-card form > div button[type="submit"] { border-color: #147a42; color: #fff; background: #147a42; }
+.offline-password-settings-card > small { display: block; margin-top: 12px; font-size: 12px; }
+.offline-password-settings-card > small.success { color: #166534; }
+.offline-password-settings-card > small.error { color: #b91c1c; }
+@media (max-width: 560px) { .offline-auth-page { padding: 14px; } .offline-auth-card { padding: 24px 19px; } .offline-password-settings-card header { flex-direction: column; } }
+@media (prefers-reduced-motion: reduce) { .offline-auth-loading span { animation: none; width: 65%; } }

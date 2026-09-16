@@ -11,6 +11,12 @@ async function invokeIpc(channel, ...args) {
       error.code = 'LICENSE_REQUIRED';
       throw error;
     }
+    if (message.includes('OFFLINE_AUTH_REQUIRED')) {
+      const error = new Error('OFFLINE_AUTH_REQUIRED');
+      error.name = 'MiaRuntimeError';
+      error.code = 'OFFLINE_AUTH_REQUIRED';
+      throw error;
+    }
     throw cause;
   }
 }
@@ -22,7 +28,10 @@ async function invokeResult(channel, ...args) {
   }
   if (result.ok) return result.data;
 
-  const error = new Error(String(result.error?.message ?? 'MIA API request failed'));
+  // Electron's contextBridge can discard custom Error properties. Preserve the
+  // public code in the standard message as well as on the error object.
+  const publicCode = String(result.error?.code ?? 'internal_error');
+  const error = new Error(`[${publicCode}] ${String(result.error?.message ?? 'MIA API request failed')}`);
   error.name = 'MiaRuntimeError';
   error.code = String(result.error?.code ?? 'internal_error');
   if (Number.isInteger(result.error?.status)) error.status = result.error.status;
@@ -40,6 +49,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     details: () => invokeResult('mia:license:details'),
     revealKey: () => invokeResult('mia:license:reveal-key'),
     updatePhone: (phone) => invokeResult('mia:license:update-phone', phone),
+  }),
+  offlineAuth: Object.freeze({
+    status: () => invokeResult('mia:offline-auth:status'),
+    create: (password, confirmation) => invokeResult('mia:offline-auth:create', password, confirmation),
+    unlock: (password) => invokeResult('mia:offline-auth:unlock', password),
+    change: (currentPassword, newPassword, confirmation) => invokeResult('mia:offline-auth:change', currentPassword, newPassword, confirmation),
   }),
   accountConnections: Object.freeze({
     create: (credentials) => invokeResult('mia:account-connections:create', credentials),
@@ -69,6 +84,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     list: (request) => invokeResult('mia:artifacts:list', request),
     coverage: (request) => invokeResult('mia:artifacts:coverage', request),
     vatReturnCoverage: (request) => invokeResult('mia:artifacts:vat-return-coverage', request),
+    vatReturnIssues: (request) => invokeResult('mia:artifacts:vat-return-issues', request),
+    vatReturnIssueUpdate: (request) => invokeResult('mia:artifacts:vat-return-issue-update', request),
     vatReturnExport: (request) => invokeResult('mia:artifacts:vat-return-export', request),
     snapshot: (request) => invokeResult('mia:artifacts:snapshot', request),
     startBatch: (request) => invokeResult('mia:artifacts:batch-start', request),
@@ -107,6 +124,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     setChannel: (channel) => invokeIpc('mia:updates:channel', channel),
   }),
   results: Object.freeze({
+    materialStart: (query) => invokeResult('mia:results:materialStart', query),
+    materialStatus: (query) => invokeResult('mia:results:materialStatus', query),
     overview: (query) => invokeResult('mia:results:overview', query),
     details: (query) => invokeResult('mia:results:details', query),
     reconciliation: (query) => invokeResult('mia:results:reconciliation', query),

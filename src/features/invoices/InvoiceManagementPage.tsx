@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
@@ -33,6 +33,16 @@ interface InvoiceRow {
 }
 
 const ACCOUNT_PAGE_SIZE = 20;
+const ALL_ACCOUNT_ROWS = 1_000_000;
+
+interface ResultExportSnapshot {
+  connectionIds: string[];
+  destination: string;
+  dateFrom: string;
+  dateTo: string;
+  direction: InvoiceDirection;
+  scopes: Array<'overview' | 'details'>;
+}
 
 const rows: InvoiceRow[] = [
   { taxCode: '0101234567', company: 'Công ty Cổ phần Công nghệ A', status: 'completed', selected: true, progress: 100, progressLabel: 'Đã tải xong' },
@@ -110,27 +120,41 @@ function monthEndIso(value: string | null | undefined, selectedUntil?: string) {
   return selectedUntil && selectedUntil < monthEnd ? selectedUntil : monthEnd;
 }
 
-function SyncStatusCell({ state }: { state?: InvoiceSyncState }) {
-  const label = !state ? 'Chưa đồng bộ'
+export function syncStatusPresentation(state: InvoiceSyncState | undefined, wantsDetails: boolean) {
+  if (!state) return { label: 'Chưa đồng bộ', detail: null };
+  const selectedReady = Boolean(state.overview_ready && (!wantsDetails || state.detail_ready));
+  const failedScope = state.current_stage === 'detail' || state.current_stage === 'details'
+    ? 'detail'
+    : state.current_stage === 'overview'
+      ? 'overview'
+      : state.requested_scope;
+  const label = state.status === 'not_synced' && selectedReady ? 'Đã đồng bộ'
     : state.status === 'not_synced' && state.overview_ready ? 'Chưa đồng bộ đầy đủ'
     : state.status === 'not_synced' ? 'Chưa đồng bộ'
     : state.status === 'queued' ? 'Chờ đồng bộ'
       : state.status === 'running' && state.current_stage === 'detail' ? 'Đang đồng bộ Chi tiết'
       : state.status === 'running' ? 'Đang đồng bộ Tổng quan'
-        : state.status === 'failed' && state.overview_ready ? 'Đồng bộ Chi tiết thất bại'
-        : state.status === 'failed' ? 'Đồng bộ lỗi'
+        : state.status === 'failed' && failedScope === 'detail' ? 'Đồng bộ Chi tiết thất bại'
+        : state.status === 'failed' && failedScope === 'overview' ? 'Đồng bộ Tổng quan thất bại'
+        : state.status === 'failed' ? 'Đồng bộ thất bại'
           : state.status === 'cancelled' ? 'Đồng bộ bị hủy'
+          : state.status === 'completed' && !selectedReady ? 'Chưa đồng bộ đầy đủ'
             : 'Đã đồng bộ';
   const processingLabel = dateLabel(state?.current_until ?? monthEndIso(state?.current_month));
   const from = dateLabel(state?.sync_from);
   const until = dateLabel(state?.sync_until);
   const missingDetail = state?.missing_detail_ranges?.[0];
   const missingOverview = state?.missing_overview_ranges?.[0];
-  const missing = missingOverview ?? missingDetail;
+  const missing = missingOverview ?? (wantsDetails ? missingDetail : undefined);
   const detail = state?.status === 'running' && processingLabel
     ? `Đang xử lý đến ${processingLabel}`
-    : state?.status === 'completed' && from && until ? `Từ ${from} đến ${until}`
+    : state.status !== 'failed' && state.status !== 'cancelled' && selectedReady && from && until ? `Từ ${from} đến ${until}`
     : missing ? `Thiếu ${missingOverview ? 'Tổng quan' : 'Chi tiết'}: ${dateLabel(missing.date_from)} - ${dateLabel(missing.date_to)}` : null;
+  return { label, detail };
+}
+
+function SyncStatusCell({ state, wantsDetails }: { state?: InvoiceSyncState; wantsDetails: boolean }) {
+  const { label, detail } = syncStatusPresentation(state, wantsDetails);
   return <div className="sync-state-cell" data-status={state?.status ?? 'not_synced'}><strong>{label}</strong>{detail ? <span>{detail}</span> : null}</div>;
 }
 
@@ -149,7 +173,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   onDeleteAccount(id: string): Promise<void>;
   onSelectAccount(id: string): void;
   onSelectAccounts(ids: string[]): void;
-  onViewResults(id: string, dateFrom: string, dateTo: string): void;
+  onViewResults(id: string, dateFrom: string, dateTo: string, direction: InvoiceDirection): void;
   initialDateFrom?: string;
   initialDateTo?: string;
   initialDirection?: InvoiceDirection;
@@ -157,7 +181,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   onDirectionChange?(direction: InvoiceDirection): void;
 }) {
   const initialRange = useRef(initialDateFrom && initialDateTo ? { dateFrom: initialDateFrom, dateTo: initialDateTo } : currentYearDateRange()).current;
-  const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | null>(null);
+  const [menu, setMenu] = useState<'scope' | 'direction' | 'sync' | 'sync-export' | null>(null);
   const [resultScopes, setResultScopes] = useState<Array<'overview' | 'detail'>>(['overview']);
   const [direction, setDirection] = useState<InvoiceDirection>(initialDirection);
   const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
@@ -168,6 +192,9 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
+  const [accountPageSize, setAccountPageSize] = useState(ACCOUNT_PAGE_SIZE);
+  const pendingAutoExport = useRef<ResultExportSnapshot | null>(null);
+  const autoSyncObservedActive = useRef(false);
   const {
     items: batchItems,
     active: batchActive,
@@ -221,65 +248,98 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
     if (folder) onExportFolder(folder);
   }
 
-  async function exportAllResults() {
-    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'result-export');
-    if (conflict) { setSelectionError(conflict); return; }
-    if (!selectedAccountIds.length) { setSelectionError('Vui lòng chọn ít nhất một tài khoản để tải kết quả.'); return; }
-    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải kết quả.'); return; }
-    if (resultExports.active) {
-      setSelectionError(resultExports.owner === 'results'
-        ? 'Đang tạo Excel trong tab Kết quả. Hãy chờ tác vụ đó hoàn tất.'
-        : 'Đang tải kết quả tất cả. Hãy chờ tác vụ hiện tại hoàn tất.');
-      return;
-    }
-
-    const exportScopes = resultScopes.map((scope) => scope === 'detail' ? 'details' as const : 'overview' as const);
-    const resultDirection = direction;
+  const executeResultExport = useCallback(async (
+    snapshot: ResultExportSnapshot, automatic = false,
+  ) => {
     diagnosticLog('bulk_result_export_requested', {
-      account_count: selectedAccountIds.length,
-      date_from: dateFrom,
-      date_to: dateTo,
-      scopes: exportScopes,
-      direction: resultDirection,
+      account_count: snapshot.connectionIds.length,
+      date_from: snapshot.dateFrom,
+      date_to: snapshot.dateTo,
+      scopes: snapshot.scopes,
+      direction: snapshot.direction,
+      automatic_after_sync: automatic,
     });
 
-    const requests: ArtifactExportRequest[] = selectedAccountIds.map((connection_id) => ({
-      destination: exportFolder,
+    const requests: ArtifactExportRequest[] = snapshot.connectionIds.map((connection_id) => ({
+      destination: snapshot.destination,
       connection_ids: [connection_id],
       kinds: ['excel'],
-      result_scopes: exportScopes,
-      date_from: dateFrom,
-      date_to: dateTo,
-      direction: resultDirection,
+      result_scopes: snapshot.scopes,
+      date_from: snapshot.dateFrom,
+      date_to: snapshot.dateTo,
+      direction: snapshot.direction,
       search: '',
     }));
 
     try {
       const summary = await resultExports.run('bulk', requests);
       diagnosticLog('bulk_result_export_completed', {
-        account_count: selectedAccountIds.length,
+        account_count: snapshot.connectionIds.length,
         file_count: summary.count,
         failed_count: summary.failures.length,
+        automatic_after_sync: automatic,
       });
       if (!summary.failures.length) {
-        setSelectionError(`Đã xuất ${summary.count} file Excel cho ${selectedAccountIds.length} tài khoản.`);
+        setSelectionError(`Đã xuất ${summary.count} file Excel cho ${snapshot.connectionIds.length} tài khoản.`);
       } else if (summary.count > 0) {
-        setSelectionError(`Đã xuất ${summary.count} file Excel; ${summary.failures.length}/${selectedAccountIds.length} tài khoản không có hoặc không thể tạo kết quả.`);
+        setSelectionError(`Đã xuất ${summary.count} file Excel; ${summary.failures.length}/${snapshot.connectionIds.length} tài khoản không có hoặc không thể tạo kết quả.`);
       } else {
-        setSelectionError(resultExportErrorMessage(summary.failures[0]?.error, dateFrom, dateTo, exportScopes));
+        setSelectionError(resultExportErrorMessage(
+          summary.failures[0]?.error, snapshot.dateFrom, snapshot.dateTo, snapshot.scopes,
+        ));
       }
     } catch (error) {
-      diagnosticLog('bulk_result_export_failed', { code: (error as { code?: string })?.code }, 'error');
-      setSelectionError(resultExportErrorMessage(error, dateFrom, dateTo, exportScopes));
+      diagnosticLog('bulk_result_export_failed', {
+        code: (error as { code?: string })?.code,
+        automatic_after_sync: automatic,
+      }, 'error');
+      setSelectionError(resultExportErrorMessage(
+        error, snapshot.dateFrom, snapshot.dateTo, snapshot.scopes,
+      ));
     }
+  }, [resultExports]);
+
+  async function exportAllResults() {
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'result-export');
+    if (conflict) { setSelectionError(conflict); return; }
+    if (!selectedAccountIds.length) { setSelectionError('Vui lòng chọn ít nhất một tài khoản để tải kết quả.'); return; }
+    if (!exportFolder.trim()) { setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi tải kết quả.'); return; }
+    if (!resultScopes.length) { setSelectionError('Vui lòng chọn ít nhất một loại bảng kê xuất Excel.'); return; }
+    if (resultExports.active) {
+      setSelectionError(resultExports.owner === 'results'
+        ? 'Đang tạo Excel trong tab Kết quả. Hãy chờ tác vụ đó hoàn tất.'
+        : 'Đang tải kết quả tất cả. Hãy chờ tác vụ hiện tại hoàn tất.');
+      return;
+    }
+    await executeResultExport({
+      connectionIds: [...selectedAccountIds],
+      destination: exportFolder,
+      dateFrom,
+      dateTo,
+      direction,
+      scopes: resultScopes.map((scope) => scope === 'detail' ? 'details' : 'overview'),
+    });
   }
 
-  function startJob(syncMode: 'new' | 'supplement') {
+  function startJob(syncMode: 'new' | 'supplement', downloadAfterSync = false) {
     if (batchActive) return;
     const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'sync');
     if (conflict) { setSelectionError(conflict); setMenu(null); return; }
     if (selectedAccountIds.length === 0) { setSelectionError('Vui lòng chọn ít nhất một tài khoản.'); return; }
-    const syncScopes = ['overview', 'detail'] as const;
+    if (downloadAfterSync && !exportFolder.trim()) {
+      setSelectionError('Vui lòng chọn thư mục lưu trữ trước khi đồng bộ và tải kết quả.');
+      return;
+    }
+    if (downloadAfterSync && resultScopes.length === 0) {
+      setSelectionError('Vui lòng chọn ít nhất một loại bảng kê xuất Excel.');
+      return;
+    }
+    // The data selector controls both synchronization and the optional Excel
+    // export. Detail jobs still include Overview as a source prerequisite, but
+    // an Overview-only selection must never be widened to Detail.
+    const syncScopes: Array<'overview' | 'detail'> = resultScopes.includes('detail')
+      ? ['overview', 'detail']
+      : ['overview'];
     diagnosticLog('sync_clicked', {
       account_count: selectedAccountIds.length,
       date_from: dateFrom,
@@ -290,20 +350,62 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
     });
     setSelectionError(null);
     setActiveBatchDirection(direction);
-    startMany(selectedAccountIds.map((connection_id) => ({
+    const started = startMany(selectedAccountIds.map((connection_id) => ({
       connection_id,
       date_from: dateFrom,
       date_to: dateTo,
       directions: [direction],
       query_types: ['query', 'sco-query'],
-      scopes: [...syncScopes],
+      scopes: syncScopes,
       data_types: ['invoice'],
       force_refresh: syncMode === 'new',
       refresh_latest_month: false,
       sync_mode: syncMode,
     })));
+    if (started && downloadAfterSync) {
+      pendingAutoExport.current = {
+        connectionIds: [...selectedAccountIds],
+        destination: exportFolder,
+        dateFrom,
+        dateTo,
+        direction,
+        scopes: resultScopes.map((scope) => scope === 'detail' ? 'details' : 'overview'),
+      };
+      autoSyncObservedActive.current = false;
+      diagnosticLog('sync_auto_export_scheduled', {
+        account_count: selectedAccountIds.length,
+        date_from: dateFrom,
+        date_to: dateTo,
+        direction,
+      });
+    }
     setMenu(null);
   }
+
+  useEffect(() => {
+    const snapshot = pendingAutoExport.current;
+    if (!snapshot) return;
+    if (batchActive) {
+      autoSyncObservedActive.current = true;
+      return;
+    }
+    if (!autoSyncObservedActive.current) return;
+
+    pendingAutoExport.current = null;
+    autoSyncObservedActive.current = false;
+    const unsuccessful = snapshot.connectionIds.some((connectionId) => {
+      const item = batchItems[connectionId];
+      const status = item?.status?.status ?? item?.record?.status;
+      return Boolean(item?.error || item?.errorCode)
+        || (status !== 'completed' && status !== 'completed_with_warning');
+    });
+    if (unsuccessful) {
+      diagnosticLog('sync_auto_export_skipped', { reason: 'sync_not_completed' }, 'warn');
+      setSelectionError('Đồng bộ chưa hoàn tất cho tất cả tài khoản nên MIA chưa tự tải kết quả.');
+      return;
+    }
+    void executeResultExport(snapshot, true);
+  }, [batchActive, batchItems, executeResultExport]);
 
   function toggleScope(value: 'overview' | 'detail') {
     setResultScopes((current) => current.includes(value)
@@ -401,13 +503,25 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
     const term = search.trim().toLocaleLowerCase('vi');
     return (!term || `${row.taxCode} ${row.company}`.toLocaleLowerCase('vi').includes(term)) && (!statusFilter || row.status === statusFilter);
   });
-  const { currentPage, totalPages, start: firstRowIndex, end: lastRowIndex } = pageBounds(filteredRows.length, page, ACCOUNT_PAGE_SIZE);
+  const { currentPage, totalPages, start: firstRowIndex, end: lastRowIndex } = pageBounds(filteredRows.length, page, accountPageSize);
   const pageRows = filteredRows.slice(firstRowIndex, lastRowIndex);
   const accountPageTokens = paginationTokens(totalPages, currentPage);
   const accountByTaxCode = new Map(accounts?.map((account) => [account.username, account]) ?? []);
   const filteredAccountIds = filteredRows.map((row) => accountByTaxCode.get(row.taxCode)?.connection_id).filter((id): id is string => Boolean(id));
   const selectedFilteredCount = filteredAccountIds.filter((id) => selectedAccountIds.includes(id)).length;
   const bulkExportWorking = resultExports.active && resultExports.owner === 'bulk';
+
+  function toggleAllFilteredAccounts() {
+    const allFilteredSelected = filteredAccountIds.length > 0
+      && selectedFilteredCount === filteredAccountIds.length;
+    onSelectAccounts(allFilteredSelected
+      ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id))
+      : [...new Set([...selectedAccountIds, ...filteredAccountIds])]);
+  }
+
+  function moveAccountPage(offset: number) {
+    setPage((current) => Math.max(1, Math.min(totalPages, current + offset)));
+  }
 
   useEffect(() => {
     if (page !== currentPage) setPage(currentPage);
@@ -451,6 +565,22 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
             />
           </div>
           <div className="invoice-toolbar-actions">
+            <div className="select-wrap sync-menu-wrap sync-export-menu-wrap">
+              <button
+                className="sync-button invoice-sync-export-button"
+                type="button"
+                aria-label="Đồng bộ và tải xuống"
+                aria-expanded={menu === 'sync-export'}
+                disabled={batchActive || resultExports.active || selectedAccountIds.length === 0}
+                onClick={() => setMenu(menu === 'sync-export' ? null : 'sync-export')}
+              >
+                <DownloadIcon /> Đồng bộ &amp; tải xuống <i className="chevron" />
+              </button>
+              {menu === 'sync-export' ? <div className="sync-mode-menu" role="menu" aria-label="Chọn cách đồng bộ và tải xuống">
+                <button type="button" role="menuitem" onClick={() => startJob('new', true)}><SyncNewIcon /><span><strong>Đồng bộ mới &amp; tải xuống</strong><small>Tải lại toàn bộ dữ liệu trong khoảng thời gian đã chọn, sau đó tự xuất các bảng kê Excel.</small></span></button>
+                <button type="button" role="menuitem" onClick={() => startJob('supplement', true)}><SyncSupplementIcon /><span><strong>Đồng bộ bổ sung &amp; tải xuống</strong><small>Chỉ bổ sung dữ liệu còn thiếu hoặc cần cập nhật, sau đó tự xuất các bảng kê Excel.</small></span></button>
+              </div> : null}
+            </div>
             <div className="select-wrap sync-menu-wrap">
               <button className="sync-button" type="button" aria-label="Đồng bộ dữ liệu" aria-expanded={menu === 'sync'} disabled={batchActive} aria-busy={batchActive} onClick={() => setMenu(menu === 'sync' ? null : 'sync')}>
                 <img src={syncIcon} alt="" /> {batchStopping ? 'Đang dừng…' : batchActive ? 'Đang đồng bộ…' : 'Đồng bộ dữ liệu'}
@@ -504,7 +634,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
         </div>
         <div className="data-card">
           <div className="table-header table-grid">
-            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFilteredCount === filteredAccountIds.length ? selectedAccountIds.filter((id) => !filteredAccountIds.includes(id)) : [...new Set([...selectedAccountIds, ...filteredAccountIds])])}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
+            <button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản trên mọi trang" onClick={toggleAllFilteredAccounts}><SelectionBox checked={filteredAccountIds.length > 0 && selectedFilteredCount === filteredAccountIds.length} indeterminate={selectedFilteredCount > 0 && selectedFilteredCount < filteredAccountIds.length} /></button>
             <span>MST</span><span>Tên công ty</span><span>Trạng thái</span><span className="artifact-quantity-header invoice-count-header"><strong>Số lượng</strong><span><b>Tổng quan</b><b>Chi tiết</b></span></span><span>Tiến trình</span><span>Trạng thái đồng bộ</span><span>Tác vụ</span>
           </div>
           <div className="table-body">
@@ -518,9 +648,14 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                 <span className="invoice-count-value invoice-count-value--overview">{formatInvoiceCount(row.syncState?.invoice_count ?? 0)}</span>
                 <span className="invoice-count-value invoice-count-value--detail">{formatInvoiceCount(row.syncState?.detail_invoice_count ?? 0)}</span>
                 <ProgressCell row={row} />
-                <SyncStatusCell state={row.syncState} />
+                <SyncStatusCell state={row.syncState} wantsDetails={resultScopes.includes('detail')} />
                 {account ? <span className="row-action-group">
-                  <button className="row-result-button" type="button" onClick={() => { diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: dateFrom, date_to: dateTo }); onViewResults(account.connection_id, dateFrom, dateTo); }}>Xem kết quả</button>
+                  <button className="row-result-button" type="button" onClick={() => {
+                    const resultDateFrom = dateFrom;
+                    const resultDateTo = dateTo;
+                    diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: resultDateFrom, date_to: resultDateTo });
+                    onViewResults(account.connection_id, resultDateFrom, resultDateTo, direction);
+                  }}>Xem kết quả</button>
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
               </div>;
@@ -528,8 +663,9 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
           </div>
         </div>
         <footer className="pagination">
+          <label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={accountPageSize} onChange={(event) => { setAccountPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_ACCOUNT_ROWS}>Toàn bộ</option></select></label>
           <span>{`Hiển thị ${filteredRows.length ? firstRowIndex + 1 : 0}–${lastRowIndex} trên tổng ${filteredRows.length} tài khoản`}</span>
-          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div>
+          <div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => moveAccountPage(-1)}>‹</button>{accountPageTokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => moveAccountPage(1)}>›</button></div>
         </footer>
       </section>
       {batchMessage ? <NoticeDialog kind={batchMessage.kind} message={batchMessage.text} onClose={dismissMessage} /> : selectionError ? <NoticeDialog kind={selectionError.startsWith('Đã ') ? 'success' : 'notice'} message={selectionError} onClose={() => setSelectionError(null)} /> : null}

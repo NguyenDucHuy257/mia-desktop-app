@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { buildLegacyDetection, normalizePhone, readLegacyPhones } = require('./legacy-detector.cjs');
 const { isLicenseAccessGranted } = require('./access-control.cjs');
+const { validateEntitlements } = require('./entitlements.cjs');
 
 const TOOL = 'MIA';
 const ACTIVE_STATES = new Set(['active']);
@@ -60,8 +61,36 @@ function responseDiagnostic(response) {
   };
 }
 
+function normalizeUpdateInfo(value, currentVersion = '') {
+  const source = value && typeof value === 'object' ? value : {};
+  const rawUrl = typeof source.url === 'string' ? source.url.trim() : '';
+  let url = '';
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'drive.google.com') url = parsed.href;
+  } catch { url = ''; }
+  const latestVersion = typeof source.latest_version === 'string' ? source.latest_version.trim() : '';
+  const label = typeof source.label === 'string' ? source.label.trim().slice(0, 120) : '';
+  const semver = (input) => {
+    const match = String(input || '').match(/(?:^|[^0-9])(\d+)\.(\d+)\.(\d+)(?:[^0-9]|$)/);
+    return match ? match.slice(1).map(Number) : null;
+  };
+  const latest = semver(latestVersion || label);
+  const current = semver(currentVersion);
+  const isNewer = !latest || !current || latest.some((part, index) => part !== current[index]
+    && part > current[index]
+    && latest.slice(0, index).every((prefix, prefixIndex) => prefix === current[prefixIndex]));
+  return Object.freeze({
+    available: source.available === true && Boolean(url) && isNewer,
+    url,
+    label,
+    latest_version: latestVersion,
+    current_version: String(currentVersion || '').trim(),
+  });
+}
+
 class LicenseManager {
-  constructor({ enabled, store, api, securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID() }) {
+  constructor({ enabled, store, api, currentVersion = '', securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID() }) {
     this.enabled = Boolean(enabled);
     this.store = store;
     this.api = api;
@@ -72,6 +101,7 @@ class LicenseManager {
     this.now = now;
     this.legacyPhonePaths = legacyPhonePaths;
     this.createDeviceId = createDeviceId;
+    this.currentVersion = String(currentVersion || '').trim();
     this.current = this.enabled
       ? safeState('checking', { valid: false, expired: false })
       : safeState('error', { valid: false, expired: false, reason: 'license_disabled', mode: 'disabled' });
@@ -88,13 +118,18 @@ class LicenseManager {
   details() {
     const details = this.current.details || {};
     let saved = null;
+    let firstUseDate = null;
     try { saved = this.store.loadLicense(); } catch { saved = null; }
+    try { firstUseDate = this.store.loadFirstUseDate?.() || null; } catch { firstUseDate = null; }
     return {
       state: this.current.state,
       active: this.current.active,
       phone: maskPhone(details.phone),
       phone_status: details.phone_status || null,
       expires_at: details.expires_at || null,
+      activated_at: firstUseDate || details.activated_at || null,
+      plan: details.plan || saved?.entitlements?.plan || null,
+      max_tax_codes: details.max_tax_codes ?? saved?.entitlements?.max_tax_codes ?? null,
       device_bound: Boolean(details.device_id),
       canonical_key: maskKey(saved?.canonical_key || details.canonical_key),
       reason: this.current.reason || null,
@@ -139,10 +174,13 @@ class LicenseManager {
       phone: normalizedPhone,
       hardware: this.evidence.hardware,
       legacy_keys: [...new Set(legacyKeys)].slice(0, 32),
+      current_version: this.currentVersion,
     };
   }
 
   persistActive(response, source) {
+    const entitlements = validateEntitlements(response?.entitlements);
+    const update = normalizeUpdateInfo(response?.update, this.currentVersion);
     const candidate = {
       state: 'active', active: true, valid: response?.valid,
       expired: response?.expired, reason: responseGrantsLicense(response) ? 'ok' : response?.reason,
@@ -151,6 +189,12 @@ class LicenseManager {
       throw Object.assign(new Error('active license response is incomplete'), { code: 'invalid_response' });
     }
     const phone = normalizePhone(response.phone) || this.profile.phone || null;
+    let firstUseDate = null;
+    try { firstUseDate = this.store.loadFirstUseDate?.() || null; } catch { firstUseDate = null; }
+    if (!firstUseDate) {
+      firstUseDate = this.now().toISOString().slice(0, 10);
+      firstUseDate = this.store.saveFirstUseDate?.(firstUseDate) || firstUseDate;
+    }
     this.profile = {
       ...this.profile,
       version: 3,
@@ -168,11 +212,15 @@ class LicenseManager {
       phone,
       phone_status: response.phone_status || (phone ? 'verified' : 'pending'),
       expires_at: response.expires_at || null,
+      activated_at: firstUseDate,
       last_verified_at: this.now().toISOString(),
       source,
+      entitlements,
     });
     this.store.saveMigrationState({ status: 'completed', reason: source, updated_at: this.now().toISOString() });
     this.current = safeState('active', {
+      entitlements,
+      update,
       valid: true,
       expired: false,
       reason: 'ok',
@@ -181,6 +229,9 @@ class LicenseManager {
         phone,
         phone_status: response.phone_status || (phone ? 'verified' : 'pending'),
         expires_at: response.expires_at || null,
+        activated_at: firstUseDate,
+        plan: entitlements.plan,
+        max_tax_codes: entitlements.max_tax_codes,
       },
     });
     return this.current;
@@ -212,6 +263,52 @@ class LicenseManager {
     if (this.inFlight) return this.inFlight;
     this.inFlight = this.initializeOnce().finally(() => { this.inFlight = null; });
     return this.inFlight;
+  }
+
+  async verifyTaxCode(value) {
+    if (!this.enabled) return this.current;
+    const mst = String(value || '').trim();
+    try {
+      if (!this.identity || !this.evidence || !this.profile) await this.prepareLocalState();
+      let saved;
+      try { saved = this.store.loadLicense(); } catch (error) {
+        this.current = safeState('error', { reason: error.code || 'license_state_corrupt' });
+        return this.current;
+      }
+      const phone = normalizePhone(saved?.phone)
+        || normalizePhone(this.profile?.phone)
+        || this.detection?.phones?.[0]
+        || null;
+      if (!phone) {
+        this.current = safeState('error', { reason: 'license_policy_missing' });
+        return this.current;
+      }
+      const response = await this.api.verifyKeyV2({
+        ...this.requestPayload({
+          phone,
+          legacyKeys: this.detection?.exact_key_candidates || [],
+        }),
+        mst,
+      });
+      this.log('license_operation_verify_response', { ...responseDiagnostic(response), has_mst: Boolean(mst) });
+      if (responseGrantsLicense(response) && response.authorized !== false && response.mst_authorized !== false) {
+        return this.persistActive(response, response.migrated
+          ? 'legacy_migration'
+          : response.recovered ? 'device_recovery' : 'v2_verify');
+      }
+      this.current = safeState('error', {
+        valid: false,
+        expired: Boolean(response?.expired),
+        reason: String(response?.reason || 'license_policy_missing'),
+      });
+      return this.current;
+    } catch (error) {
+      this.log('license_operation_verify_failed', {
+        code: error.code || 'license_request_failed', error_type: error?.name || 'Error',
+      });
+      this.current = safeState('error', { valid: false, expired: false, reason: 'license_policy_missing' });
+      return this.current;
+    }
   }
 
   async initializeOnce() {
@@ -308,4 +405,4 @@ class LicenseManager {
   }
 }
 
-module.exports = { LicenseManager, maskKey, maskPhone, miaV2Key, newProfile, responseGrantsLicense };
+module.exports = { LicenseManager, maskKey, maskPhone, miaV2Key, newProfile, normalizeUpdateInfo, responseGrantsLicense };

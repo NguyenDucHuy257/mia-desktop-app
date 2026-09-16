@@ -12,6 +12,55 @@ from mia_backend import ProductionBackend
 
 
 class DesktopExitCancellationTests(unittest.TestCase):
+    def test_vat_status_omits_large_audit_and_preserves_file_and_totals(self):
+        import json
+        original = {"count": 1, "files": ["C:/exports/vat.xlsx"], "audit": {
+            "purchase_rows": [{"name": "x" * 2000}] * 2000,
+            "purchase_base": "123456", "reduction_anomaly_count": 2000,
+            "reduction_anomalies": [{"name": "x" * 2000}] * 2000,
+        }}
+        result = mia_runtime._vat_export_rpc_result(original)
+        self.assertLess(len(json.dumps(result).encode()), mia_runtime.MAX_MESSAGE_BYTES)
+        self.assertEqual(result["files"], original["files"])
+        self.assertEqual(result["audit"]["purchase_base"], "123456")
+        self.assertEqual(result["audit"]["reduction_anomaly_count"], 2000)
+        self.assertEqual(len(original["audit"]["purchase_rows"]), 2000)
+
+    def test_orphaned_artifact_task_is_reaped_before_new_export(self):
+        previous = mia_runtime._artifact_task
+        try:
+            mia_runtime._artifact_task = {
+                "task_id": "artifact-orphan",
+                "status": "running",
+                "worker": threading.Thread(),
+                "started_monotonic": time.monotonic(),
+            }
+            mia_runtime._reap_stale_artifact_task()
+            self.assertEqual(mia_runtime._artifact_task["status"], "failed")
+            self.assertEqual(mia_runtime._artifact_task["error"], "artifact_worker_lost")
+        finally:
+            mia_runtime._artifact_task = previous
+
+    def test_artifact_timeout_uses_last_progress_activity(self):
+        previous = mia_runtime._artifact_task
+        try:
+            mia_runtime._artifact_task = {
+                "task_id": "artifact-stalled",
+                "status": "running",
+                "worker": threading.current_thread(),
+                "started_monotonic": time.monotonic(),
+                "last_activity_monotonic": (
+                    time.monotonic() - mia_runtime.ARTIFACT_TASK_TIMEOUT_SECONDS - 1
+                ),
+                "cancel_event": Mock(),
+            }
+            mia_runtime._reap_stale_artifact_task()
+            self.assertEqual(mia_runtime._artifact_task["status"], "failed")
+            self.assertEqual(mia_runtime._artifact_task["error"], "artifact_export_timeout")
+            mia_runtime._artifact_task["cancel_event"].set.assert_called_once_with()
+        finally:
+            mia_runtime._artifact_task = previous
+
     def test_exit_cancellation_requests_source_cancel_for_every_nonterminal_job(self):
         backend = object.__new__(ProductionBackend)
         backend.repository = Mock()

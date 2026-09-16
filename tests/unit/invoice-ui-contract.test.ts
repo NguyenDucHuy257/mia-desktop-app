@@ -64,6 +64,24 @@ describe('invoice result control presentation', () => {
     expect(styles).toContain('overflow-wrap: break-word');
   });
 
+  it('offers a snapshot-safe sync then download action', async () => {
+    const [component, lifecycle, styles] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/features/jobs/use-batch-job-lifecycle.ts'),
+      source('src/styles/invoice-refresh.css'),
+    ]);
+    expect(component).toContain('Đồng bộ &amp; tải xuống');
+    expect(component).toContain("startJob('new', true)");
+    expect(component).toContain("startJob('supplement', true)");
+    expect(component).toContain('pendingAutoExport.current');
+    expect(component).toContain("status !== 'completed' && status !== 'completed_with_warning'");
+    expect(component).toContain('executeResultExport(snapshot, true)');
+    expect(component).toContain('connectionIds: [...selectedAccountIds]');
+    expect(lifecycle).toContain('return true;');
+    expect(lifecycle).toContain('return false;');
+    expect(styles).toContain('.invoice-sync-export-button');
+  });
+
   it('uses blue result actions and blue-to-gold scroll thumbs', async () => {
     const [page, luxury] = await Promise.all([
       source('src/features/results/ResultsPage.tsx'),
@@ -101,6 +119,8 @@ describe('invoice result control presentation', () => {
     ]);
     expect(invoicePage).toContain('ACCOUNT_PAGE_SIZE = 20');
     expect(invoicePage).toContain('pageRows.map');
+    expect(invoicePage).toContain('Chọn tất cả tài khoản trên mọi trang');
+    expect(invoicePage).toContain('function moveAccountPage(offset: number)');
     expect(invoicePage).not.toContain('[1, 2, 3].map');
     expect(datePicker).toContain('date-range-calendar-control');
     expect(addAccount).toContain('Quay lại Quản lý HĐĐT');
@@ -126,6 +146,7 @@ describe('invoice result control presentation', () => {
     expect(resultsPage).toContain('<option value="sco-query">Máy tính tiền</option>');
     expect(resultsPage).toContain('<option value="combined">HĐĐT &amp; Máy tính tiền</option>');
     expect(resultsPage).toContain("query_types: ['query', 'sco-query']");
+    expect(resultsPage).not.toContain('Mua vào và bán ra');
   });
 
   it('reuses the invoice-management action button for XML HTML downloads', async () => {
@@ -178,6 +199,15 @@ describe('invoice result control presentation', () => {
     expect(page).toContain('Xem kết quả');
     expect(styles).not.toContain('translateY');
     expect(styles).not.toContain('scale(');
+  });
+
+  it('queues one VAT workbook per selected account instead of rejecting batch selection', async () => {
+    const page = await source('src/features/artifacts/VatReturnExportPage.tsx');
+    expect(page).not.toContain('selectedConnectionIds.length !== 1');
+    expect(page).not.toContain('Vui lòng chỉ chọn một tài khoản cho mỗi workbook');
+    expect(page).toContain('for (let index = 0; index < exportIds.length; index += 1)');
+    expect(page).toContain('connection_ids: [id]');
+    expect(page).toContain('Đang xuất ${index + 1}/${exportIds.length}');
   });
 
   it('uses compact full-width equal artifact progress columns without invoice-detail copy', async () => {

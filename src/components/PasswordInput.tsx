@@ -1,20 +1,35 @@
-import { InputHTMLAttributes, useState } from 'react';
+import { InputHTMLAttributes, useRef, useState } from 'react';
 
 type PasswordInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'>;
 
 export function PasswordInput(props: PasswordInputProps) {
   const [showPassword, setShowPassword] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function toggleVisibility() {
+    const input = inputRef.current;
+    const selectionStart = input?.selectionStart ?? null;
+    const selectionEnd = input?.selectionEnd ?? null;
+    setShowPassword(current => !current);
+    requestAnimationFrame(() => {
+      if (!input) return;
+      input.focus();
+      if (selectionStart !== null && selectionEnd !== null) {
+        input.setSelectionRange(selectionStart, selectionEnd);
+      }
+    });
+  }
 
   return (
     <span className="password-input-control">
-      <input {...props} type={showPassword ? 'text' : 'password'} />
+      <input {...props} ref={inputRef} type={showPassword ? 'text' : 'password'} />
       <button
         className="password-visibility-toggle"
         type="button"
         aria-label={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
         aria-pressed={showPassword}
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => setShowPassword(current => !current)}
+        onClick={toggleVisibility}
       >
         {showPassword ? <EyeOffIcon /> : <EyeIcon />}
       </button>

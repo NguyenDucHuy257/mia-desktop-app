@@ -7,7 +7,8 @@ export function resultExportErrorMessage(
   _scopes: ResultExportScope[] = [],
   search = '',
 ) {
-  const code = String((error as { code?: string })?.code ?? 'internal_error');
+  const value = error as { code?: string; message?: string };
+  const code = String(value?.code ?? value?.message?.match(/\[([a-z_]+)\]/)?.[1] ?? 'internal_error');
   const range = dateFrom && dateTo ? ` từ ${formatDate(dateFrom)} đến ${formatDate(dateTo)}` : '';
 
   if (code === 'result_export_busy_bulk') {
@@ -21,6 +22,12 @@ export function resultExportErrorMessage(
   }
   if (code === 'artifact_task_active') {
     return 'Đang có một tiến trình tải hoặc xuất file khác. Vui lòng chờ tiến trình hiện tại hoàn tất.';
+  }
+  if (code === 'artifact_export_timeout') {
+    return 'Xuất Excel đã dừng vì không có tiến triển trong 2 phút. Hãy thử lại với khoảng thời gian nhỏ hơn.';
+  }
+  if (code === 'artifact_worker_lost') {
+    return 'Tiến trình xuất Excel bị gián đoạn. Tác vụ cũ đã được dọn; bạn có thể thử xuất lại ngay.';
   }
   if (code === 'result_export_no_overview_data') {
     return `Không có dữ liệu Tổng quan${range} để tạo Excel.`;

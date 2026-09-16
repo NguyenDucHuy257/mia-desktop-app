@@ -52,10 +52,14 @@ def _process_lock(lock_path: Path):
 
 
 def _paths(base_dir: str | Path) -> dict[str, Path]:
-    folder = Path(base_dir).resolve() / TOOL
+    root = Path(base_dir).resolve()
+    folder = root / TOOL
     return {
         "vip": folder / "vip.txt",
         "legacy": folder / "legacy_vip.txt",
+        # The supplied 3.9.0 source requests tool=MIA2. It is a read-only
+        # migration source; all new state remains under MIA.
+        "legacy_mia2": root / "MIA2" / "vip.txt",
         "bindings": folder / "device_bindings.json",
         "migrations": folder / "legacy_migrations.json",
         "lock": folder / ".license_v2.lock",
@@ -83,13 +87,17 @@ def _atomic_json(path: Path, value: dict) -> None:
 
 
 def _load_json(path: Path) -> dict:
-    if not path.exists() or path.stat().st_size <= 0:
+    if not path.exists():
         return {}
+    if path.stat().st_size <= 0:
+        raise RuntimeError(f"Corrupt MIA license state: {path.name}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Corrupt MIA license state: {path.name}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Corrupt MIA license state: {path.name}")
+    return value
 
 
 def _find_key_line(lines: Iterable[str], key: str) -> Optional[str]:
@@ -98,7 +106,39 @@ def _find_key_line(lines: Iterable[str], key: str) -> Optional[str]:
 
 def _expiry(line: str) -> str:
     parts = line.split("|")
+    if len(parts) > 1 and re.fullmatch(r"\d{2}/\d{2}/\d{4}", parts[1].strip()):
+        return parts[1].strip()  # Older key|expiry|l|phone|MST layout.
     return parts[2].strip() if len(parts) > 2 else ""
+
+
+def _entitlements(line: str) -> dict:
+    parts = [part.strip() for part in line.split("|")]
+    plan = parts[1].upper() if len(parts) > 1 else ""
+    if re.fullmatch(r"\d{2}/\d{2}/\d{4}", plan):
+        plan = "V"
+    trial = re.fullmatch(r"TEST([1-9]\d*)?", plan)
+    paid_limited = re.fullmatch(r"VIP([1-9]\d*)", plan)
+    if not trial and not paid_limited and plan not in {"V", "VIP"}:
+        raise ValueError("license_policy_invalid")
+    scope = parts[4] if len(parts) > 4 else ""
+    # Only parse the scope field, never contact numbers or trailing notes.
+    # Preserve branch IDs; a parent MST does not authorize all its branches.
+    ids = list(dict.fromkeys(re.findall(r"(?<![\w-])(?:\d{12}|\d{10})(?:-(?:U)?\d{3})?(?![\w-])", scope)))
+    unlimited = scope.lower() == "o" or not scope
+    if not unlimited and not ids:
+        raise ValueError("license_policy_invalid")
+    maximum = int(trial.group(1) or 1) if trial else int(paid_limited.group(1)) if paid_limited else None
+    if trial and (not ids or len(ids) > maximum):
+        raise ValueError("license_policy_invalid")
+    if paid_limited and (not ids or len(ids) > maximum):
+        raise ValueError("license_policy_invalid")
+    return {
+        "version": 1, "plan": plan, "trial": bool(trial),
+        "max_tax_codes": maximum if trial or paid_limited else len(ids) if ids else None,
+        "allowed_tax_codes": ids,
+        "date_from": "2026-08-01" if trial else None,
+        "date_to": "2026-08-31" if trial else None,
+    }
 
 
 def _expired(value: str, now: datetime) -> bool:
@@ -107,7 +147,7 @@ def _expired(value: str, now: datetime) -> bool:
     try:
         return datetime.strptime(value, "%d/%m/%Y").date() < now.date()
     except ValueError:
-        return False
+        return True
 
 
 def _phone(value: str, *, required: bool = False) -> str:
@@ -149,9 +189,9 @@ def _ensure_legacy_seed(paths: dict[str, Path]) -> None:
     legacy = _read_lines(paths["legacy"])
     existing = {line.split("|", 1)[0].strip() for line in legacy}
     changed = False
-    for line in _read_lines(paths["vip"]):
+    for line in [*_read_lines(paths["vip"]), *_read_lines(paths["legacy_mia2"])]:
         key = line.split("|", 1)[0].strip()
-        if key.startswith(NEW_KEY_PREFIX) or key in existing:
+        if not (V1_RE.fullmatch(key) or OBSERVED_V2_RE.fullmatch(key)) or key in existing:
             continue
         legacy.append(line)
         existing.add(key)
@@ -186,8 +226,14 @@ def _response(key: str, line: str, binding: dict, hardware: Dict[str, str], now:
     # Successful verification has one canonical authorization reason. Migration
     # and recovery remain explicit boolean metadata, not alternate allow reasons.
     final_reason = "expired" if is_expired else "ok" if ok else "hardware_mismatch_below_50_percent"
+    try:
+        entitlements = _entitlements(line)
+    except ValueError:
+        entitlements = None
+        final_reason = "license_policy_invalid"
     return {
-        "valid": ok and not is_expired,
+        "valid": ok and not is_expired and entitlements is not None,
+        "entitlements": entitlements,
         "key": key,
         "device_id": str(binding.get("device_id") or ""),
         "phone": str(binding.get("phone") or ""),
@@ -234,12 +280,22 @@ def verify_mia_key_v2(
         # Normal verification; a manually-added KEYV2 key binds on first use.
         active_line = _find_key_line(vip_lines, expected_key)
         if active_line:
-            saved = dict(bindings.get(expected_key) or {})
-            if not saved:
+            if expected_key not in bindings:
                 saved = _binding(device_id, clean_phone, current_hardware, "manual_activation", now)
                 bindings[expected_key] = saved
                 _atomic_json(paths["bindings"], bindings)
-            elif clean_phone and not saved.get("phone"):
+            else:
+                raw_saved = bindings[expected_key]
+                if not isinstance(raw_saved, dict):
+                    raise RuntimeError("Corrupt MIA license binding")
+                saved = dict(raw_saved)
+                try:
+                    saved_hardware = _hardware(saved.get("hardware") or {})
+                except (TypeError, ValueError) as error:
+                    raise RuntimeError("Corrupt MIA license binding") from error
+                if not str(saved.get("device_id") or "").strip() or len(saved_hardware) < MIN_HARDWARE_FIELDS:
+                    raise RuntimeError("Corrupt MIA license binding")
+            if clean_phone and not saved.get("phone"):
                 saved["phone"] = clean_phone
                 saved["phone_status"] = "verified"
                 bindings[expected_key] = saved
@@ -271,11 +327,18 @@ def verify_mia_key_v2(
 
         legacy_map = {
             line.split("|", 1)[0].strip(): line
-            for line in _read_lines(paths["legacy"])
+            for line in [*_read_lines(paths["legacy"]), *vip_lines]
             if V1_RE.fullmatch(line.split("|", 1)[0].strip())
             or OBSERVED_V2_RE.fullmatch(line.split("|", 1)[0].strip())
         }
-        selected_key = next((candidate for candidate in [str(value or "").strip() for value in list(legacy_keys or [])[:32]] if candidate in legacy_map), "")
+        candidates = [candidate for candidate in [str(value or "").strip() for value in list(legacy_keys or [])[:32]] if candidate in legacy_map]
+        # An old expired V1 candidate must not hide a renewed phone-bound key.
+        # Never combine grants from separate records.
+        candidates.sort(key=lambda candidate: (
+            _expired(_expiry(legacy_map[candidate]), now),
+            not candidate.startswith("KEY"),
+        ))
+        selected_key = candidates[0] if candidates else ""
         if selected_key:
             legacy_line = legacy_map[selected_key]
             previous = dict(migrations.get(selected_key) or {})
@@ -290,6 +353,10 @@ def verify_mia_key_v2(
             if _expired(expiry, now):
                 return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "phone_status": "verified" if clean_phone else "pending", "expires_at": expiry, "expired": True, "migrated": False, "reason": "legacy_key_expired"}
             parts = legacy_line.split("|")
+            try:
+                _entitlements(legacy_line)
+            except ValueError:
+                return {"valid": False, "expired": False, "reason": "license_policy_invalid"}
             parts[0] = expected_key
             new_line = "|".join(parts)
             _append_vip_line(paths["vip"], new_line)

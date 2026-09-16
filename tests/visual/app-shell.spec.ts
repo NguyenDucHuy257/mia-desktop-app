@@ -12,6 +12,10 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
         details: async () => ({ state: 'active', active: true, phone: '098****321', phone_status: 'verified', expires_at: null, device_bound: true, canonical_key: 'KEYV2-****F82B', reason: 'ok', mode: null }),
         revealKey: async () => 'KEYV2-20cd0a15bc1ab172b385707877c0f82b-0987654321',
       },
+      offlineAuth: {
+        status: async () => ({ state: 'unlocked', configured: true, unlocked: true, retry_after_seconds: 0 }),
+        change: async () => ({ state: 'unlocked', configured: true, unlocked: true, retry_after_seconds: 0 }),
+      },
       accountConnections: { list: async () => [account] },
       jobs: { resumeAll: async () => [], latestAll: async () => [], status: async () => ({}), summary: async () => ({}), cancel: async () => ({}), clear: async () => undefined },
       preferences: { get: async () => ({ concurrency: 1, retries: 5, pdfConcurrency: 5, exportFolder: 'C:\\MIA' }), set: async (value: unknown) => value },
@@ -53,7 +57,7 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await expect(popup).not.toContainText('MST:');
   await expect(popup).not.toContainText('SĐT:');
   await expect(popup).not.toContainText('Đăng xuất');
-  await expect(popup).toContainText('MIA TOOL 2026 4.0.5');
+  await expect(popup).toContainText('MIA TOOL 2026 4.0.8');
   await expect(popup.locator('code')).not.toContainText('20cd0a15');
   await popup.getByRole('button', { name: 'Hiện' }).click();
   await expect(popup.locator('code')).toHaveText('KEYV2-20cd0a15bc1ab172b385707877c0f82b-0987654321');
@@ -69,10 +73,24 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await page.getByRole('button', { name: 'Tra cứu PDF gốc', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Tra cứu PDF gốc' })).toBeVisible();
   await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
-  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
+  await page.getByRole('button', { name: 'Cài đặt hệ thống', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Mật khẩu đăng nhập' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Đổi mật khẩu' })).toBeVisible();
+  await expect(page.locator('.utility-page--settings')).toHaveCSS('overflow-y', 'auto');
+  await expect(page.getByLabel('Số lần thử lại')).toHaveCSS('height', '42px');
+  await page.screenshot({ path: 'test-results/settings/system-settings.png', fullPage: false });
+  await page.getByRole('button', { name: 'Đổi mật khẩu' }).click();
+  await page.locator('.utility-page--settings').hover();
+  await page.mouse.wheel(0, 700);
+  await expect.poll(() => page.locator('.utility-page--settings').evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   const guide = page.getByRole('button', { name: 'Hướng dẫn sử dụng', exact: true });
   await expect(guide.locator('svg')).toHaveCount(1);
   await guide.click();
-  await expect(page.getByRole('heading', { name: 'Hướng dẫn sử dụng' })).toBeVisible();
-  await expect(page.getByText('Chức năng đang cập nhật')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Hướng dẫn sử dụng', exact: true })).toBeVisible();
+  await expect(page.getByTitle('Hướng dẫn sử dụng MIA TOOL 2026')).toBeVisible();
+  const openGuideVideo = page.getByRole('button', { name: 'Mở video trên YouTube' });
+  await expect(openGuideVideo).toBeVisible();
+  await openGuideVideo.click();
+  expect(await page.evaluate(() => (window as unknown as { __shellTest: { external: string[] } }).__shellTest.external))
+    .toContain('https://www.youtube.com/watch?v=17FEQpNv4Tw');
 });

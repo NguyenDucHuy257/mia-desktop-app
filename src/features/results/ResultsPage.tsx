@@ -12,6 +12,9 @@ import { workspaceTaskConflictMessage, type WorkspaceTask } from '../../lib/work
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
 import type { BatchItem } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from './result-export-errors';
+import type { MaterialLookupStatus } from '../../lib/runtime-bridge';
+import { cachedResultPage, setResultRevision } from './result-page-cache';
+import { resultExportCoverageWarning, type CoverageExportScope } from './result-export-coverage';
 import { ResultExportProgressBar } from './ResultExportProgressBar';
 import { coalesceResultRequest, requestResultWithRetry } from './result-request-policy';
 import type { ResultExportLifecycle } from './use-result-export-lifecycle';
@@ -26,14 +29,16 @@ type ResultExportScope = 'overview' | 'details' | 'reconciliation';
 type ResultItem = OverviewResult | DetailResult | ReconciliationResult;
 type ResultQueryTypeSelection = InvoiceQueryType | 'combined';
 
-const PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 50;
+const ALL_PAGE_SIZE = 10000;
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warning', 'failed', 'cancelled', 'abandoned']);
 
-export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, crawlItem, resultExports, activeWorkspaceTask, onBack }: {
+export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initialDateTo, initialDirection = 'purchase', crawlItem, resultExports, activeWorkspaceTask, onBack }: {
   connectionId: string;
   exportFolder: string;
   initialDateFrom?: string;
   initialDateTo?: string;
+  initialDirection?: 'purchase' | 'sold';
   crawlItem?: BatchItem;
   resultExports: ResultExportLifecycle;
   activeWorkspaceTask?: WorkspaceTask | null;
@@ -45,8 +50,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       : currentYearDateRange(),
   ).current;
   const [mode, setMode] = useState<ResultMode>('overview');
-  const [direction, setDirection] = useState<'purchase' | 'sold' | ''>('');
-  const [queryType, setQueryType] = useState<ResultQueryTypeSelection>('query');
+  const [direction, setDirection] = useState<'purchase' | 'sold'>(initialDirection);
+  const [queryType, setQueryType] = useState<ResultQueryTypeSelection>('combined');
   const queryTypeContract = useMemo(() => queryType === 'combined'
     ? { query_type: null, query_types: ['query', 'sco-query'] as InvoiceQueryType[] }
     : { query_type: queryType, query_types: undefined }, [queryType]);
@@ -70,14 +75,21 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const [aggregate, setAggregate] = useState<NonNullable<LocalResultPage<ResultItem>['aggregate']> | null>(null);
   const [reconciliation, setReconciliation] = useState<ReconciliationSummary | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [exportOpen, setExportOpen] = useState(false);
   const [exportScopes, setExportScopes] = useState<ResultExportScope[]>(['overview', 'details']);
   const [feedback, setFeedback] = useState('');
+  const [materialStatus, setMaterialStatus] = useState<MaterialLookupStatus | null>(null);
+  const [materialStarting, setMaterialStarting] = useState(false);
+  const materialRevision = useRef('');
   const [exclusion, setExclusion] = useState<ResultExclusion>({ keys: [], rules: [] });
   const [selection, setSelection] = useState(emptyInvoiceSelection);
   const [confirmExclusion, setConfirmExclusion] = useState(false);
   const generation = useRef(0);
+  const exportPreparing = useRef(false);
+  const [exportChecking, setExportChecking] = useState(false);
+  const lastCrawlRefresh = useRef(0);
   const inFlightPages = useRef(new Map<string, Promise<LocalResultPage<ResultItem>>>());
   const pageCache = useRef(new Map<number, LocalResultPage<ResultItem>>());
   const cursorByPage = useRef(new Map<number, string | null>([[1, null]]));
@@ -96,6 +108,15 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     || (crawlStatus && !TERMINAL_JOB_STATUSES.has(crawlStatus)),
   );
   const crawlPercent = Math.max(0, Math.min(100, Number(crawlJob?.overall_percent ?? 0)));
+  const downloadBlockReason = materialStarting || materialStatus?.status === 'running'
+    ? 'Đang tra cứu MVT. Vui lòng chờ hoàn tất trước khi tải xuống.'
+    : crawlActive || activeWorkspaceTask === 'sync'
+      ? 'Đang đồng bộ dữ liệu. Vui lòng chờ hoàn tất trước khi tải xuống.'
+      : activeWorkspaceTask === 'artifact-download' || activeWorkspaceTask === 'vat-return-export'
+        ? 'Đang xử lý tải dữ liệu khác. Vui lòng chờ hoàn tất trước khi tải xuống.'
+        : '';
+  const downloadBlockRef = useRef(downloadBlockReason);
+  downloadBlockRef.current = downloadBlockReason;
   const crawlLabel = crawlPhase === 'queued'
     ? 'Chờ đến lượt xử lý…'
     : crawlPhase === 'starting'
@@ -124,7 +145,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     const query = {
       connection_id: connectionId,
       cursor,
-      limit: PAGE_SIZE,
+      limit: pageSize,
       search: debouncedSearch,
       column_filters: columnFilters,
       sort: resultSort,
@@ -134,8 +155,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       date_from: dateFrom,
       date_to: dateTo,
     };
-    const requestKey = JSON.stringify([mode, query]);
-    return coalesceResultRequest(inFlightPages.current, requestKey, () => (
+    const requestKey = JSON.stringify(['material-existing-column-v2', mode, query]);
+    return cachedResultPage(connectionId, requestKey, () => coalesceResultRequest(inFlightPages.current, requestKey, () => (
       requestResultWithRetry(
         () => bridge[mode](query) as Promise<LocalResultPage<ResultItem>>,
         attempt => {
@@ -162,8 +183,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           );
         },
       )
-    ));
-  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, mode, queryType, queryTypeContract, resultSort]);
+    )));
+  }, [columnFilters, connectionId, dateFrom, dateTo, debouncedSearch, direction, exclusion, mode, pageSize, queryType, queryTypeContract, resultSort]);
 
   const applyPage = useCallback((result: LocalResultPage<ResultItem>, targetPage: number) => {
     setItems(result.items);
@@ -173,12 +194,12 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     setPagination(result.pagination);
     setTotalCount(typeof result.total_count === 'number' ? result.total_count : null);
     setAggregate(result.aggregate ?? null);
-    if (result.reconciliation) setReconciliation(result.reconciliation);
+    setReconciliation(result.reconciliation ?? null);
     setPageNumber(targetPage);
     setState('ready');
   }, []);
 
-  const loadPage = useCallback(async (targetPage: number, token = generation.current) => {
+  const loadPage = useCallback(async (targetPage: number, token = ++generation.current) => {
     if (targetPage < 1) return;
     setState('loading');
     try {
@@ -244,7 +265,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
   useEffect(() => {
     const bridge = window.miaRuntime?.results;
-    if (!bridge || typeof bridge.reconciliation !== 'function' || !connectionId) return;
+    if (!bridge || typeof bridge.reconciliation !== 'function' || !connectionId || mode !== 'reconciliation') return;
     // Reconciliation scans the complete overview/detail dataset. Running that
     // scan for every progress tick keeps long-lived SQLite read transactions
     // open while the crawler is trying to commit the next detail. On Windows
@@ -255,24 +276,8 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       setReconciliation(null);
       return;
     }
-    let active = true;
-    void bridge.reconciliation({
-      connection_id: connectionId,
-      cursor: null,
-      limit: 1,
-      search: '',
-      column_filters: {},
-      direction: direction || null,
-      ...queryTypeContract,
-      date_from: dateFrom,
-      date_to: dateTo,
-    }).then(result => {
-      if (active) setReconciliation(result.reconciliation ?? null);
-    }).catch(() => {
-      if (active) setReconciliation(null);
-    });
-    return () => { active = false; };
-  }, [connectionId, crawlActive, dateFrom, dateTo, direction, queryType, queryTypeContract]);
+    // The reconciliation page response already contains its summary.
+  }, [connectionId, crawlActive, dateFrom, dateTo, direction, queryType, queryTypeContract, mode]);
 
   // The result view is allowed while the source job is still running. Refresh
   // from persisted SQLite whenever the polled source progress changes so rows
@@ -280,12 +285,20 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   // A terminal transition triggers one final refresh as well.
   useEffect(() => {
     if (!crawlFingerprint) return;
+    setResultRevision(connectionId, crawlFingerprint);
+    const refresh = () => {
+    lastCrawlRefresh.current = Date.now();
     const token = generation.current + 1;
     generation.current = token;
     pageCache.current.clear();
     cursorByPage.current.clear();
     cursorByPage.current.set(1, null);
     void loadPage(pageNumber, token);
+    };
+    // Coalesce progress bursts; refresh immediately when synchronization ends.
+    if (!crawlActive) { refresh(); return; }
+    const timer = setTimeout(refresh, Math.max(0, 3000 - (Date.now() - lastCrawlRefresh.current)));
+    return () => clearTimeout(timer);
   // pageNumber is intentionally not a dependency: clicking a page already calls
   // loadPage; this effect is driven only by source progress revisions.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -313,7 +326,6 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
 
   function changeQueryType(value: ResultQueryTypeSelection) {
     setQueryType(value);
-    if (value === 'sco-query' && direction === '') setDirection('purchase');
   }
 
   function setSearch(value: string) {
@@ -342,7 +354,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   const currentResultQuery = useCallback((scope: ResultMode = mode): ResultQuery => ({
     connection_id: connectionId,
     cursor: null,
-    limit: PAGE_SIZE,
+    limit: pageSize,
     search: filtersByMode[scope].search.trim(),
     column_filters: filtersByMode[scope].column_filters,
     sort: filtersByMode[scope].sort,
@@ -350,13 +362,57 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     ...queryTypeContract,
     date_from: dateFrom,
     date_to: dateTo,
-  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, queryType, queryTypeContract]);
+  }), [connectionId, dateFrom, dateTo, direction, filtersByMode, mode, pageSize, queryType, queryTypeContract]);
 
   const loadFacet = useCallback(async (column: string) => {
     const bridge = window.miaRuntime?.results;
     if (!bridge) throw new Error('results_runtime_unavailable');
     return bridge.facets({ ...currentResultQuery(), kind: mode, column, facet_limit: 250 });
   }, [currentResultQuery, mode]);
+
+  useEffect(() => {
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const bridge = window.miaRuntime?.results;
+        if (!bridge?.materialStatus) return;
+        const progress = await bridge.materialStatus(currentResultQuery('details'));
+        if (disposed) return;
+        setMaterialStatus(progress);
+        const revision = JSON.stringify([progress.task_id, progress.processed, progress.status]);
+        if (progress.status !== 'idle' && materialRevision.current !== revision) {
+          materialRevision.current = revision;
+          setResultRevision(connectionId, `material:${revision}`);
+          if (mode === 'details') {
+            const token = generation.current;
+            pageCache.current.clear();
+            const result = await requestPage(cursorByPage.current.get(pageNumber) ?? null);
+            if (!disposed && token === generation.current) {
+              pageCache.current.set(pageNumber, result);
+              applyPage(result, pageNumber);
+            }
+          }
+        }
+      } catch { /* Keep persisted rows visible during temporary transport errors. */ }
+      if (!disposed) timer = setTimeout(() => void poll(), 2000);
+    }
+    void poll();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [connectionId, currentResultQuery, requestPage, applyPage, mode, pageNumber]);
+
+  async function lookupMaterials() {
+    if (materialStarting || materialStatus?.status === 'running') return;
+    const conflict = workspaceTaskConflictMessage(activeWorkspaceTask ?? null, 'artifact-download');
+    if (conflict) { setFeedback(conflict); return; }
+    setMaterialStarting(true);
+    try {
+      const progress = await window.miaRuntime!.results.materialStart(currentResultQuery('details'));
+      setMaterialStatus(progress);
+    } catch (error) {
+      setFeedback(`Không thể tra cứu MVT: ${(error as Error).message}`);
+    } finally { setMaterialStarting(false); }
+  }
 
   function confirmSelectedExclusion() {
     if (mode === 'reconciliation') return;
@@ -367,6 +423,19 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
   }
 
   async function exportResults() {
+    if (exportPreparing.current) return;
+    exportPreparing.current = true;
+    setExportChecking(true);
+    try { await prepareAndExportResults(); }
+    finally { exportPreparing.current = false; setExportChecking(false); }
+  }
+
+  async function prepareAndExportResults() {
+    if (downloadBlockRef.current) {
+      setFeedback(downloadBlockRef.current);
+      setExportOpen(false);
+      return;
+    }
     const requestedScopes: ResultExportScope[] = mode === 'reconciliation'
       ? ['reconciliation'] : exportScopes;
     if (!connectionId || requestedScopes.length === 0) return;
@@ -382,6 +451,49 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         ? 'Đang tải kết quả tất cả ở màn Hóa đơn. Hãy chờ tác vụ đó hoàn tất.'
         : 'Đang tạo file Excel này. Hãy chờ tác vụ hiện tại hoàn tất.');
       return;
+    }
+
+    if (mode !== 'reconciliation') {
+      const coverageBridge = window.miaRuntime?.artifacts.vatReturnCoverage;
+      if (!coverageBridge) {
+        setFeedback('Không thể kiểm tra phạm vi đã đồng bộ trước khi xuất Excel. Vui lòng thử lại.');
+        setExportOpen(false);
+        return;
+      }
+      try {
+        const coverage = await coverageBridge({
+          connection_ids: [connectionId],
+          date_from: dateFrom,
+          date_to: dateTo,
+        });
+        const accountCoverage = coverage.accounts.find((item) => item.connection_id === connectionId);
+        if (!accountCoverage) throw new Error('result_export_coverage_missing');
+        const warning = resultExportCoverageWarning(
+          accountCoverage,
+          requestedScopes as CoverageExportScope[],
+          direction,
+        );
+        if (warning) {
+          diagnosticLog('results_export_blocked_incomplete_coverage', {
+            connection_id: connectionId,
+            scopes: requestedScopes,
+            date_from: dateFrom,
+            date_to: dateTo,
+            direction: direction || null,
+          }, 'warn');
+          setFeedback(warning);
+          setExportOpen(false);
+          return;
+        }
+      } catch (error) {
+        diagnosticLog('results_export_coverage_check_failed', {
+          connection_id: connectionId,
+          code: (error as { code?: string })?.code,
+        }, 'warn');
+        setFeedback('Không thể xác nhận dữ liệu Tổng quan/Chi tiết đã tải đủ cho khoảng thời gian này. Vui lòng thử lại.');
+        setExportOpen(false);
+        return;
+      }
     }
 
     const exportSearch = search.trim();
@@ -424,6 +536,11 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     }
 
     setFeedback('');
+    if (downloadBlockRef.current) {
+      setFeedback(downloadBlockRef.current);
+      setExportOpen(false);
+      return;
+    }
     diagnosticLog('results_export_requested', {
       connection_id: connectionId,
       scopes: requestedScopes,
@@ -464,7 +581,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     }
   }
 
-  const exactTotalPages = totalCount !== null ? Math.max(1, Math.ceil(totalCount / PAGE_SIZE)) : null;
+  const exactTotalPages = totalCount !== null ? Math.max(1, Math.ceil(totalCount / pageSize)) : null;
   const knownLastPage = Math.max(
     pageNumber,
     ...Array.from(pageCache.current.keys()),
@@ -500,21 +617,21 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           className="results-export-trigger primary-download-button"
           type="button"
           aria-expanded={exportOpen}
-          disabled={resultExportWorking || (mode === 'reconciliation' && (!reconciliation?.coverage_ranges.length || !reconciliation.issue_count))}
+          disabled={Boolean(downloadBlockReason) || exportChecking || resultExports.active || (mode === 'reconciliation' && (!reconciliation?.coverage_ranges.length || !reconciliation.issue_count))}
           title={resultExports.active && resultExports.owner === 'bulk' ? 'Đang tải kết quả tất cả ở màn Hóa đơn.' : undefined}
           onClick={() => mode === 'reconciliation' ? void exportResults() : setExportOpen((value) => !value)}
         >
           <svg className="results-export-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
           <span>{resultExportWorking
             ? `Đang tạo Excel… ${Math.round(resultExports.percent)}%`
-            : mode === 'reconciliation' ? 'Tải xuống kết quả chênh lệch' : 'Tải xuống kết quả'}</span>
+            : exportChecking ? 'Đang kiểm tra dữ liệu…' : mode === 'reconciliation' ? 'Tải xuống kết quả chênh lệch' : 'Tải xuống kết quả'}</span>
         </button>
         {exportOpen && mode !== 'reconciliation' ? <div className="results-export-popover" role="dialog" aria-label="Chọn nội dung tải xuống">
           <strong>Nội dung file Excel</strong>
           <label><input type="checkbox" checked={exportScopes.includes('overview')} disabled={resultExports.active} onChange={() => toggleExportScope('overview')} /> Tổng quan</label>
           <label><input type="checkbox" checked={exportScopes.includes('details')} disabled={resultExports.active} onChange={() => toggleExportScope('details')} /> Chi tiết</label>
           <small>Lưu tại: {exportFolder || 'Chưa chọn thư mục'}</small>
-          <button type="button" disabled={resultExportWorking || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? `Đang tạo Excel... ${Math.round(resultExports.percent)}%` : 'Tải xuống'}</button>
+          <button type="button" title={downloadBlockReason || undefined} disabled={Boolean(downloadBlockReason) || exportChecking || resultExports.active || exportScopes.length === 0} onClick={() => void exportResults()}>{resultExportWorking ? `Đang tạo Excel... ${Math.round(resultExports.percent)}%` : exportChecking ? 'Đang kiểm tra dữ liệu…' : 'Tải xuống'}</button>
           {resultExportWorking ? <ResultExportProgressBar lifecycle={resultExports} /> : null}
         </div> : null}
       </div>
@@ -540,6 +657,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           <div><button type="button" onClick={() => setConfirmExclusion(false)}>Hủy</button><button type="button" onClick={confirmSelectedExclusion}>Xác nhận</button></div>
         </div> : null}
       </div> : null}
+      {mode === 'details' ? <button className="sync-button results-material-button" type="button" disabled={materialStarting || materialStatus?.status === 'running' || resultExports.active || crawlActive} onClick={() => void lookupMaterials()}>
+        {materialStarting ? 'Đang bắt đầu…' : materialStatus?.status === 'running' ? 'Đang tra cứu MVT…' : 'Tra cứu MVT'}
+      </button> : null}
       <DateRangePicker className="results-date-range" dateFrom={dateFrom} dateTo={dateTo} fromLabel="Từ ngày xem" toLabel="Đến ngày xem" onChange={(from, to) => { setDateFrom(from); setDateTo(to); }} />
       <select className="results-query-type-select" aria-label="Loại hóa đơn" value={queryType} onChange={(event) => changeQueryType(event.target.value as ResultQueryTypeSelection)}>
         <option value="query">Hóa đơn điện tử</option>
@@ -547,7 +667,6 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
         <option value="combined">HĐĐT &amp; Máy tính tiền</option>
       </select>
       <select aria-label="Lọc mua bán" value={direction} onChange={(event) => setDirection(event.target.value as typeof direction)}>
-        <option value="" disabled={queryType === 'sco-query'}>Mua vào và bán ra</option>
         <option value="purchase">Mua vào</option>
         <option value="sold">Bán ra</option>
       </select>
@@ -557,6 +676,11 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       </div>
     </div>
 
+    {materialStatus && materialStatus.status !== 'idle' ? <div className="results-crawl-status" role="status" aria-live="polite">
+      <strong>{materialStatus.status === 'running' ? 'Đang tra cứu MVT' : materialStatus.status === 'completed' ? 'Tra cứu MVT hoàn tất' : 'Tra cứu MVT gián đoạn'}</strong>
+      <span>{materialStatus.processed}/{materialStatus.total} hóa đơn · {materialStatus.failed} lỗi · {materialStatus.missing_xml ?? 0} không có XML gốc {materialStatus.error ?? ''}</span>
+      <div className="results-crawl-track"><span style={{ width: `${materialStatus.total ? 100 * materialStatus.processed / materialStatus.total : 0}%` }} /></div>
+    </div> : null}
     {crawlActive ? <div className="results-crawl-status" role="status" aria-live="polite">
       <strong>Đang đồng bộ</strong>
       <span>{crawlLabel}</span>
@@ -585,7 +709,7 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
     {state === 'error' ? <div className="results-state" role="alert">Không thể tải kết quả.<button onClick={() => void loadPage(pageNumber)}>Thử lại</button></div> : null}
     {state === 'loading' && items.length === 0 && columns.length === 0 ? <div className="results-state" role="status">Đang tải...</div> : null}
     {state === 'ready' && items.length === 0 && columns.length === 0 ? <div className="results-state results-empty">{mode === 'reconciliation' && !reconciliation?.coverage_ranges.length ? 'Chưa đủ dữ liệu Tổng quan và Chi tiết để đối chiếu trong khoảng thời gian này.' : mode === 'reconciliation' && reconciliation?.issue_count === 0 ? 'Không phát hiện chênh lệch giữa Tổng quan và Chi tiết.' : crawlActive ? 'Chưa có hóa đơn đã ghi vào DB trong lựa chọn này. Tiến trình đồng bộ vẫn đang chạy.' : !crawlItem ? 'Chưa có dữ liệu hóa đơn.' : 'Không có hóa đơn trong khoảng thời gian đã chọn.'}</div> : null}
-    {columns.length ? <div className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
+    {columns.length ? <div key={JSON.stringify([mode, columns])} className="results-table results-table--figma results-table--excel-schema" tabIndex={0} aria-label="Bảng dữ liệu theo mẫu Excel nguồn">
       <div className="results-row results-row--header" style={{ gridTemplateColumns }}>
         {selectable ? <span className="results-checkbox-cell"><input
           type="checkbox"
@@ -595,9 +719,9 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
           checked={headerChecked}
           onChange={() => setSelection(headerChecked ? emptyInvoiceSelection() : { allMatching: true, selected: new Set(), deselected: new Set() })}
         /></span> : null}
-        {columns.map((column) => {
+        {columns.map((column, columnIndex) => {
           const label = columnLabels[column] || column;
-          return <span className="results-header-slot" key={column}>
+          return <span className="results-header-slot" key={`${columnIndex}:${column}`}>
             <div className="result-header-cell">
               <span className="result-header-title" title={label}>{label}</span>
               <ColumnFilterPopover
@@ -629,13 +753,14 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
       </div> : null}
       {items.map((item, rowIndex) => <div className="results-row" style={{ gridTemplateColumns }} key={resultKey(item)}>
         {selectable ? <span className="results-checkbox-cell"><input type="checkbox" aria-label={`Chọn hóa đơn ${item.invoice_key}`} disabled={item.excluded} checked={item.excluded || invoiceSelected(selection, item.invoice_key)} onChange={() => setSelection(current => toggleInvoice(current, item.invoice_key))} /></span> : null}
-        {columns.map((column) => {
+        {columns.map((column, columnIndex) => {
+          const cellKey = `${columnIndex}:${column}`;
           const rawValue = column === 'stt' && (item.fields[column] === null || item.fields[column] === undefined)
-            ? (pageNumber - 1) * PAGE_SIZE + rowIndex + 1
+            ? (pageNumber - 1) * pageSize + rowIndex + 1
             : item.fields[column];
           const display = formatResultCell(column, rawValue, columnTypes[column]);
           if (column === 'url' && typeof rawValue === 'string' && safeExternalHttpUrl(rawValue)) {
-            return <span key={column} title={rawValue}>
+            return <span key={cellKey} title={rawValue}>
               <button
                 className="results-external-link"
                 type="button"
@@ -645,30 +770,36 @@ export function ResultsPage({ connectionId, exportFolder, initialDateFrom, initi
             </span>;
           }
           if (column === 'reconciliation_status') {
-            return <span key={column}><b className={`results-reconciliation-status ${reconciliationStatusClass(display)}`}>{display}</b></span>;
+            return <span key={cellKey}><b className={`results-reconciliation-status ${reconciliationStatusClass(display)}`}>{display}</b></span>;
           }
           if (column === 'mismatch_fields') {
-            return <span className="results-reconciliation-mismatch-fields" key={column} title={display}>{display}</span>;
+            return <span className="results-reconciliation-mismatch-fields" key={cellKey} title={display}>{display}</span>;
           }
-          return <span className={getDifferenceClass(column, rawValue)} key={column} title={display}>{display}</span>;
+          return <span className={getDifferenceClass(column, rawValue)} key={cellKey} title={display}>{display}</span>;
         })}
       </div>)}
       {aggregate && items.length > 0 ? <div className="results-row results-row--total" style={{ gridTemplateColumns }}>
         {selectable ? <span className="results-checkbox-cell" /> : null}
-        {columns.map(column => {
+        {columns.map((column, columnIndex) => {
           const rawValue = column === 'stt'
             ? 'Tổng'
             : column === 'khmshdon'
               ? `${formatVietnameseNumber(aggregate.invoice_count)} HĐ`
               : Object.prototype.hasOwnProperty.call(aggregate.totals, column) ? aggregate.totals[column] : '';
           const display = rawValue === '' ? '' : formatResultCell(column, rawValue, columnTypes[column]);
-          return <span className={mode === 'reconciliation' ? getDifferenceClass(column, rawValue, true) : undefined} key={column} title={display}>{display}</span>;
+          return <span className={mode === 'reconciliation' ? getDifferenceClass(column, rawValue, true) : undefined} key={`${columnIndex}:${column}`} title={display}>{display}</span>;
         })}
       </div> : null}
     </div> : null}
 
     {(items.length > 0 || pageNumber > 1) ? <footer className="results-pager artifact-pager">
-      <span>{totalCount !== null ? `Tổng ${totalCount} hàng · tối đa ${PAGE_SIZE} hàng/trang` : `Trang ${pageNumber} · tối đa ${PAGE_SIZE} hàng/trang`}</span>
+      <label className="results-page-size">Số dòng/trang:
+        <select aria-label="Số dòng kết quả mỗi trang" value={pageSize} onChange={(event) => {
+          setPageSize(Number(event.target.value));
+          pageCache.current.clear(); cursorByPage.current = new Map([[1, null]]); setPageNumber(1);
+        }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_PAGE_SIZE}>Toàn bộ</option></select>
+      </label>
+      <span>{totalCount !== null ? `Tổng ${totalCount} hàng` : `Trang ${pageNumber}`}</span>
       <div>
         <span>Chọn trang:</span>
         <button type="button" aria-label="Trang trước" disabled={pageNumber === 1 || state === 'loading'} onClick={() => void loadPage(pageNumber - 1)}><img src={previousIcon} alt="" /></button>

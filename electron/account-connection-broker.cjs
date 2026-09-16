@@ -1,6 +1,6 @@
 'use strict';
 
-const TAX_CODE_PATTERN = /^\d{10}(?:-\d{3})?$/;
+const TAX_CODE_PATTERN = /^(?:\d{10}(?:-\d{3})?|\d{12})$/;
 const CONNECTION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 class BrokerInputError extends Error {
@@ -94,6 +94,8 @@ function localErrorMessage(code) {
   if (code === 'vat_return_destination_not_writable') return 'Không thể lưu tờ khai vào thư mục đã chọn. Vui lòng kiểm tra quyền ghi hoặc chọn thư mục khác.';
   if (code === 'vat_return_workbook_verification_failed') return 'Tờ khai đã được tạo nhưng không vượt qua bước kiểm tra tính toàn vẹn. Vui lòng xem Nhật ký để biết chi tiết.';
   if (String(code).startsWith('vat_return_coverage_missing:')) return 'Chưa đủ coverage Tổng quan và Chi tiết cho toàn bộ khoảng xuất tờ khai.';
+  if (code === 'artifact_export_timeout') return 'Xuất Excel không có tiến trình trong thời gian cho phép và đã được dừng để tránh treo ứng dụng. Hãy thử lại với khoảng thời gian nhỏ hơn.';
+  if (code === 'artifact_worker_lost') return 'Tiến trình xuất Excel đã bị gián đoạn. Hãy thử lại.';
   if (code === 'artifact_cancelled') return 'Đã dừng tải XML/HTML.';
   if (code === 'artifact_task_active') return 'Đang có một lượt tải XML/HTML khác.';
   if (code === 'artifact_batch_empty') return 'Không có artifact XML/HTML phù hợp để tải.';
@@ -102,6 +104,10 @@ function localErrorMessage(code) {
 }
 
 function serializeError(error) {
+  const licenseMessages = require('./license/entitlements.cjs').MESSAGES;
+  if (Object.hasOwn(licenseMessages, error?.code || '')) {
+    return { code: error.code, message: licenseMessages[error.code] };
+  }
   const publicCodes = new Set([
     'account_not_found', 'account_duplicate', 'account_in_use', 'account_purge_failed',
     'database_locked', 'database_unavailable', 'job_not_found', 'job_conflict',
@@ -114,8 +120,17 @@ function serializeError(error) {
     'result_export_template_missing', 'result_export_failed', 'artifact_write_denied',
     'artifact_write_failed', 'invalid_artifact_directory',
     'invalid_result_export_range', 'artifact_cancelled', 'artifact_task_active',
-    'artifact_batch_empty',
+    'artifact_batch_empty', 'artifact_export_timeout', 'artifact_worker_lost',
     'runtime_timeout', 'runtime_not_running', 'runtime_write_failed',
+    'account_busy', 'capacity_exhausted', 'invalid_params', 'storage_not_initialized',
+    'source_timeout', 'source_connection_failed', 'source_tls_failed',
+    'source_captcha_missing', 'source_captcha_model_failed',
+    'account_storage_denied', 'account_runtime_dependency_missing',
+    'source_account_data_invalid',
+    'vat_return_export_failed', 'vat_return_template_sheet_missing',
+    'vat_return_template_styles_missing', 'vat_return_purchase_sheet_data_missing',
+    'vat_return_reduction_sheet_data_missing', 'vat_return_sold_sheet_missing',
+    'vat_return_purchase_sheet_missing', 'vat_return_reduction_sheet_missing',
   ]);
   const runtimeMessage = String(error?.message || '');
   const runtimeCode = typeof error?.code === 'string' ? error.code : runtimeMessage;

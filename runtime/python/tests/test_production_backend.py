@@ -66,6 +66,27 @@ class ProductionBackendTests(unittest.TestCase):
         )
         portal.get_company_info.assert_called_once_with()
 
+    def test_authenticated_account_survives_company_profile_outage(self):
+        backend = object.__new__(ProductionBackend)
+        backend.accounts = Mock()
+        backend.accounts.session_hash.return_value = (None, "a" * 64)
+        backend.sessions = Mock()
+        portal = backend.sessions.build_worker_portal_session.return_value
+        portal.get_company_info.side_effect = requests.ReadTimeout("profile timeout")
+        self.assertEqual(backend._source_company_name(SimpleNamespace(connection_id="conn_test")), "")
+        portal.login.assert_called_once()
+
+    def test_login_failure_is_not_swallowed_as_missing_company_name(self):
+        backend = object.__new__(ProductionBackend)
+        backend.accounts = Mock()
+        backend.accounts.session_hash.return_value = (None, "a" * 64)
+        backend.sessions = Mock()
+        portal = backend.sessions.build_worker_portal_session.return_value
+        portal.login.side_effect = RuntimeError("invalid_source_credentials")
+        with self.assertRaisesRegex(RuntimeError, "invalid_source_credentials"):
+            backend._source_company_name(SimpleNamespace(connection_id="conn_test"))
+        portal.get_company_info.assert_not_called()
+
     def test_reused_import_reconnects_and_verifies_the_submitted_password(self):
         backend = object.__new__(ProductionBackend)
         existing = SimpleNamespace(connection_id="conn_existing", username="0100000000")
@@ -189,13 +210,13 @@ class ProductionBackendTests(unittest.TestCase):
         new_body = backend.service.create_job.call_args.args[0]
         self.assertTrue(new_body.force_refresh)
         self.assertFalse(new_body.refresh_latest_month)
-        self.assertEqual(new_body.result_scope, "detail")
+        self.assertEqual(new_body.result_scope, "overview")
 
         backend.start({**base, "intent": {**base["intent"], "sync_mode": "supplement"}})
         supplement_body = backend.service.create_job.call_args.args[0]
         self.assertFalse(supplement_body.force_refresh)
         self.assertTrue(supplement_body.refresh_latest_month)
-        self.assertEqual(supplement_body.result_scope, "detail")
+        self.assertEqual(supplement_body.result_scope, "overview")
 
         with self.assertRaisesRegex(ValueError, "invalid_sync_mode"):
             backend.start({**base, "intent": {**base["intent"], "sync_mode": "replace"}})

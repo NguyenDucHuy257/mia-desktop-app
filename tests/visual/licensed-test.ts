@@ -13,12 +13,19 @@ export const test = base.extend({
         revealKey: async () => null,
         updatePhone: async () => activeState(),
       };
+      const unlockedState = () => ({ state: 'unlocked', configured: true, unlocked: true, retry_after_seconds: 0 });
+      const offlineAuth = {
+        status: async () => unlockedState(),
+        create: async () => unlockedState(),
+        unlock: async () => unlockedState(),
+        change: async () => unlockedState(),
+      };
       const nativeDefineProperty = Object.defineProperty;
-      const withLicense = (value: unknown) => ({ ...(value && typeof value === 'object' ? value : {}), license });
-      nativeDefineProperty(window, 'miaRuntime', { configurable: true, writable: true, value: withLicense(undefined) });
+      const withSecurity = (value: unknown) => ({ ...(value && typeof value === 'object' ? value : {}), license, offlineAuth });
+      nativeDefineProperty(window, 'miaRuntime', { configurable: true, writable: true, value: withSecurity(undefined) });
       Object.defineProperty = function defineProperty(target: object, property: PropertyKey, attributes: PropertyDescriptor) {
         if (target === window && property === 'miaRuntime' && 'value' in attributes) {
-          return nativeDefineProperty(target, property, { ...attributes, value: withLicense(attributes.value) });
+          return nativeDefineProperty(target, property, { ...attributes, value: withSecurity(attributes.value) });
         }
         return nativeDefineProperty(target, property, attributes);
       };

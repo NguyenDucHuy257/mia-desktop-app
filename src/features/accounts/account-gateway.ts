@@ -150,9 +150,34 @@ export function accountErrorMessage(error: unknown) {
     ? error.code
     : typeof error === 'object' && error !== null && 'code' in error
       ? String(error.code)
-      : 'unknown_error';
+      : error instanceof Error
+        ? /^\[([a-zA-Z0-9_]+)\]/.exec(error.message)?.[1] ?? 'unknown_error'
+        : 'unknown_error';
 
   const messages: Record<string, string> = {
+    client_update_required: 'Key giới hạn VIP/TEST yêu cầu MIA TOOL 2026 phiên bản 4.0.8 trở lên.',
+    license_tax_code_denied: 'MST này không nằm trong danh sách được cấp phép của key VIP/TEST hiện tại. Không thể thêm tài khoản.',
+    license_policy_missing: 'Chưa xác minh được giới hạn tài khoản của key. Vui lòng kiểm tra mạng và thử lại.',
+    license_policy_invalid: 'Cấu hình VIP/TEST và danh sách MST trên máy chủ key không hợp lệ.',
+    source_account_data_invalid: 'Dữ liệu tài khoản hoặc phản hồi đăng nhập không đúng định dạng. Kiểm tra Nhật ký runtime để xác định bước đọc dữ liệu bị lỗi.',
+    source_captcha_missing: 'Cổng hóa đơn không trả về CAPTCHA đầy đủ. Vui lòng thử lại sau.',
+    source_captcha_model_failed: 'Bộ đọc CAPTCHA của phần mềm không chạy được. Kiểm tra Nhật ký và cài lại runtime từ bộ cài mới.',
+    source_connection_failed: 'Không kết nối được Cổng hóa đơn. Kiểm tra mạng hoặc proxy.',
+    source_tls_failed: 'Kết nối bảo mật tới Cổng hóa đơn thất bại. Kiểm tra ngày giờ máy và chứng chỉ mạng.',
+    account_storage_denied: 'Không có quyền ghi dữ liệu tài khoản. Kiểm tra quyền truy cập thư mục lưu trữ.',
+    account_runtime_dependency_missing: 'Runtime thiếu thư viện cần thiết để đăng nhập. Cài lại bằng bộ cài đầy đủ.',
+    account_busy: 'Tài khoản đang được tác vụ khác sử dụng. Chờ tác vụ hoàn tất rồi thêm lại.',
+    capacity_exhausted: 'Bộ xử lý đang hết lượt xử lý trống. Chờ tác vụ hiện tại hoàn tất.',
+    runtime_not_running: 'Bộ xử lý đã dừng hoặc đang khởi động lại. Chờ runtime sẵn sàng rồi thử lại.',
+    runtime_write_failed: 'Không gửi được yêu cầu tới bộ xử lý. Kiểm tra Nhật ký runtime.',
+    storage_not_initialized: 'Kho dữ liệu tài khoản chưa khởi tạo xong. Chờ ứng dụng khởi động hoàn tất.',
+    invalid_params: 'Dữ liệu đăng nhập hoặc dữ liệu trả về không đúng định dạng ứng dụng yêu cầu. Xem Nhật ký để xác định bước thất bại.',
+    source_account_failed: 'Lỗi xử lý tài khoản trong runtime chưa được phân loại. Xem Nhật ký runtime tại thời điểm thêm tài khoản.',
+    internal_error: 'Lỗi nội bộ khi thêm tài khoản. Cần Nhật ký runtime và Electron tại thời điểm xảy ra lỗi để xác định nguyên nhân.',
+    LICENSE_REQUIRED: 'Giấy phép chưa được xác nhận. Vui lòng kiểm tra trạng thái kích hoạt ứng dụng.',
+    runtime_timeout: 'Bộ xử lý đăng nhập phản hồi quá thời gian. Vui lòng thử lại.',
+    source_timeout: 'Cổng hóa đơn phản hồi quá thời gian. Vui lòng thử lại.',
+    source_captcha_failed: 'Không xác thực được CAPTCHA. Vui lòng thử lại.',
     runtime_unavailable: 'Bộ xử lý dữ liệu cục bộ chưa sẵn sàng. Vui lòng mở lại ứng dụng.',
     invalid_credentials: 'Mã số thuế hoặc mật khẩu không hợp lệ.',
     authentication_failed: 'Không thể đăng nhập Cổng HĐĐT. Vui lòng kiểm tra lại thông tin.',
@@ -168,5 +193,5 @@ export function accountErrorMessage(error: unknown) {
   if (code.startsWith('source_http_')) {
     return 'Dịch vụ Cổng HĐĐT đang tạm thời không khả dụng.';
   }
-  return messages[code] ?? 'Không thể thêm tài khoản. Vui lòng thử lại.';
+  return messages[code] ?? `Không thể hoàn tất thêm tài khoản. Mã chẩn đoán: ${/^[a-zA-Z0-9_]{1,80}$/.test(code) ? code : 'unknown_error'}. Xem Nhật ký tại thời điểm đăng nhập để xác định nguyên nhân.`;
 }

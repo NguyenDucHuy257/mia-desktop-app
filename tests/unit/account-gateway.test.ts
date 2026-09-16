@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   AccountGatewayError,
+  accountErrorMessage,
   createAccountConnectionsInBatches,
   InMemoryAccountConnectionGateway,
 } from '../../src/features/accounts/account-gateway';
 
 describe('account connection gateway', () => {
+  it('recovers distinct login failures after Electron serializes Errors', () => {
+    expect(accountErrorMessage(new Error('[invalid_source_credentials] hidden'))).toBe('Tên đăng nhập hoặc mật khẩu không đúng.');
+    expect(accountErrorMessage(new Error('[source_account_locked] hidden'))).toContain('bị khóa');
+  });
   it('supports create, get, reconnect, reuse, and revoke in the browser demo adapter', async () => {
     let time = '2026-08-17T00:00:00.000Z';
     const gateway = new InMemoryAccountConnectionGateway(() => time, () => 'demo-connection-1');

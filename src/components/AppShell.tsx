@@ -6,6 +6,10 @@ import materialIcon from '../assets/figma/nav-material.png';
 import logsIcon from '../assets/figma/nav-logs.png';
 import settingsIcon from '../assets/figma/nav-settings.png';
 import verifiedBlueIcon from '../assets/figma/verified-blue.png';
+import { NoticeDialog } from './NoticeDialog';
+import { useLicenseUpdate } from '../features/licensing/LicensePolicyContext';
+
+const APP_VERSION = '4.0.8';
 
 export type NavigationKey = 'invoices' | 'xml-html' | 'vat-return' | 'pdf-lookup' | 'mvt' | 'logs' | 'settings' | 'guide';
 
@@ -91,13 +95,15 @@ function AccountPopover({ onToast }: {
       <code title={visible ? displayKey : undefined}>{displayKey}</code>
       <div><button type="button" onClick={() => void reveal()}>{visible ? 'Ẩn' : 'Hiện'}</button><button type="button" onClick={() => void copyKey()}>Sao chép</button></div>
     </div>
-    <span className="account-version">Phiên bản: <strong>MIA TOOL 2026 4.0.5</strong></span>
+    <span className="account-version">Phiên bản: <strong>MIA TOOL 2026 {APP_VERSION}</strong></span>
   </div>;
 }
 
 export function AppShell({ active, onNavigate, showTopbar = true, children }: AppShellProps) {
+  const update = useLicenseUpdate();
   const [profileOpen, setProfileOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(Boolean(update?.available));
   const profile = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -115,6 +121,20 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (update?.available) setUpdateOpen(true);
+  }, [update?.available, update?.latest_version, update?.url]);
+
+  async function openUpdate() {
+    if (!update?.url) return;
+    try {
+      await window.miaRuntime?.external?.open(update.url);
+      setUpdateOpen(false);
+    } catch {
+      setToast('Không thể mở liên kết cập nhật. Vui lòng thử lại.');
+    }
+  }
+
   return <div className="app-frame">
     <aside className="sidebar">
       <div className="brand"><div className="brand-row"><img src={logo} alt="" className="brand-logo" /><strong>MIA TOOL 2026</strong></div><span>Giải pháp tải HDDT hàng loạt</span></div>
@@ -125,7 +145,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
           <div><strong>Hỗ trợ tận tâm</strong><span>Chúng tôi luôn sẵn sàng<br />hỗ trợ bạn</span></div>
           <button type="button" onClick={() => void window.miaRuntime?.external?.open('https://zalo.me/1239687147063946847')}>Liên hệ ngay</button>
         </section>
-        <footer className="sidebar-footer"><span>© 2026 Wetech JSC.</span><span>Phiên bản MIA TOOL 2026 4.0.5</span></footer>
+        <footer className="sidebar-footer"><span>© 2026 Wetech JSC.</span><span>Phiên bản MIA TOOL 2026 {APP_VERSION}</span></footer>
       </div>
     </aside>
     <main className="workspace" data-topbar={showTopbar}>
@@ -133,7 +153,7 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
         <div className="topbar-company"><h1 title="CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH">CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH</h1><span className="topbar-company-description">Giải pháp số cho doanh nghiệp hiện đại <img src={verifiedBlueIcon} alt="Đã xác minh" /></span></div>
         <div className="topbar-actions">
           <div className="support-hotline"><span className="support-hotline-icon"><HeadsetIcon /></span><div><span>Hỗ trợ khách hàng</span><strong>0383.466.992 - 0865.219.286</strong></div></div>
-          <button className="notification-button" type="button" aria-label="Thông báo"><NotificationIcon /></button>
+          <button className="notification-button" data-available={Boolean(update?.available)} type="button" aria-label={update?.available ? 'Có bản cập nhật mới' : 'Thông báo'} onClick={() => { if (update?.available) setUpdateOpen(true); }}><NotificationIcon /></button>
           <div className="profile-menu" ref={profile}>
             <button className="profile-button" type="button" aria-label="Thông tin tài khoản" aria-expanded={profileOpen} onClick={() => setProfileOpen((current) => !current)}>W</button>
             <span className="profile-chevron" aria-hidden="true" />
@@ -142,6 +162,13 @@ export function AppShell({ active, onNavigate, showTopbar = true, children }: Ap
         </div>
       </header> : null}
       <div className="workspace-content">{children}</div>
+      {updateOpen && update?.available ? <NoticeDialog
+        kind="info"
+        message={`Đã có phiên bản MIA TOOL 2026 ${update.latest_version || update.label || 'mới'}. Bạn đang dùng phiên bản ${update.current_version || APP_VERSION}.`}
+        actionLabel="Tải bản cập nhật"
+        onAction={() => void openUpdate()}
+        onClose={() => setUpdateOpen(false)}
+      /> : null}
       {toast ? <div className="shell-toast" role="status">{toast}</div> : null}
     </main>
   </div>;

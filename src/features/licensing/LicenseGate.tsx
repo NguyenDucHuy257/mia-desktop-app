@@ -2,6 +2,7 @@ import { type FormEvent, type PropsWithChildren, useEffect, useState } from 'rea
 import logo from '../../assets/figma/logo.png';
 import type { LicenseStateResponse } from '../../lib/runtime-bridge';
 import '../../styles/license.css';
+import { LicensePolicyContext, LicenseUpdateContext } from './LicensePolicyContext';
 
 const copy: Record<string, { title: string; description: string }> = {
   checking: { title: 'Đang kiểm tra bản quyền', description: 'Đang nhận diện thiết bị và kiểm tra trạng thái sử dụng...' },
@@ -13,6 +14,18 @@ const copy: Record<string, { title: string; description: string }> = {
 };
 
 const reasonCopy: Record<string, { title: string; description: string }> = {
+  client_update_required: {
+    title: 'Cần cập nhật MIA TOOL 2026',
+    description: 'Key giới hạn VIP/TEST yêu cầu phiên bản 4.0.8 trở lên để bảo đảm đúng phạm vi MST. Vui lòng cài bản mới trước khi tiếp tục.',
+  },
+  license_policy_missing: {
+    title: 'Máy chủ chưa trả quyền sử dụng',
+    description: 'Cần cập nhật máy chủ bản quyền để trả giới hạn MST và thời gian. Key đang có vẫn được giữ nguyên, không cần cấp lại.',
+  },
+  license_policy_invalid: {
+    title: 'Cấu hình quyền key chưa hợp lệ',
+    description: 'Vui lòng kiểm tra loại key và danh sách MST được cấp phép trên máy chủ. TEST/TEST1 cần 1 MST; TEST2 tối đa 2 MST.',
+  },
   hardware_mismatch_below_50_percent: {
     title: 'Thiết bị không khớp bản quyền',
     description: 'Thông tin phần cứng khớp dưới 50%. Bản quyền trên thiết bị cũ không thể được sử dụng trên máy này.',
@@ -129,7 +142,14 @@ export function LicenseGate({ children }: PropsWithChildren) {
   }
   useEffect(() => { void initialize(); }, []);
   if (!state || state.state === 'checking' || state.state === 'migrating') return <LicenseFrame state={state || { state: 'checking', active: false }} onRetry={initialize} />;
-  if (licenseAllowsWorkspace(state)) return <>{children}</>;
+  if (licenseAllowsWorkspace(state)) return <LicensePolicyContext.Provider value={state.entitlements ?? null}>
+    <LicenseUpdateContext.Provider value={state.update ?? null}>
+      <div className="licensed-workspace">
+      {state.entitlements?.trial ? <div className="license-trial-banner" role="status">Key {state.entitlements.plan}: tối đa {state.entitlements.max_tax_codes} MST đã cấp phép, chỉ sử dụng dữ liệu 01/08/2026 – 31/08/2026.</div> : null}
+      {children}
+      </div>
+    </LicenseUpdateContext.Provider>
+  </LicensePolicyContext.Provider>;
   if (state.state === 'phone_required' || state.state === 'legacy_phone_required') {
     return <PhoneForm legacy={state.state === 'legacy_phone_required'} onSubmit={submitPhone} />;
   }

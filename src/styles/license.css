@@ -36,3 +36,6 @@
 .license-settings-card > small { margin-left: 10px; color: #b91c1c; }
 @media (max-width: 560px) { .license-gate-page { padding: 16px; } .license-gate-card { padding: 26px 20px; } .license-settings-card dl { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .license-progress span { animation: none; width: 65%; } }
+.licensed-workspace { height: 100vh; display: flex; flex-direction: column; }
+.licensed-workspace > .app-frame { flex: 1; min-height: 0; height: auto; }
+.license-trial-banner { flex-shrink: 0; padding: 8px 16px; background: #fff7e6; color: #694100; border-bottom: 1px solid #f0d49b; font-size: 13px; }

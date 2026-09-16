@@ -416,13 +416,22 @@ class ProductionBackend(SourceBackend):
                     "connection_ids": [str(connection_id)],
                     "date_from": selected_from, "date_to": selected_to,
                 })["accounts"][0][direction]
+            latest_result_scope = str(job.parameters.get("result_scope") or "detail") if job else "detail"
+            selected_scope_ready = bool(
+                direction_coverage
+                and direction_coverage["overview_ready"]
+                and (
+                    latest_result_scope == "overview"
+                    or direction_coverage["detail_ready"]
+                )
+            )
             if raw_status in active:
                 status = "running"
             elif raw_status in {"failed", "abandoned"}:
                 status = "failed"
             elif raw_status == "cancelled":
                 status = "cancelled"
-            elif direction_coverage and direction_coverage["ready"]:
+            elif selected_scope_ready:
                 status = "completed"
             else:
                 status = "not_synced"
@@ -432,10 +441,14 @@ class ProductionBackend(SourceBackend):
                 date_from = str(job.parameters.get("date_from") or "")
                 month_key = date_from[:7] if len(date_from) >= 7 else None
             baseline = job.parameters.get("baseline_invoice_count") if job else None
-            sync_from = selected_from if status == "completed" else None
-            sync_until = selected_to if status == "completed" else None
+            # Always expose durable coverage independently of the range being
+            # inspected. The renderer uses this when opening Results so it does
+            # not preselect an unsynchronized tail up to today.
+            sync_from = metrics["sync_from"]
+            sync_until = metrics["sync_until"]
             output.append({
                 "connection_id": str(connection_id), "direction": direction, "status": status,
+                "requested_scope": latest_result_scope,
                 "current_stage": str(state.get("current_stage") or getattr(job, "current_stage", "") or "") or None,
                 "overview_complete": overview_complete,
                 "detail_complete": detail_complete,
@@ -472,10 +485,17 @@ class ProductionBackend(SourceBackend):
             session_hash,
             worker_id=source_backend_module.WORKER_ID,
         )
-        company = portal.get_company_info()
-        company_name = str(company.get("name") or "").strip()
-        if not company_name:
-            raise ValueError("missing_company_name")
+        # Validate credentials first. A display-profile outage must not revoke
+        # an account whose managed login already succeeded.
+        portal.login()
+        try:
+            company = portal.get_company_info()
+            company_name = str(company.get("name") or "").strip()
+        except (requests.RequestException, RuntimeError, ValueError) as error:
+            logger = getattr(self, "logger", None)
+            if logger is not None:
+                logger.warning("account_profile_unavailable error_type=%s", type(error).__name__)
+            return ""
         return company_name[:300]
 
     def create_connection(self, username: str, password: str):
@@ -879,6 +899,11 @@ class ProductionBackend(SourceBackend):
                             )
                         break
                     except Exception as error:
+                        # Shutdown is a batch interruption, not a bad invoice.
+                        # Propagate it so the remaining invoices are not all
+                        # counted as failures by the package callback.
+                        if type(error).__name__ == 'WorkerShutdownRequested':
+                            raise
                         if isinstance(error, ValueError) and str(error) == "artifact_cancelled":
                             raise
                         error_kind = _package_error_kind(error)

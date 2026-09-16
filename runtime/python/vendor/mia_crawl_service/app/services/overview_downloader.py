@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import io
+import re
 import shutil
 import tempfile
 import time
@@ -45,6 +46,55 @@ def _new_workbook():
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TEMPLATE_DIR = PROJECT_ROOT / 'resources' / 'templates'
+PROCESSING_STATUS_LABELS = {
+    0: 'Tổng cục Thuế đã nhận',
+    1: 'Đang kiểm tra điều kiện cấp mã',
+    2: 'CQT từ chối hóa đơn',
+    3: 'Hóa đơn đủ điều kiện cấp mã',
+    4: 'Hóa đơn không đủ điều kiện cấp mã',
+    5: 'Đã cấp mã hóa đơn',
+    6: 'Tổng cục Thuế đã nhận hóa đơn không mã',
+    7: 'Đã kiểm tra định kỳ HĐĐT không có mã',
+    8: 'Cục Thuế đã nhận hóa đơn từ máy tính tiền',
+}
+
+
+def _processing_result(item: dict) -> str:
+    explicit = item.get('kqcht')
+    if explicit not in (None, ''):
+        return str(explicit)
+    value = item.get('ttxly')
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return '' if value in (None, '') else str(value)
+    return PROCESSING_STATUS_LABELS.get(numeric, str(value))
+
+
+def _cash_register_buyer_name(item: dict) -> object:
+    """Use the portal's invoice-information buyer name when nmten is blank."""
+    for field_name in ('nmten', 'nmtnmua', 'nbtnmua'):
+        value = item.get(field_name)
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if not text or text.casefold() == 'null':
+            continue
+        if field_name != 'nmten':
+            text = re.sub(r'^\s*tên\s+người\s+mua\s*:\s*', '', text, flags=re.IGNORECASE)
+        return text
+    return ''
+
+
+def _taxable_total(item: dict) -> object:
+    value = item.get('tgtcthue')
+    if value not in (None, ''):
+        return value
+    if str(item.get('khmshdon') or '').strip() in {'2', '2.0'}:
+        return item.get('tgtttbso')
+    return value
 ELECTRONIC_STATUSES = (5, 6, 8)
 HEADER_MARKER = 'STT'
 INVOICE_STATUS_LABELS = {
@@ -589,45 +639,29 @@ class OverviewDownloader:
                     # every paged JSON record, so render it into the styled
                     # template locally instead of making a redundant export.
                     content = self._cash_records_to_xlsx(records, direction, chunk_begin, chunk_end)
-                elif result.final_status not in {'completed', 'completed_with_warning'}:
-                    # Do not call another portal endpoint after a partial/rate-limited
-                    # cursor. Publish only the rows already persisted locally.
-                    logger.warning(
-                        'Rendering partial electronic workbook locally status=%s '
-                        'direction=%s range=%s..%s fetched=%s/%s',
-                        result.final_status, direction, chunk_begin, chunk_end,
-                        len(records), result.first_page_total,
-                    )
+                else:
+                    # The paginated JSON above is already the authoritative
+                    # dataset. Calling the portal's separate Excel endpoint
+                    # here duplicates the request and can hang for minutes
+                    # after all rows have been fetched. Render locally for
+                    # both complete and partial electronic results.
+                    if result.final_status == 'completed':
+                        logger.info(
+                            'Rendering electronic workbook locally direction=%s '
+                            'range=%s..%s fetched=%s/%s',
+                            direction, chunk_begin, chunk_end,
+                            len(records), result.first_page_total,
+                        )
+                    else:
+                        logger.warning(
+                            'Rendering partial electronic workbook locally status=%s '
+                            'direction=%s range=%s..%s fetched=%s/%s',
+                            result.final_status, direction, chunk_begin, chunk_end,
+                            len(records), result.first_page_total,
+                        )
                     content = self._electronic_records_to_xlsx(
                         records, direction, chunk_begin, chunk_end
                     )
-                else:
-                    try:
-                        content = self.crawler.download_export(
-                            headers=self.headers_provider(),
-                            direction=direction,
-                            category=category,
-                            begin_date=chunk_begin,
-                            end_date=chunk_end,
-                            status=status,
-                        )
-                    except RuntimeError:
-                        if category != 'cash_register':
-                            raise
-                        logger.warning(
-                            'Excel export failed for %s/%s %s..%s; falling back to paged JSON',
-                            direction, category, chunk_begin, chunk_end,
-                        )
-                        fallback_result = self._fetch_records_resilient(
-                            direction=direction,
-                            category=category,
-                            begin_date=chunk_begin,
-                            end_date=chunk_end,
-                            status=status,
-                        )
-                        content = self._cash_records_to_xlsx(
-                            fallback_result.records, direction, chunk_begin, chunk_end
-                        )
                 path.write_bytes(content)
                 # Parse now so corrupt/error workbooks fail before merge.
                 workbook = _load_workbook(path, read_only=True, data_only=False)
@@ -947,16 +981,17 @@ class OverviewDownloader:
             else:
                 party_values = [
                     item.get('nbmst'), item.get('nbten'), item.get('nmmst'),
-                    item.get('nmten'), item.get('nmdchi'), item.get('nmcmnd'),
+                    _cash_register_buyer_name(item), item.get('nmdchi'),
+                    item.get('nmcmnd'),
                 ]
             values = [
                 index, item.get('khmshdon'), item.get('khhdon'), item.get('shdon'),
                 self._format_portal_date(item.get('tdlap')),
                 *party_values,
-                item.get('tgtcthue'), item.get('tgtthue'), item.get('ttcktmai'),
+                _taxable_total(item), item.get('tgtthue'), item.get('ttcktmai'),
                 item.get('tgtttbso'),
                 INVOICE_STATUS_LABELS.get(item.get('tthai'), str(item.get('tthai') or '')),
-                item.get('kqcht') or 'Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền',
+                _processing_result(item) or 'Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền',
             ]
             target_row = prototype_row + index - 1
             for col, value in enumerate(values, start=1):
@@ -1007,7 +1042,7 @@ class OverviewDownloader:
                 item.get('nmmst'),
                 item.get('nmten'),
                 item.get('nmdchi'),
-                item.get('tgtcthue'),
+                _taxable_total(item),
                 item.get('tgtthue'),
                 item.get('ttcktmai'),
                 item.get('tgtphi'),
@@ -1017,7 +1052,9 @@ class OverviewDownloader:
                 INVOICE_STATUS_LABELS.get(
                     item.get('tthai'), str(item.get('tthai') or '')
                 ),
-                item.get('kqcht') or '',
+                # kqcht is preferred; when omitted, map the portal's ttxly
+                # status so electronic invoices do not export a blank result.
+                _processing_result(item),
             ]
             target_row = prototype_row + index - 1
             for col, value in enumerate(values, start=1):

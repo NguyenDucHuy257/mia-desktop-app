@@ -5,7 +5,27 @@ export type LicenseStateName =
   | 'activation_required' | 'expired' | 'revoked' | 'offline'
   | 'verification_required' | 'error';
 
+export interface LicenseEntitlements {
+  version: number;
+  plan: string;
+  trial: boolean;
+  max_tax_codes: number | null;
+  allowed_tax_codes: string[];
+  date_from: string | null;
+  date_to: string | null;
+}
+
+export interface LicenseUpdateInfo {
+  available: boolean;
+  url: string;
+  label: string;
+  latest_version: string;
+  current_version: string;
+}
+
 export interface LicenseStateResponse {
+  entitlements?: LicenseEntitlements;
+  update?: LicenseUpdateInfo;
   state: LicenseStateName;
   active: boolean;
   valid?: boolean;
@@ -24,16 +44,35 @@ export interface LicenseStateResponse {
   };
 }
 
+export interface MaterialLookupStatus { status: 'idle' | 'running' | 'completed' | 'failed'; task_id?: string; processed: number; total: number; failed: number; missing_xml?: number; error?: string }
+
 export interface LicenseDetails {
   state: LicenseStateName;
   active: boolean;
   phone: string | null;
   phone_status: 'verified' | 'legacy' | 'pending' | null;
   expires_at: string | null;
+  activated_at?: string | null;
+  plan?: string | null;
+  max_tax_codes?: number | null;
   device_bound: boolean;
   canonical_key: string | null;
   reason: string | null;
   mode: string | null;
+}
+
+export interface OfflineAuthState {
+  state: 'setup_required' | 'locked' | 'unlocked';
+  configured: boolean;
+  unlocked: boolean;
+  retry_after_seconds: number;
+}
+
+export interface OfflineAuthBridge {
+  status(): Promise<OfflineAuthState>;
+  create(password: string, confirmation: string): Promise<OfflineAuthState>;
+  unlock(password: string): Promise<OfflineAuthState>;
+  change(currentPassword: string, newPassword: string, confirmation: string): Promise<OfflineAuthState>;
 }
 
 export interface MiaAccountCredentials {
@@ -60,6 +99,7 @@ export interface MiaRuntimeBridge {
     revealKey(): Promise<string | null>;
     updatePhone(phone: string): Promise<LicenseStateResponse>;
   };
+  offlineAuth: OfflineAuthBridge;
   accountConnections: MiaAccountConnectionsBridge;
   jobs: {
     resume(): Promise<PersistedJob | null>;
@@ -80,6 +120,8 @@ export interface MiaRuntimeBridge {
     list(request: ArtifactListRequest): Promise<LocalResultPage<ArtifactItem>>;
     coverage(request: ArtifactSnapshotRequest): Promise<ArtifactCoverage>;
     vatReturnCoverage(request: VatReturnCoverageRequest): Promise<VatReturnCoverage>;
+    vatReturnIssues(request: VatReturnIssuesRequest): Promise<VatReturnIssueList>;
+    vatReturnIssueUpdate(request: VatReturnIssueUpdateRequest): Promise<{ saved: boolean; issue_id: string }>;
     vatReturnExport(request: VatReturnExportRequest): Promise<VatReturnExportResult>;
     snapshot(request: ArtifactSnapshotRequest): Promise<ArtifactSnapshot>;
     startBatch(request: ArtifactBatchRequest): Promise<{ task_id: string; status: string }>;
@@ -105,6 +147,8 @@ export interface MiaRuntimeBridge {
     setChannel(channel: 'stable' | 'beta'): Promise<UpdateStatus>;
   };
   results: {
+    materialStart(query: ResultQuery): Promise<MaterialLookupStatus>;
+    materialStatus(query: ResultQuery): Promise<MaterialLookupStatus>;
     overview(query: ResultQuery): Promise<LocalResultPage<OverviewResult>>;
     details(query: ResultQuery): Promise<LocalResultPage<DetailResult>>;
     reconciliation(query: ResultQuery): Promise<LocalResultPage<ReconciliationResult>>;
@@ -155,7 +199,12 @@ export interface VatReturnDirectionCoverage { direction: InvoiceDirection; overv
 export interface VatReturnCoverageAccount { connection_id: string; purchase: VatReturnDirectionCoverage; sold: VatReturnDirectionCoverage }
 export interface VatReturnCoverageRequest { connection_ids: string[]; date_from: string; date_to: string }
 export interface VatReturnCoverage extends VatReturnCoverageRequest { accounts: VatReturnCoverageAccount[] }
-export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string }
+export interface VatReturnIssueField { name: string; label: string; value: string }
+export interface VatReturnIssue { issue_id: string; source: 'overview' | 'detail'; record_id: number; direction: InvoiceDirection; invoice_number: string; invoice_date: string; reason: string; fields: VatReturnIssueField[] }
+export interface VatReturnIssuesRequest { connection_id: string; date_from: string; date_to: string }
+export interface VatReturnIssueList { connection_id: string; items: VatReturnIssue[]; total: number }
+export interface VatReturnIssueUpdateRequest { connection_id: string; source: 'overview' | 'detail'; record_id: number; values: Record<string, string> }
+export interface VatReturnExportRequest extends VatReturnCoverageRequest { destination: string; allow_incomplete?: boolean }
 export interface VatReturnReductionAnomaly {
   canonical_invoice_identity: string;
   line_identity: string;

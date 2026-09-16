@@ -3,7 +3,8 @@
 const { runBrokerCommand, validateConnectionId } = require('./account-connection-broker.cjs');
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_RESULT_PAGE_SIZE = 50;
+const DEFAULT_RESULT_PAGE_SIZE = 50;
+const MAX_RESULT_PAGE_SIZE = 10000;
 const MAX_RESULT_CURSOR_LENGTH = 4096;
 const MAX_FILTER_COLUMNS = 80;
 const MAX_FILTER_VALUES = 500;
@@ -56,7 +57,7 @@ function validateQuery(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('invalid_result_query');
   const allowed = new Set(['connection_id', 'cursor', 'limit', 'search', 'direction', 'query_type', 'query_types', 'date_from', 'date_to', 'column_filters', 'exclusion', 'sort']);
   if (Object.keys(value).some((key) => !allowed.has(key))) throw new TypeError('invalid_result_query');
-  const limit = value.limit ?? MAX_RESULT_PAGE_SIZE;
+  const limit = value.limit ?? DEFAULT_RESULT_PAGE_SIZE;
   const cursor = value.cursor ?? null;
   const search = value.search ?? '';
   const direction = value.direction ?? null;
@@ -104,6 +105,8 @@ function createResultBroker(getRuntime) {
     { timeoutMs: method === 'reconciliation' ? 30_000 : 15_000 },
   );
   return Object.freeze({
+    materialStart: (query) => runBrokerCommand(() => invokeResult('materialStart', query)),
+    materialStatus: (query) => runBrokerCommand(() => invokeResult('materialStatus', query)),
     overview: (query) => runBrokerCommand(() => invokeResult('overview', query)),
     details: (query) => runBrokerCommand(() => invokeResult('details', query)),
     reconciliation: (query) => runBrokerCommand(() => invokeResult('reconciliation', query)),

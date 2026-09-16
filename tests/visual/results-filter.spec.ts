@@ -56,6 +56,7 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
 
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Xem kết quả' }).click();
+  await expect(page.getByLabel('Lọc mua bán').locator('option')).toHaveText(['Mua vào', 'Bán ra']);
   const invoiceType = page.getByLabel('Loại hóa đơn');
   await expect(invoiceType.locator('option')).toHaveText([
     'Hóa đơn điện tử', 'Máy tính tiền', 'HĐĐT & Máy tính tiền',
@@ -197,7 +198,10 @@ test('column filters are nested, interactive, portalled and use the Excel-like w
   await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ search: 'Alpha toàn cục' });
 
   await page.getByLabel('Tìm kiếm kết quả').fill('');
-  await expect.poll(async () => page.evaluate(() => (window as typeof window & { resultFilterCalls: Array<Record<string, unknown>> }).resultFilterCalls.at(-1))).toMatchObject({ search: '' });
+  // The unfiltered first page is already cached, so clearing search may restore
+  // it without another runtime call. Verify the visible result instead.
+  await expect(page.getByLabel('Tìm kiếm kết quả')).toHaveValue('');
+  await expect(page.locator('.results-row:not(.results-row--header):not(.results-row--total)')).toHaveCount(2);
   await page.locator('.results-row:not(.results-row--header):not(.results-row--total)').first().getByRole('checkbox').check();
   const excludeButton = page.getByRole('button', { name: /Loại khỏi tải xuống/ });
   await expect(excludeButton).toBeEnabled();

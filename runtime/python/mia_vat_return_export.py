@@ -96,6 +96,8 @@ def _decimal_exact(value: Any, field: str) -> Decimal:
         return Decimal(value)
     text = unicodedata.normalize("NFKC", str(value)).strip()
     text = re.sub(r"[\s\u00a0]", "", text)
+    if not text:
+        return Decimal(0)
     if "," in text and "." in text:
         decimal_separator = "," if text.rfind(",") > text.rfind(".") else "."
         grouping_separator = "." if decimal_separator == "," else ","
@@ -372,9 +374,9 @@ def _build_purchase_sheet(
 
 def _build_reduction_sheet(
     sheet_root: ET.Element, company_name: str, tax_code: str,
-    purchase_lines: list[dict[str, Any]],
+    purchase_lines: list[dict[str, Any]], sold_lines: list[dict[str, Any]],
 ) -> set[str]:
-    """Populate purchase 8% lines and keep the remaining template frames empty."""
+    """Populate the statutory 8% purchase and sold reduction schedules."""
     source_rows = {int(row.get("r")): deepcopy(row) for row in sheet_root.findall(
         f"{{{_MAIN_NS}}}sheetData/{{{_MAIN_NS}}}row"
     )}
@@ -404,7 +406,7 @@ def _build_reduction_sheet(
         ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"G{row_number}:J{row_number}"})
         for column, value in (
             ("A", index + 1), ("B", item["name"]),
-            ("F", item["base"]), ("G", item["tax"]),
+            ("F", None if item.get("base_blank") else item["base"]), ("G", None if item.get("tax_blank") else item["tax"]),
         ):
             _set_ooxml_cell(output_row, f"{column}{row_number}", value)
         money_addresses.update({f"F{row_number}", f"G{row_number}"})
@@ -422,35 +424,64 @@ def _build_reduction_sheet(
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"G{row_number}:J{row_number}"})
     row_number += 1
 
-    # Part II remains as an empty styled frame. Numeric zero totals are used so
-    # no sample values survive and zero remains visible under #,##0.
     for source_row in (24, 25, 26):
         sheet_data.append(_row_with_number(source_rows[source_row], row_number))
         if source_row == 24:
             ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"A{row_number}:F{row_number}"})
         else:
-            for columns in ("B:E", "G:H", "I:J"):
+            for columns in ("B:E", "G:H", "I:J", "K:L"):
                 ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"{columns.split(':')[0]}{row_number}:{columns.split(':')[1]}{row_number}"})
         row_number += 1
+
+    sold_total_base = sold_total_reduction = Decimal(0)
+    for index, item in enumerate(sold_lines):
+        output_row = _row_with_number(source_rows[27], row_number, clear=True)
+        sheet_data.append(output_row)
+        for columns in ("B:E", "G:H", "I:J", "K:L"):
+            start, end = columns.split(":")
+            ET.SubElement(
+                merge_cells, f"{{{_MAIN_NS}}}mergeCell",
+                {"ref": f"{start}{row_number}:{end}{row_number}"},
+            )
+        reduced_rate = item["reduced_rate"]
+        reduction = item["reduction"]
+        for column, value in (
+            ("A", index + 1),
+            ("B", item["name"]),
+            ("F", item["base"]),
+            ("G", item["statutory_rate"]),
+            ("I", CachedFormula(f"=G{row_number}*80%", reduced_rate)),
+            ("K", CachedFormula(f"=F{row_number}*(G{row_number}-I{row_number})", reduction)),
+        ):
+            _set_ooxml_cell(output_row, f"{column}{row_number}", value)
+        money_addresses.update({f"F{row_number}", f"K{row_number}"})
+        sold_total_base += item["base"]
+        sold_total_reduction += reduction
+        row_number += 1
+
     sold_total = _row_with_number(source_rows[48], row_number, clear=True)
     sheet_data.append(sold_total)
     _set_ooxml_cell(sold_total, f"A{row_number}", " Tổng")
-    _set_ooxml_cell(sold_total, f"F{row_number}", Decimal(0))
-    _set_ooxml_cell(sold_total, f"K{row_number}", Decimal(0))
+    _set_ooxml_cell(sold_total, f"F{row_number}", sold_total_base)
+    _set_ooxml_cell(sold_total, f"K{row_number}", sold_total_reduction)
     money_addresses.update({f"F{row_number}", f"K{row_number}"})
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"A{row_number}:E{row_number}"})
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"G{row_number}:H{row_number}"})
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"I{row_number}:J{row_number}"})
+    sold_total_row = row_number
     row_number += 1
 
-    # Preserve the pre-existing Part III frame, but remove its stale sample
-    # result because this export does not populate Part II.
     part_three = _row_with_number(source_rows[49], row_number)
     sheet_data.append(part_three)
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"A{row_number}:F{row_number}"})
     row_number += 1
     difference = _row_with_number(source_rows[50], row_number)
-    _set_ooxml_cell(difference, f"C{row_number}", None)
+    reduction_difference = sold_total_reduction - total_tax
+    _set_ooxml_cell(
+        difference, f"C{row_number}",
+        CachedFormula(f"=K{sold_total_row}-G{purchase_total.get('r')}", reduction_difference),
+    )
+    money_addresses.add(f"C{row_number}")
     sheet_data.append(difference)
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"A{row_number}:B{row_number}"})
     ET.SubElement(merge_cells, f"{{{_MAIN_NS}}}mergeCell", {"ref": f"C{row_number}:C{row_number + 1}"})
@@ -466,7 +497,8 @@ def _write_template_workbook(template: Path, target: Path, values: dict[str, Any
                              *, company_name: str, tax_code: str,
                              sold_groups: dict[str, list[dict[str, Any]]],
                              purchase_items: list[dict[str, Any]],
-                             purchase_reduction_lines: list[dict[str, Any]]) -> None:
+                             purchase_reduction_lines: list[dict[str, Any]],
+                             sold_reduction_lines: list[dict[str, Any]]) -> None:
     with zipfile.ZipFile(template, "r") as source:
         workbook_xml = ET.fromstring(source.read("xl/workbook.xml"))
         first_sheet = workbook_xml.find(f"{{{_MAIN_NS}}}sheets/{{{_MAIN_NS}}}sheet")
@@ -520,7 +552,8 @@ def _write_template_workbook(template: Path, target: Path, values: dict[str, Any
         if purchase_date_cells:
             _apply_number_format_styles(styles_xml, purchase_xml, purchase_date_cells, "dd/mm/yyyy")
         reduction_money_cells = _build_reduction_sheet(
-            reduction_xml, company_name, tax_code, purchase_reduction_lines,
+            reduction_xml, company_name, tax_code,
+            purchase_reduction_lines, sold_reduction_lines,
         )
         _apply_money_styles(styles_xml, reduction_xml, reduction_money_cells)
         defined_names = workbook_xml.find(f"{{{_MAIN_NS}}}definedNames")
@@ -563,7 +596,7 @@ def _excluded_status(value: Any) -> bool:
     return invoice_status_is_excluded(value)
 
 
-def _tax_group(value: Any) -> str | None:
+def _classified_tax_group(value: Any) -> str | None:
     text = _normalized_text(value)
     semantic = text.replace(" ", "")
     if semantic in {"kct", "khôngchịuthuế", "khongchiuthue"}: return "kct"
@@ -584,6 +617,11 @@ def _tax_group(value: Any) -> str | None:
     return None
 
 
+def _tax_group(value: Any) -> str:
+    """Map every absent/unrecognised source tax-rate to the 0% bucket."""
+    return _classified_tax_group(value) or "0"
+
+
 def _attributes(connection: sqlite3.Connection, invoice_id: int) -> dict[str, Any]:
     output = {}
     for name, raw in connection.execute(
@@ -592,6 +630,69 @@ def _attributes(connection: sqlite3.Connection, invoice_id: int) -> dict[str, An
         try: output[str(name)] = json.loads(raw, parse_float=Decimal)
         except (TypeError, json.JSONDecodeError): output[str(name)] = raw
     return output
+
+
+def _verified_purchase_totals_from_detail(
+    connection: sqlite3.Connection, tax_code: str,
+    overview: sqlite3.Row, fields: dict[str, Any],
+) -> tuple[Decimal, Decimal, int] | None:
+    """Recover absent source totals only from a complete, internally balanced detail.
+
+    Some cash-register overview responses persist explicit JSON null for both
+    invoice totals. Re-downloading Overview cannot repair those source values.
+    Detail is a valid fallback only when every normalized line has both money
+    values and their exact aggregate balances to the source invoice payment.
+    """
+    payment_raw = fields.get("tgtttbso")
+    if payment_raw in (None, ""):
+        return None
+    if _decimal(fields.get("ttcktmai"), "ttcktmai") != 0:
+        return None
+    if _decimal(fields.get("tgtphi"), "tgtphi") != 0:
+        return None
+    candidates = connection.execute(
+        """SELECT * FROM invoice_detail_items
+           WHERE company_tax_code=? AND direction='purchase' AND query_type=?
+             AND COALESCE(nbmst,'')=COALESCE(?, '')
+             AND COALESCE(khhdon,'')=COALESCE(?, '')
+             AND COALESCE(shdon,'')=COALESCE(?, '')
+             AND COALESCE(khmshdon,'')=COALESCE(?, '')
+             AND normalized_ready=1
+             AND detail_outcome='with_lines'
+             AND (error_message IS NULL OR TRIM(error_message)='')
+           ORDER BY id DESC""",
+        (
+            tax_code, overview["query_type"], overview["nbmst"],
+            overview["khhdon"], overview["shdon"], overview["khmshdon"],
+        ),
+    ).fetchall()
+    payment = _decimal(payment_raw, "tgtttbso")
+    for detail in candidates:
+        lines = connection.execute(
+            """SELECT CAST(thtien AS TEXT) AS thtien,
+                      CAST(tthue AS TEXT) AS tthue
+               FROM invoice_detail_lines
+               WHERE detail_item_id=? ORDER BY line_number,id""",
+            (detail["id"],),
+        ).fetchall()
+        if not lines or int(detail["normalized_line_count"] or 0) != len(lines):
+            continue
+        if any(line["thtien"] in (None, "") or line["tthue"] in (None, "") for line in lines):
+            continue
+        try:
+            base = _decimal(sum(
+                (_decimal_exact(line["thtien"], "detail_thtien") for line in lines),
+                Decimal(0),
+            ), "detail_base_total")
+            tax = _decimal(sum(
+                (_decimal_exact(line["tthue"], "detail_tthue") for line in lines),
+                Decimal(0),
+            ), "detail_tax_total")
+        except ValueError:
+            continue
+        if abs((base + tax) - payment) <= Decimal("5"):
+            return base, tax, int(detail["id"])
+    return None
 
 
 def audit_vat_detail_completeness(
@@ -697,7 +798,52 @@ def _invoice_number_key(value: str) -> tuple[int, str]:
     return (int(compact) if compact else 10**30, value.casefold())
 
 
-def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to: str) -> dict[str, Any]:
+def _group_sold_reduction_lines(
+    lines: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Group rows that have the same displayed Part-II classification.
+
+    The name and the two displayed rates are dimensions. Revenue is additive;
+    the reduction is recalculated from the grouped revenue so the cached value
+    and the Excel formula use exactly the same header-defined calculation.
+    """
+    grouped: dict[tuple[str, Decimal, Decimal], dict[str, Any]] = {}
+    for item in lines:
+        display_name = unicodedata.normalize(
+            "NFKC", str(item.get("name") or "")
+        ).strip()
+        name_key = re.sub(r"\s+", " ", display_name).casefold()
+        key = (name_key, item["statutory_rate"], item["reduced_rate"])
+        target = grouped.get(key)
+        if target is None:
+            target = {
+                **item,
+                "name": re.sub(r"\s+", " ", display_name),
+                "base": Decimal(0),
+                "reduction": Decimal(0),
+                "source_line_count": 0,
+                "source_line_identities": [],
+            }
+            grouped[key] = target
+        target["base"] += item["base"]
+        target["source_line_count"] += 1
+        target["source_line_identities"].append(item["line_identity"])
+
+    output = list(grouped.values())
+    for item in output:
+        item["base"] = _decimal(item["base"], "sold_reduction_group_base")
+        item["reduction"] = (
+            item["base"] * (item["statutory_rate"] - item["reduced_rate"])
+        ).quantize(ONE_DONG, rounding=ROUND_HALF_UP)
+        if item["reduction"] == 0:
+            item["reduction"] = Decimal(0)
+    output.sort(key=lambda item: (
+        item["name"].casefold(), item["statutory_rate"], item["reduced_rate"],
+    ))
+    return output
+
+
+def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to: str, *, allow_incomplete: bool = False) -> dict[str, Any]:
     totals = {key: Decimal(0) for key in ("purchase_base", "purchase_tax", "kct", "0", "5_base", "5_tax", "10_base", "10_tax", "kkknt")}
     unknown: set[tuple[str, str, str, str]] = set()
     grouped: dict[tuple[tuple[str, ...], str], dict[str, Any]] = {}
@@ -712,6 +858,8 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
     purchase_reduction_lines: list[dict[str, Any]] = []
     purchase_reduction_audit: list[dict[str, Any]] = []
     invalid_purchase_reduction_lines: list[dict[str, Any]] = []
+    sold_reduction_lines: list[dict[str, Any]] = []
+    sold_reduction_audit: list[dict[str, Any]] = []
     missing_purchase_detail: list[dict[str, Any]] = []
     with closing(sqlite3.connect(database)) as connection:
         connection.row_factory = sqlite3.Row
@@ -786,9 +934,36 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     date.fromisoformat(invoice_date)
                 except ValueError:
                     required_missing.append("ngày lập không hợp lệ")
+                totals_source = "overview"
+                recovered_detail_id = None
+                missing_money = [
+                    field_name for field_name in ("tgtcthue", "tgtthue")
+                    if fields.get(field_name) in (None, "")
+                ]
+                if missing_money:
+                    recovered = _verified_purchase_totals_from_detail(
+                        connection, tax_code, row, fields,
+                    )
+                    if recovered is not None:
+                        recovered_base, recovered_tax, recovered_detail_id = recovered
+                        fields = {
+                            **fields,
+                            "tgtcthue": recovered_base,
+                            "tgtthue": recovered_tax,
+                        }
+                        totals_source = "detail_verified_fallback"
+                    else:
+                        recovered_detail_id = None
+                # Empty monetary cells mean zero. Keep the verified-detail
+                # fallback above when it is available; otherwise normalize all
+                # overview totals to zero and retain the invoice in aggregation.
+                zero_filled_money = []
                 for field_name in ("tgtcthue", "tgtthue"):
                     if fields.get(field_name) in (None, ""):
-                        required_missing.append(field_name)
+                        fields[field_name] = Decimal(0)
+                        zero_filled_money.append(field_name)
+                if zero_filled_money and totals_source == "overview":
+                    totals_source = "overview_zero_filled"
                 if required_missing:
                     invalid_purchase.append({
                         "identity": masked_invoice_identity(identity),
@@ -828,6 +1003,9 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "description": description,
                     "status_raw": str(fields.get("tthai") or ""),
                     "status_normalized": _normalized_text(fields.get("tthai")),
+                    "totals_source": totals_source,
+                    "totals_detail_id": recovered_detail_id if totals_source != "overview" else None,
+                    "zero_filled_money": zero_filled_money,
                 }
                 purchase_items.append(item)
                 eligible_purchase_parents[identity] = (row, fields)
@@ -843,7 +1021,10 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "status_normalized": item["status_normalized"],
                     "base": format(base, "f"), "tax": format(tax, "f"),
                     "deductible_tax": format(tax, "f"),
-                    "exported": True, "reason": "",
+                    "exported": True,
+                    "reason": "" if totals_source == "overview" else totals_source,
+                    "totals_source": totals_source,
+                    "zero_filled_money": zero_filled_money,
                 })
                 for duplicate_row, duplicate_fields in eligible[1:]:
                     purchase_audit.append({
@@ -872,9 +1053,9 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                 })
                 continue
             lines = connection.execute(
-                """SELECT line_number,CAST(tsuat AS TEXT) AS tsuat,
+                """SELECT id,line_number,ten,CAST(tsuat AS TEXT) AS tsuat,
                           CAST(thtien AS TEXT) AS thtien,CAST(tthue AS TEXT) AS tthue
-                   FROM invoice_detail_lines WHERE detail_item_id=? ORDER BY line_number""",
+                   FROM invoice_detail_lines WHERE detail_item_id=? ORDER BY line_number,id""",
                 (detail["id"],),
             ).fetchall()
             groups = [_tax_group(line["tsuat"]) for line in lines]
@@ -910,6 +1091,34 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                         reduction_anomaly = "declared_10_tax_is_neither_8_percent_nor_10_percent"
                 elif group == "5" and not _tax_matches_rate(base, tax, Decimal("0.05")):
                     reduction_anomaly = "declared_5_tax_does_not_match_5_percent"
+                trace_item = {
+                    "canonical_invoice_identity": "|".join(identity),
+                    "line_identity": f"{detail['id']}:{line['line_number']}",
+                    "status": str(fields.get("tthai") or ""), "source_tax_rate": str(line["tsuat"]),
+                    "filing_group": output_group, "base": format(base, "f"),
+                    "actual_tax": format(tax, "f"),
+                    "actual_rate_raw": None if base == 0 else format(tax / base, "f"),
+                    "actual_rate_normalized": actual_label,
+                    "difference": None if difference is None else format(difference, "f"),
+                    "reduced": reduced,
+                    "reduction_base": format(reduction_base, "f"),
+                    "reduction_unrounded": format(reduction_base * Decimal("0.02"), "f"),
+                    "reduction_anomaly": reduction_anomaly,
+                    "output_group": output_group,
+                    "exclusion_reason": "sheet_has_no_kkknt_group" if output_group == "kkknt" else "",
+                }
+                # Detail exports can contain prose/note and rounding-adjustment
+                # rows carrying a nominal 0% rate but no reportable whole-VND
+                # value. They are useful evidence, but they are not sale lines
+                # and must not become all-zero entries in the VAT schedule.
+                # Keep genuine 0% sales whenever their rounded revenue or tax
+                # is non-zero.
+                report_base = _decimal(base, "sold_schedule_line_base")
+                report_tax = _decimal(tax, "sold_schedule_line_tax")
+                if report_base == 0 and report_tax == 0:
+                    trace_item["exclusion_reason"] = "zero_value_detail_line"
+                    trace.append(trace_item)
+                    continue
                 key = (identity, str(output_group))
                 target = grouped.setdefault(key, {
                     "identity": identity, "identity_hash": masked_invoice_identity(identity),
@@ -929,23 +1138,37 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                 target["tax_exact"] += tax
                 target["reduction_base_exact"] += reduction_base
                 target["has_reduction"] = target["has_reduction"] or reduced
-                trace_item = {
-                    "canonical_invoice_identity": "|".join(identity),
-                    "line_identity": f"{detail['id']}:{line['line_number']}",
-                    "status": str(fields.get("tthai") or ""), "source_tax_rate": str(line["tsuat"]),
-                    "filing_group": output_group, "base": format(base, "f"),
-                    "actual_tax": format(tax, "f"),
-                    "actual_rate_raw": None if base == 0 else format(tax / base, "f"),
-                    "actual_rate_normalized": actual_label,
-                    "difference": None if difference is None else format(difference, "f"),
-                    "reduced": reduced,
-                    "reduction_base": format(reduction_base, "f"),
-                    "reduction_unrounded": format(reduction_base * Decimal("0.02"), "f"),
-                    "reduction_anomaly": reduction_anomaly,
-                    "output_group": output_group,
-                    "exclusion_reason": "sheet_has_no_kkknt_group" if output_group == "kkknt" else "",
-                }
                 trace.append(trace_item)
+                if reduced:
+                    normalized_base = _decimal(base, "sold_reduction_thtien")
+                    reduction = (normalized_base * Decimal("0.02")).quantize(
+                        ONE_DONG, rounding=ROUND_HALF_UP,
+                    )
+                    sold_reduction_lines.append({
+                        "parent_identity": identity,
+                        "parent_identity_hash": masked_invoice_identity(identity),
+                        "line_identity": trace_item["line_identity"],
+                        "line_number": int(line["line_number"]),
+                        "query_type": str(detail["query_type"]),
+                        "nlap_date": str(_field(fields, row, "nlap_date", "nlap", "tdlap"))[:10],
+                        "khhdon": str(_field(fields, row, "khhdon")),
+                        "shdon": str(_field(fields, row, "shdon")),
+                        "name": str(line["ten"] or "").strip(),
+                        "base": normalized_base,
+                        "statutory_rate": Decimal("0.10"),
+                        "reduced_rate": Decimal("0.08"),
+                        "reduction": reduction,
+                    })
+                    sold_reduction_audit.append({
+                        "parent_invoice_identity": masked_invoice_identity(identity),
+                        "line_identity": trace_item["line_identity"],
+                        "name": str(line["ten"] or "").strip(),
+                        "base": format(normalized_base, "f"),
+                        "source_tax_rate": str(line["tsuat"] or ""),
+                        "statutory_rate": "0.10",
+                        "reduced_rate": "0.08",
+                        "reduction": format(reduction, "f"),
+                    })
                 if reduction_anomaly:
                     reduction_anomalies.append({
                         "canonical_invoice_identity": masked_invoice_identity(identity),
@@ -1054,10 +1277,6 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                 missing_fields = []
                 if not audit_item["name"]:
                     missing_fields.append("tên hàng hóa, dịch vụ")
-                if raw_base in (None, ""):
-                    missing_fields.append("thtien")
-                if raw_tax in (None, ""):
-                    missing_fields.append("tthue")
                 if missing_fields:
                     invalid_purchase_reduction_lines.append({
                         "parent_invoice_identity": masked_invoice_identity(identity),
@@ -1065,8 +1284,9 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                         "missing": missing_fields,
                     })
                     audit_item["reason"] = "missing_required_fields"
-                    purchase_reduction_audit.append(audit_item)
-                    continue
+                    if not allow_incomplete:
+                        purchase_reduction_audit.append(audit_item)
+                        continue
                 output = {
                     "parent_identity": identity,
                     "parent_identity_hash": masked_invoice_identity(identity),
@@ -1077,6 +1297,12 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "khhdon": str(parent_row["khhdon"] or ""),
                     "shdon": str(parent_row["shdon"] or ""),
                     "name": audit_item["name"], "base": base, "tax": tax,
+                    "base_blank": False, "tax_blank": False,
+                    "zero_filled_money": [
+                        field_name for field_name, raw_value in
+                        (("thtien", raw_base), ("tthue", raw_tax))
+                        if raw_value in (None, "")
+                    ],
                     "difference_from_8_percent": difference,
                 }
                 purchase_reduction_lines.append(output)
@@ -1089,26 +1315,8 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
                     "identity": masked_invoice_identity(identity),
                     "shdon_masked": "*" * max(0, len(number) - 3) + number[-3:],
                 })
-    if invalid_purchase:
-        raise ValueError('vat_return_purchase_invalid:' + json.dumps({
-            'direction': 'purchase', 'count': len(invalid_purchase),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': invalid_purchase[:5],
-        }, ensure_ascii=False, separators=(',', ':')))
-    if invalid_purchase_reduction_lines:
-        raise ValueError('vat_return_purchase_reduction_invalid:' + json.dumps({
-            'direction': 'purchase', 'count': len(invalid_purchase_reduction_lines),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': invalid_purchase_reduction_lines[:5],
-        }, ensure_ascii=False, separators=(',', ':')))
-    if missing_sold:
-        raise ValueError('vat_return_detail_missing:' + json.dumps({
-            'direction': 'sold', 'count': len(missing_sold),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': missing_sold[:3],
-        }, ensure_ascii=False, separators=(',', ':')))
-    if unknown:
-        raise ValueError(f"vat_return_unknown_tax_rate:{len(unknown)}")
+    # Data-quality issues are reported for review but never block workbook
+    # creation. Rows that cannot be safely aggregated remain in the audit list.
     sold_groups = {key: [] for key in ("kct", "0", "5", "10")}
     for item in grouped.values():
         item["base"] = _decimal(item.pop("base_exact"), "group_base")
@@ -1139,6 +1347,8 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
         item["nlap_date"], item["khhdon"].casefold(),
         _invoice_number_key(item["shdon"]), item["line_number"], item["line_identity"],
     ))
+    sold_reduction_source_line_count = len(sold_reduction_lines)
+    sold_reduction_lines = _group_sold_reduction_lines(sold_reduction_lines)
     return {"totals": totals, "sold_groups": sold_groups,
             "trace": trace, "excluded": excluded,
             "reduction_anomalies": reduction_anomalies,
@@ -1146,6 +1356,9 @@ def build_vat_return_data(database: Path, tax_code: str, date_from: str, date_to
             "purchase_audit": purchase_audit,
             "purchase_reduction_lines": purchase_reduction_lines,
             "purchase_reduction_audit": purchase_reduction_audit,
+            "sold_reduction_lines": sold_reduction_lines,
+            "sold_reduction_source_line_count": sold_reduction_source_line_count,
+            "sold_reduction_audit": sold_reduction_audit,
             "missing_purchase_detail": missing_purchase_detail}
 
 
@@ -1215,6 +1428,121 @@ def vat_return_filename(tax_code: str, date_from: str, date_to: str) -> str:
     return f"To_khai_thue_GTGT_{tax_code}_{from_value}_{to_value}.xlsx"
 
 
+def vat_return_issues(backend, value: dict[str, Any]) -> dict[str, Any]:
+    """List editable local data-quality issues without blocking export."""
+    connection_id = str(value.get("connection_id") or "").strip()
+    date_from, date_to = str(value.get("date_from") or ""), str(value.get("date_to") or "")
+    if not connection_id or not date_from or not date_to or date_from > date_to:
+        raise ValueError("invalid_vat_return_issues")
+    tax_code = backend.connection_tax_code(connection_id)
+    database = backend.data_root / tax_code / "db" / "invoices.sqlite3"
+    items: list[dict[str, Any]] = []
+    with closing(sqlite3.connect(database)) as connection:
+        connection.row_factory = sqlite3.Row
+        overview_rows = connection.execute(
+            """SELECT * FROM invoice_overview_items WHERE company_tax_code=?
+               AND nlap_date BETWEEN ? AND ? AND direction IN ('purchase','sold')
+               AND query_type IN ('query','sco-query') ORDER BY nlap_date,id""",
+            (tax_code, date_from, date_to),
+        ).fetchall()
+        for row in overview_rows:
+            fields = _attributes(connection, int(row["id"]))
+            missing = [name for name in ("tgtcthue", "tgtthue") if fields.get(name) in (None, "")]
+            if missing:
+                items.append({
+                    "issue_id": f"overview:{row['id']}", "source": "overview",
+                    "record_id": int(row["id"]), "direction": str(row["direction"]),
+                    "invoice_number": str(row["shdon"] or ""),
+                    "invoice_date": str(row["nlap_date"] or "")[:10],
+                    "reason": "Ô tiền trống đã được tính là 0",
+                    "fields": [
+                        {"name": name, "label": {"tgtcthue": "Tiền trước thuế", "tgtthue": "Tiền thuế"}[name],
+                         "value": "" if fields.get(name) is None else str(fields.get(name))}
+                        for name in ("tgtcthue", "tgtthue")
+                    ],
+                })
+        detail_rows = connection.execute(
+            """SELECT l.id,l.ten,CAST(l.tsuat AS TEXT) tsuat,
+                      CAST(l.thtien AS TEXT) thtien,CAST(l.tthue AS TEXT) tthue,
+                      d.direction,d.shdon,d.nlap_date
+               FROM invoice_detail_lines l JOIN invoice_detail_items d ON d.id=l.detail_item_id
+               WHERE d.company_tax_code=? AND d.nlap_date BETWEEN ? AND ?
+                 AND d.direction IN ('purchase','sold') ORDER BY d.nlap_date,d.id,l.line_number""",
+            (tax_code, date_from, date_to),
+        ).fetchall()
+        for row in detail_rows:
+            reasons = []
+            if _classified_tax_group(row["tsuat"]) is None:
+                reasons.append("Thuế suất trống/không rõ đã được tính là 0%")
+            if row["thtien"] in (None, "") or row["tthue"] in (None, ""):
+                reasons.append("Ô tiền trống đã được tính là 0")
+            if not str(row["ten"] or "").strip():
+                reasons.append("Thiếu tên hàng hóa, dịch vụ")
+            if not reasons:
+                continue
+            items.append({
+                "issue_id": f"detail:{row['id']}", "source": "detail",
+                "record_id": int(row["id"]), "direction": str(row["direction"]),
+                "invoice_number": str(row["shdon"] or ""),
+                "invoice_date": str(row["nlap_date"] or "")[:10],
+                "reason": "; ".join(reasons),
+                "fields": [
+                    {"name": "ten", "label": "Tên hàng hóa, dịch vụ", "value": str(row["ten"] or "")},
+                    {"name": "tsuat", "label": "Thuế suất", "value": str(row["tsuat"] or "")},
+                    {"name": "thtien", "label": "Thành tiền", "value": str(row["thtien"] or "")},
+                    {"name": "tthue", "label": "Tiền thuế", "value": str(row["tthue"] or "")},
+                ],
+            })
+    return {"connection_id": connection_id, "items": items, "total": len(items)}
+
+
+def update_vat_return_issue(backend, value: dict[str, Any]) -> dict[str, Any]:
+    """Persist an explicitly edited issue row in the account's local SQLite DB."""
+    connection_id = str(value.get("connection_id") or "").strip()
+    source = str(value.get("source") or "")
+    record_id = value.get("record_id")
+    values = value.get("values")
+    allowed = {"overview": {"tgtcthue", "tgtthue"}, "detail": {"ten", "tsuat", "thtien", "tthue"}}
+    if (not connection_id or source not in allowed or not isinstance(record_id, int)
+            or record_id <= 0 or not isinstance(values, dict) or not values
+            or set(values) - allowed[source]):
+        raise ValueError("invalid_vat_return_issue_update")
+    clean = {name: str(raw or "").strip()[:500] for name, raw in values.items()}
+    tax_code = backend.connection_tax_code(connection_id)
+    database = backend.data_root / tax_code / "db" / "invoices.sqlite3"
+    with closing(sqlite3.connect(database, timeout=30)) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if source == "overview":
+            exists = connection.execute(
+                "SELECT 1 FROM invoice_overview_items WHERE id=? AND company_tax_code=?",
+                (record_id, tax_code),
+            ).fetchone()
+            if not exists:
+                raise ValueError("vat_return_issue_not_found")
+            for name, raw in clean.items():
+                connection.execute(
+                    """INSERT INTO invoice_overview_attributes(invoice_item_id,field_name,value_json)
+                       VALUES(?,?,?) ON CONFLICT(invoice_item_id,field_name)
+                       DO UPDATE SET value_json=excluded.value_json""",
+                    (record_id, name, json.dumps(raw, ensure_ascii=False)),
+                )
+        else:
+            exists = connection.execute(
+                """SELECT 1 FROM invoice_detail_lines l JOIN invoice_detail_items d
+                   ON d.id=l.detail_item_id WHERE l.id=? AND d.company_tax_code=?""",
+                (record_id, tax_code),
+            ).fetchone()
+            if not exists:
+                raise ValueError("vat_return_issue_not_found")
+            assignments = ",".join(f"{name}=?" for name in clean)
+            connection.execute(
+                f"UPDATE invoice_detail_lines SET {assignments},updated_at=datetime('now') WHERE id=?",
+                (*clean.values(), record_id),
+            )
+        connection.commit()
+    return {"saved": True, "issue_id": f"{source}:{record_id}"}
+
+
 def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
     connection_ids = list(value.get("connection_ids") or ())
     if len(connection_ids) != 1: raise ValueError("invalid_vat_return_account")
@@ -1241,14 +1569,8 @@ def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
     if not company_name: raise ValueError("vat_return_company_name_missing")
     report = build_vat_return_data(
         backend.data_root / tax_code / "db" / "invoices.sqlite3",
-        tax_code, date_from, date_to,
+        tax_code, date_from, date_to, allow_incomplete=value.get("allow_incomplete") is True,
     )
-    if report["missing_purchase_detail"]:
-        raise ValueError('vat_return_detail_missing:' + json.dumps({
-            'direction': 'purchase', 'count': len(report["missing_purchase_detail"]),
-            'date_from': date_from, 'date_to': date_to,
-            'examples': report["missing_purchase_detail"][:3],
-        }, ensure_ascii=False, separators=(',', ':')))
     totals = report["totals"]
     template = _template_path()
     if not template.is_file(): raise FileNotFoundError(template)
@@ -1274,6 +1596,7 @@ def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
             tax_code=tax_code, sold_groups=report["sold_groups"],
             purchase_items=report["purchase_items"],
             purchase_reduction_lines=report["purchase_reduction_lines"],
+            sold_reduction_lines=report["sold_reduction_lines"],
         )
         verification = load_workbook(temporary, data_only=False, read_only=True)
         cached_verification = load_workbook(temporary, data_only=True, read_only=True)
@@ -1323,5 +1646,14 @@ def export_vat_return(backend, value: dict[str, Any]) -> dict[str, Any]:
                 (item["tax"] for item in report["purchase_reduction_lines"]), Decimal(0)
             ), "f"),
             "purchase_reduction_rows": report["purchase_reduction_audit"],
+            "sold_reduction_line_count": len(report["sold_reduction_lines"]),
+            "sold_reduction_source_line_count": report["sold_reduction_source_line_count"],
+            "sold_reduction_base": format(sum(
+                (item["base"] for item in report["sold_reduction_lines"]), Decimal(0)
+            ), "f"),
+            "sold_reduction_tax": format(sum(
+                (item["reduction"] for item in report["sold_reduction_lines"]), Decimal(0)
+            ), "f"),
+            "sold_reduction_rows": report["sold_reduction_audit"],
         },
     }
