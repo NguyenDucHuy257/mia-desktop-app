@@ -13,6 +13,7 @@ from typing import Any, Sequence
 import requests
 
 from app.config.crawl_config import CrawlConfig, query_type_to_category
+from app.crawlers.diagnostics import job_diagnostics
 from app.config.runtime import RuntimeCapabilities
 from app.crawlers.invoice_crawler import (
     InvoiceCrawler,
@@ -106,6 +107,7 @@ class InvoiceCrawlTaskHandler:
     def is_shutdown_requested(self) -> bool:
         return self._shutdown_requested.is_set()
 
+    @job_diagnostics('auth')
     def authenticate_job(self, job: JobRecord, progress_callback=None) -> None:
         session_hash = str(job.parameters['session_hash'])
         self.session_manager.authenticate_session_hash(
@@ -113,6 +115,7 @@ class InvoiceCrawlTaskHandler:
             progress_callback=progress_callback,
         )
 
+    @job_diagnostics('overview')
     def run_overview_unit(
         self, job: JobRecord, payload: dict, page_committed,
         interruption_check=None, progress_callback=None, initial_payloads=None,
@@ -127,12 +130,14 @@ class InvoiceCrawlTaskHandler:
             ),
         )
 
+    @job_diagnostics('overview_preflight')
     def prepare_overview_unit(self, job: JobRecord, payload: dict) -> dict:
         return self._run_job_route(
             job, payload, 'overview',
             lambda lease: self._prepare_overview_core(job, payload, lease),
         )
 
+    @job_diagnostics('detail')
     def run_detail_unit(self, job: JobRecord, payload: dict, progress_callback=None) -> None:
         self._run_job_route(
             job, payload, 'detail',
@@ -141,6 +146,7 @@ class InvoiceCrawlTaskHandler:
             ),
         )
 
+    @job_diagnostics('package')
     def run_xml_unit(self, job: JobRecord, payload: dict, progress_callback=None):
         return self._run_job_route(
             job, payload, 'package',
@@ -149,6 +155,7 @@ class InvoiceCrawlTaskHandler:
             ),
         )
 
+    @job_diagnostics('material')
     def run_mvt_scope(
         self, job: JobRecord, payload: dict, progress_callback=None,
         interruption_check=None,

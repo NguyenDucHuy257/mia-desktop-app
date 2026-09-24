@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 import requests
+from app.crawlers.diagnostics import wire_request
 
 PORTAL_ROOT_URL = 'https://hoadondientu.gdt.gov.vn/'
 INVOICE_LOOKUP_URL = f'{PORTAL_ROOT_URL}tra-cuu/tra-cuu-hoa-don'
@@ -94,8 +95,8 @@ class WebClient:
         last_error: BaseException | None = None
         for _ in range(normal_limit + rate_limit - 1):
             try:
-                response = self.session.get(
-                    url, params=params, headers=self._fresh_request_headers(headers),
+                response = wire_request(
+                    self.session, 'get', url, params=params, headers=self._fresh_request_headers(headers),
                     timeout=self.timeout if timeout is None else timeout,
                 )
                 response.raise_for_status()
@@ -128,8 +129,8 @@ class WebClient:
         headers: dict[str,str] | None = None,
         timeout: float | tuple[float, float] | None = None,
         ) -> requests.Response:
-        response = self.session.post(
-            url,
+        response = wire_request(
+            self.session, 'post', url,
             data = payload,
             headers = self._fresh_request_headers(headers),
             json = json_payload,
