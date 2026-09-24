@@ -137,6 +137,7 @@ async function readSanitizedLogEntries(userDataDirectory) {
 
 async function clearDiagnosticLogs(userDataDirectory) {
   const files = [
+    path.join(userDataDirectory, 'offline-runtime', 'logs', 'crawl-diagnostics.log'),
     path.join(userDataDirectory, 'logs', 'electron.log'),
     path.join(userDataDirectory, 'logs', 'renderer.log'),
     path.join(userDataDirectory, 'offline-runtime', 'logs', 'runtime.log'),

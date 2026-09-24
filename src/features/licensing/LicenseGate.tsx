@@ -2,6 +2,7 @@ import { type FormEvent, type PropsWithChildren, useEffect, useState } from 'rea
 import logo from '../../assets/figma/logo.png';
 import type { LicenseStateResponse } from '../../lib/runtime-bridge';
 import '../../styles/license.css';
+import { ExportSupportLogButton, InlineErrorWithSupport } from '../../components/ExportSupportLogButton';
 import { LicensePolicyContext, LicenseUpdateContext } from './LicensePolicyContext';
 
 const copy: Record<string, { title: string; description: string }> = {
@@ -28,7 +29,7 @@ const reasonCopy: Record<string, { title: string; description: string }> = {
   },
   hardware_mismatch_below_50_percent: {
     title: 'Thiết bị không khớp bản quyền',
-    description: 'Thông tin phần cứng khớp dưới 50%. Bản quyền trên thiết bị cũ không thể được sử dụng trên máy này.',
+    description: 'Thiết bị không khớp tối thiểu 3 thông tin phần cứng và ít nhất 50% hồ sơ đã lưu. Bản quyền trên thiết bị cũ không thể được sử dụng trên máy này.',
   },
   insufficient_hardware: {
     title: 'Không đủ thông tin thiết bị',
@@ -47,6 +48,22 @@ const reasonCopy: Record<string, { title: string; description: string }> = {
     description: 'Vui lòng thử lại sau. Dữ liệu bản quyền trên máy vẫn được giữ nguyên.',
   },
 };
+
+export function licenseActionError(error: unknown, fallback: string) {
+  const value = error as { code?: string; message?: string; status?: number; requestId?: string };
+  const messages: Record<string, string> = {
+    recovery_code_invalid: 'Mã xác nhận không đúng hoặc không thuộc yêu cầu hiện tại.',
+    recovery_code_expired: 'Mã xác nhận đã hết hạn. Vui lòng gửi mã mới.',
+    recovery_code_locked: 'Mã xác nhận đã bị khóa do nhập sai quá số lần.',
+    recovery_wait_before_resend: 'Vui lòng chờ ít nhất 60 giây trước khi gửi lại mã.',
+    recovery_rate_limited: 'Đã yêu cầu quá nhiều mã. Vui lòng thử lại sau.',
+    recovery_email_unavailable: 'Server chưa thể gửi email xác nhận. Vui lòng gửi log cho kỹ thuật.',
+    recovery_license_invalid: 'Bản quyền hoặc thiết bị không còn hợp lệ tại bước xác nhận.',
+    recovery_not_configured: 'Server chưa cấu hình dịch vụ khôi phục mật khẩu.',
+  };
+  const detail = messages[value?.code || ''] || value?.message?.replace(/^\[[^\]]+\]\s*/, '') || fallback;
+  return value?.requestId ? `${detail} Mã yêu cầu: ${value.requestId}` : detail;
+}
 
 export function licenseAllowsWorkspace(state: LicenseStateResponse | null) {
   return Boolean(state
@@ -69,25 +86,32 @@ function LicenseFrame({ state, onRetry }: { state: LicenseStateResponse; onRetry
       {state.state === 'checking' || state.state === 'migrating' ? <div className="license-progress" aria-hidden="true"><span /></div> : null}
       {retryable ? <button type="button" className="license-primary-button" onClick={() => void onRetry()}>Kiểm tra lại</button> : null}
       {state.reason ? <small>Mã trạng thái: {state.reason}</small> : null}
+      {retryable ? <ExportSupportLogButton /> : null}
     </section>
   </main>;
 }
 
-function PhoneForm({ legacy = false, onSubmit }: { legacy?: boolean; onSubmit(phone: string): Promise<void> }) {
-  const [phone, setPhone] = useState('');
+function PhoneForm({ legacy = false, initialPhone = '', initialEmail = '', onSubmit }: { legacy?: boolean; initialPhone?: string; initialEmail?: string; onSubmit(phone: string, email: string): Promise<void> }) {
+  const [phone, setPhone] = useState(initialPhone);
+  const [email, setEmail] = useState(initialEmail);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   async function submit(event: FormEvent) {
     event.preventDefault();
     const normalizedPhone = phone.trim();
+    const normalizedEmail = email.trim().toLocaleLowerCase('en-US');
     if (!/^0[0-9]{9}$/.test(normalizedPhone)
       || ['0000000000', '0865219286', '0383466992'].includes(normalizedPhone)) {
       setMessage('Vui lòng nhập số điện thoại hợp lệ gồm 10 chữ số và bắt đầu bằng 0.');
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setMessage('Vui lòng nhập địa chỉ email hợp lệ để khôi phục mật khẩu.');
+      return;
+    }
     setSubmitting(true);
     setMessage(null);
-    try { await onSubmit(normalizedPhone); }
+    try { await onSubmit(normalizedPhone, normalizedEmail); }
     catch { setMessage('Không thể gửi thông tin bản quyền. Vui lòng thử lại.'); }
     finally { setSubmitting(false); }
   }
@@ -101,8 +125,48 @@ function PhoneForm({ legacy = false, onSubmit }: { legacy?: boolean; onSubmit(ph
     <label className="license-phone-field">Số điện thoại đăng ký
       <input autoFocus inputMode="numeric" autoComplete="tel" maxLength={10} placeholder="Ví dụ: 0981234567" value={phone} onChange={(event) => setPhone(event.target.value.replace(/\D/g, '').slice(0, 10))} />
     </label>
-    {message ? <span className="license-form-error">{message}</span> : null}
-    <button type="submit" className="license-primary-button" disabled={submitting}>{submitting ? 'Đang xử lý...' : 'Tạo mã kích hoạt'}</button>
+    <label className="license-phone-field">Email khôi phục
+      <input type="email" autoComplete="email" maxLength={254} placeholder="ten@congty.com" required value={email} onChange={(event) => setEmail(event.target.value)} />
+    </label>
+    {message ? <InlineErrorWithSupport className="license-form-error" message={message} /> : null}
+    <button type="submit" className="license-primary-button" disabled={submitting}>{submitting ? 'Đang xử lý...' : 'Cập nhật'}</button>
+  </form></main>;
+}
+
+function EmailVerificationForm({ state, onDone }: { state: LicenseStateResponse; onDone(value: LicenseStateResponse): void }) {
+  const bridge = window.miaRuntime!.license;
+  const [phone, setPhone] = useState(state.details?.phone || '');
+  const [email, setEmail] = useState(state.details?.pending_email || state.details?.email || '');
+  const [challenge, setChallenge] = useState('');
+  const [masked, setMasked] = useState('');
+  const [code, setCode] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function send(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage('');
+    try {
+      const result = await bridge.requestContactVerification(phone, email);
+      setChallenge(result.challenge_id); setMasked(result.masked_email);
+    } catch (error) { setMessage(licenseActionError(error, 'Không thể gửi mã xác nhận.')); }
+    finally { setBusy(false); }
+  }
+  async function confirm(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setMessage('');
+    try { onDone(await bridge.confirmContact(challenge, code)); }
+    catch (error) { setMessage(licenseActionError(error, 'Không thể xác nhận mã.')); }
+    finally { setBusy(false); }
+  }
+  return <main className="license-gate-page"><form className="license-gate-card" onSubmit={(event) => void (challenge ? confirm(event) : send(event))}>
+    <img src={logo} alt="" className="license-gate-logo" /><strong className="license-gate-brand">MIA TOOL 2026</strong>
+    <h1>Xác minh email khôi phục</h1>
+    {!challenge ? <><p>Email được dùng để nhận mã khi bạn quên mật khẩu đăng nhập trên máy.</p>
+      <label className="license-phone-field">Số điện thoại đăng ký<input inputMode="numeric" autoComplete="tel" maxLength={10} value={phone} onChange={(event) => setPhone(event.target.value.replace(/\D/g, '').slice(0, 10))} /></label>
+      <label className="license-phone-field">Email khôi phục<input autoFocus type="email" autoComplete="email" maxLength={254} required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+    </> : <><p>Mã gồm 6 chữ số đã được gửi tới <strong>{masked}</strong>. Mã có hiệu lực trong 10 phút.</p>
+      <label className="license-phone-field">Mã xác nhận<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" required value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label>
+    </>}
+    {message ? <InlineErrorWithSupport className="license-form-error" message={message} /> : null}
+    <button type="submit" className="license-primary-button" disabled={busy}>{busy ? 'Đang xử lý...' : challenge ? 'Xác nhận email' : 'Gửi mã xác nhận'}</button>
   </form></main>;
 }
 
@@ -136,9 +200,9 @@ export function LicenseGate({ children }: PropsWithChildren) {
     try { setState(await bridge.initialize()); }
     catch (error) { setState({ state: 'error', active: false, reason: String((error as { code?: string })?.code || 'internal_error') }); }
   }
-  async function submitPhone(phone: string) {
+  async function submitPhone(phone: string, email: string) {
     if (!bridge) return;
-    setState(await bridge.submitPhone(phone));
+    setState(await bridge.submitPhone(phone, email));
   }
   useEffect(() => { void initialize(); }, []);
   if (!state || state.state === 'checking' || state.state === 'migrating') return <LicenseFrame state={state || { state: 'checking', active: false }} onRetry={initialize} />;
@@ -153,6 +217,7 @@ export function LicenseGate({ children }: PropsWithChildren) {
   if (state.state === 'phone_required' || state.state === 'legacy_phone_required') {
     return <PhoneForm legacy={state.state === 'legacy_phone_required'} onSubmit={submitPhone} />;
   }
+  if (state.state === 'email_required') return <EmailVerificationForm state={state} onDone={setState} />;
   if (state.state === 'activation_required') return <ActivationPage state={state} onRetry={async () => { if (bridge) setState(await bridge.retry()); }} />;
   return <LicenseFrame state={state} onRetry={initialize} />;
 }

@@ -1,10 +1,11 @@
 class LicenseApiError extends Error {
-  constructor(code, message, { status = null, transient = false } = {}) {
+  constructor(code, message, { status = null, transient = false, requestId = null } = {}) {
     super(message);
     this.name = 'LicenseApiError';
     this.code = code;
     this.status = status;
     this.transient = transient;
+    this.requestId = requestId;
   }
 }
 
@@ -26,6 +27,7 @@ function parseErrorResponse(data) {
   return {
     code: String(detail?.code || data?.code || 'license_request_failed'),
     message,
+    requestId: typeof detail?.request_id === 'string' ? detail.request_id : null,
   };
 }
 
@@ -66,6 +68,7 @@ function createLicenseApi({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = 1
         throw new LicenseApiError(errorResponse.code, errorResponse.message, {
           status: response.status,
           transient: response.status === 408 || response.status === 429 || response.status >= 500,
+          requestId: errorResponse.requestId,
         });
       }
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new LicenseApiError('invalid_response', 'Key server response is invalid');
@@ -79,7 +82,13 @@ function createLicenseApi({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = 1
     }
   }
 
-  return Object.freeze({ verifyKeyV2 });
+  return Object.freeze({
+    verifyKeyV2,
+    requestContactVerification: (payload) => verifyKeyV2({ ...payload, action: 'contact_request' }),
+    confirmContact: (payload) => verifyKeyV2({ ...payload, action: 'contact_confirm' }),
+    requestPasswordReset: (payload) => verifyKeyV2({ ...payload, action: 'password_reset_request' }),
+    verifyPasswordReset: (payload) => verifyKeyV2({ ...payload, action: 'password_reset_verify' }),
+  });
 }
 
 module.exports = { LicenseApiError, createLicenseApi, parseErrorResponse, validateServerUrl };
