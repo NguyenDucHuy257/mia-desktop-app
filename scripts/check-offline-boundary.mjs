@@ -15,6 +15,13 @@ async function files(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(entries.map((entry) => {
     const target = path.join(directory, entry.name);
+    // Unit-test fixtures deliberately contain fake endpoints and credentials
+    // to verify diagnostic redaction. They are not part of the PyInstaller
+    // analysis graph, so keep this production-boundary scan scoped to runtime
+    // source that can actually be packaged.
+    if (entry.isDirectory() && (entry.name === 'tests' || entry.name === '__pycache__')) {
+      return [];
+    }
     return entry.isDirectory() ? files(target) : [target];
   }));
   return nested.flat();

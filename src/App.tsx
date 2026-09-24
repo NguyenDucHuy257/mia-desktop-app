@@ -15,6 +15,7 @@ import { LicenseGate } from './features/licensing/LicenseGate';
 import { OfflineAuthGate } from './features/offline-auth/OfflineAuthGate';
 import { currentYearDateRange } from './components/date-input-utils';
 import type { WorkspaceTask } from './lib/workspace-task';
+import { diagnosticLog } from './lib/diagnostic-logger';
 import './styles/delete-progress.css';
 import './styles/invoice-storage-polish.css';
 import './styles/result-export-progress.css';
@@ -101,7 +102,7 @@ function WorkspaceApp() {
       });
   }
 
-  async function refreshAccounts() {
+  async function refreshAccounts(): Promise<boolean> {
     try {
       const items = await gateway.list();
       const visibleItems = items.filter((item) => !deletingIds.current.has(item.connection_id));
@@ -112,8 +113,13 @@ function WorkspaceApp() {
         const retained = current.filter((id) => available.has(id));
         return retained.length ? retained : visibleItems[0] ? [visibleItems[0].connection_id] : [];
       });
-    } catch {
+      return true;
+    } catch (error) {
       setAccounts(null);
+      diagnosticLog('initial_account_list_failed', {
+        code: (error as { code?: string })?.code ?? 'unknown_error',
+      }, 'warn');
+      return false;
     }
   }
 
@@ -155,10 +161,32 @@ function WorkspaceApp() {
   }
 
   useEffect(() => {
-    void refreshAccounts();
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const loadInitialAccounts = async (attempt = 0) => {
+      const loaded = await refreshAccounts();
+      if (disposed || loaded) return;
+      // Do not leave the first screen looking empty because the local runtime
+      // needed another moment to open its encrypted session/database.
+      if (attempt < 9) {
+        retryTimer = setTimeout(() => void loadInitialAccounts(attempt + 1), 500);
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshAccounts();
+    };
+    void loadInitialAccounts();
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     void window.miaRuntime?.preferences?.get()
       .then((preferences) => { setExportFolder(preferences.exportFolder || DEFAULT_EXPORT_FOLDER); setPdfConcurrency(preferences.pdfConcurrency ?? 5); })
       .catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, []);
 
   function navigate(value: NavigationKey) {

@@ -13,7 +13,7 @@ function bitmapDimensions(path: string) {
 
 describe('MIA TOOL 2026 installer branding', () => {
   it('uses the new product and installer names without numeric suffixes', () => {
-    expect(packageMetadata.version).toBe('4.0.8');
+    expect(packageMetadata.version).toBe('4.1.1');
     expect(packageMetadata.build.productName).toBe('MIA TOOL 2026');
     expect(packageMetadata.build.nsis.shortcutName).toBe('MIA TOOL 2026');
     expect(packageMetadata.build.nsis.artifactName).toBe('MIA-TOOL-2026-Setup-${version}.${ext}');

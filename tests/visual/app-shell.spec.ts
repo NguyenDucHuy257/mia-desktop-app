@@ -57,7 +57,7 @@ test('sidebar, support link and account popup use the shared shell', async ({ pa
   await expect(popup).not.toContainText('MST:');
   await expect(popup).not.toContainText('SĐT:');
   await expect(popup).not.toContainText('Đăng xuất');
-  await expect(popup).toContainText('MIA TOOL 2026 4.0.8');
+  await expect(popup).toContainText('MIA TOOL 2026 4.1.1');
   await expect(popup.locator('code')).not.toContainText('20cd0a15');
   await popup.getByRole('button', { name: 'Hiện' }).click();
   await expect(popup.locator('code')).toHaveText('KEYV2-20cd0a15bc1ab172b385707877c0f82b-0987654321');

@@ -721,5 +721,7 @@
   }
 
 }
-.invoice-page > .invoice-content .table-body { overflow-y: auto; }
+.invoice-page > .invoice-content .data-card > .table-header,
+.invoice-page > .invoice-content .data-card > .table-body { min-width: 1460px; }
+.invoice-page > .invoice-content .table-body { overflow-x: visible; overflow-y: auto; }
 .notice-message { white-space: pre-wrap; max-height: 60vh; overflow-y: auto; }
