@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { ExportSupportLogButton } from './ExportSupportLogButton';
 
 export type NoticeKind = 'error' | 'warning' | 'info' | 'success' | 'notice';
 
@@ -9,11 +10,13 @@ interface NoticeDialogProps {
   onClose(): void;
   actionLabel?: string;
   onAction?(): void;
+  supportLog?: boolean;
 }
 
-export function NoticeDialog({ kind, message, path, onClose, actionLabel, onAction }: NoticeDialogProps) {
+export function NoticeDialog({ kind, message, path, onClose, actionLabel, onAction, supportLog }: NoticeDialogProps) {
   const dialogRef = useRef<HTMLElement>(null);
   const semanticKind = kind === 'notice' ? 'warning' : kind;
+  const showSupportLog = supportLog ?? (semanticKind === 'error' || semanticKind === 'warning');
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -40,6 +43,7 @@ export function NoticeDialog({ kind, message, path, onClose, actionLabel, onActi
         <p className="notice-message">{message}</p>
         {path ? <div className="notice-path-block"><strong>Đường dẫn:</strong><span className="popup-path">{path}</span></div> : null}
         <div className="notice-actions">
+          {showSupportLog ? <ExportSupportLogButton /> : null}
           {actionLabel && onAction ? <button type="button" className="notice-action" onClick={onAction}>{actionLabel}</button> : null}
           <button type="button" className="notice-close" autoFocus onClick={onClose}>Đóng</button>
         </div>

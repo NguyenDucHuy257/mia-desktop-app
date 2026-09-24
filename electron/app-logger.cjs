@@ -6,6 +6,7 @@ const path = require('node:path');
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
 const MAX_FIELD_LENGTH = 800;
 const SENSITIVE_KEY = /(password|token|secret|authorization|cookie|session|credential|api[_-]?key)/i;
+const PRIVATE_IDENTIFIER_KEY = /^(?:key|canonical_key|activation_key|legacy_keys|public_key|email|target_email|phone|device_id|hardware|hardware_profile)$/i;
 const SENSITIVE_TEXT = /(password|token|secret|authorization|cookie|session|credential|api[_-]?key)["']?\s*[=:]\s*(?:["'][^"']*["']|[^\s,;}\]]+)/gi;
 
 function redactText(value) {
@@ -23,7 +24,9 @@ function sanitizeFields(value, depth = 0) {
   if (typeof value !== 'object') return redactText(value);
   const output = {};
   for (const [key, item] of Object.entries(value).slice(0, 40)) {
-    output[key] = SENSITIVE_KEY.test(key) ? '[redacted]' : sanitizeFields(item, depth + 1);
+    output[key] = SENSITIVE_KEY.test(key) || PRIVATE_IDENTIFIER_KEY.test(key)
+      ? '[redacted]'
+      : sanitizeFields(item, depth + 1);
   }
   return output;
 }
