@@ -1,9 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+function reportIpcFailure(channel, error, phase) {
+  if (channel.startsWith('mia:logs:')) return;
+  void ipcRenderer.invoke('mia:logs:write', {
+    level: 'error', event: 'renderer_ipc_failed', fields: {
+      channel, phase, code: error?.code, status: error?.status,
+      error_type: error?.name, message: error?.message, stack: error?.stack,
+    },
+  }).catch(() => undefined);
+}
+
 async function invokeIpc(channel, ...args) {
   try {
     return await ipcRenderer.invoke(channel, ...args);
   } catch (cause) {
+    reportIpcFailure(channel, cause, 'invoke');
     const message = String(cause?.message || cause || 'MIA IPC request failed');
     if (message.includes('LICENSE_REQUIRED')) {
       const error = new Error('LICENSE_REQUIRED');
@@ -36,6 +47,7 @@ async function invokeResult(channel, ...args) {
   error.code = String(result.error?.code ?? 'internal_error');
   if (Number.isInteger(result.error?.status)) error.status = result.error.status;
   if (typeof result.error?.requestId === 'string') error.requestId = result.error.requestId;
+  reportIpcFailure(channel, error, 'result');
   throw error;
 }
 
@@ -44,17 +56,21 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   license: Object.freeze({
     status: () => invokeResult('mia:license:status'),
     initialize: () => invokeResult('mia:license:initialize'),
-    submitPhone: (phone) => invokeResult('mia:license:submit-phone', phone),
+    submitPhone: (phone, email) => invokeResult('mia:license:submit-phone', phone, email),
     retry: () => invokeResult('mia:license:retry'),
     details: () => invokeResult('mia:license:details'),
     revealKey: () => invokeResult('mia:license:reveal-key'),
     updatePhone: (phone) => invokeResult('mia:license:update-phone', phone),
+    requestContactVerification: (phone, email) => invokeResult('mia:license:request-contact', phone, email),
+    confirmContact: (challengeId, code) => invokeResult('mia:license:confirm-contact', challengeId, code),
   }),
   offlineAuth: Object.freeze({
     status: () => invokeResult('mia:offline-auth:status'),
     create: (password, confirmation) => invokeResult('mia:offline-auth:create', password, confirmation),
     unlock: (password) => invokeResult('mia:offline-auth:unlock', password),
     change: (currentPassword, newPassword, confirmation) => invokeResult('mia:offline-auth:change', currentPassword, newPassword, confirmation),
+    requestRecovery: () => invokeResult('mia:offline-auth:request-recovery'),
+    recover: (challengeId, code, newPassword, confirmation) => invokeResult('mia:offline-auth:recover', challengeId, code, newPassword, confirmation),
   }),
   accountConnections: Object.freeze({
     create: (credentials) => invokeResult('mia:account-connections:create', credentials),
@@ -111,6 +127,8 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
     set: (value) => invokeIpc('mia:preferences:set', value),
   }),
   logs: Object.freeze({
+    exportAccount: (request) => invokeIpc('mia:logs:exportAccount', request),
+    exportSupport: () => invokeIpc('mia:logs:exportSupport'),
     list: () => invokeIpc('mia:logs:list'),
     entries: () => invokeIpc('mia:logs:entries'),
     clear: () => invokeIpc('mia:logs:clear'),
@@ -133,5 +151,12 @@ contextBridge.exposeInMainWorld('miaRuntime', Object.freeze({
   }),
   external: Object.freeze({
     open: (url) => invokeIpc('mia:external:open', url),
+  }),
+  proxyProvider: Object.freeze({
+    openPurchasePage: () => invokeIpc('mia:proxy-provider:open-purchase-page'),
+  }),
+  invoiceProxies: Object.freeze({
+    status: () => invokeIpc('mia:invoice-proxies:status'),
+    importFile: () => invokeIpc('mia:invoice-proxies:import'),
   }),
 }));

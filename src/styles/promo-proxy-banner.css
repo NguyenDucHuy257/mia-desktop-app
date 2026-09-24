@@ -1,0 +1,101 @@
+.promo-proxy-banner {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  height: 46px;
+  min-height: 46px;
+  margin: 0 0 0 auto;
+  padding: 0 22px;
+  border: 0;
+  background: transparent;
+  color: #fffdf5;
+  cursor: pointer;
+  filter: drop-shadow(0 5px 7px rgb(82 5 15 / 12%));
+  transition: filter 160ms ease, transform 160ms ease;
+}
+
+.promo-proxy-paper {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.promo-proxy-content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+}
+
+.promo-proxy-title {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: .1px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 1px rgb(67 0 8 / 28%);
+}
+
+.promo-proxy-title img {
+  width: 19px;
+  height: 19px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgb(64 0 7 / 32%));
+}
+
+.promo-proxy-cta {
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid rgb(255 255 255 / 60%);
+  border-radius: 999px;
+  background: rgb(255 250 235 / 14%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 20%);
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.promo-proxy-cta b { font-size: 17px; line-height: 1; }
+
+.promo-proxy-banner:hover,
+.promo-proxy-banner:focus-visible {
+  outline: none;
+  filter: drop-shadow(0 8px 10px rgb(82 5 15 / 22%)) brightness(1.045);
+  transform: translateY(-1px);
+}
+
+.promo-proxy-banner:hover .promo-proxy-cta,
+.promo-proxy-banner:focus-visible .promo-proxy-cta {
+  color: #a20b1a;
+  background: #fffaf0;
+  transform: translateX(2px);
+}
+
+.promo-proxy-banner:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 4px 8px;
+  border: 2px solid #fecdd3;
+  clip-path: polygon(1% 9%, 4% 3%, 8% 8%, 13% 2%, 18% 7%, 24% 3%, 30% 8%, 37% 2%, 44% 7%, 52% 3%, 60% 8%, 68% 2%, 76% 7%, 84% 3%, 92% 8%, 99% 3%, 98% 91%, 93% 97%, 87% 91%, 80% 98%, 73% 92%, 66% 97%, 59% 91%, 52% 98%, 45% 92%, 38% 97%, 31% 91%, 24% 98%, 17% 92%, 10% 97%, 2% 91%);
+  pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .promo-proxy-banner { padding-inline: 20px; }
+  .promo-proxy-title { font-size: 12px; }
+  .promo-proxy-cta { padding-inline: 10px; font-size: 11px; }
+}

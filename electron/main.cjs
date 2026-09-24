@@ -12,7 +12,7 @@ const { isLicenseAccessGranted, licenseRequiredError } = require('./license/acce
 const { GUIDE_VIDEO_EMBED_PREFIX, guideVideoRequestHeaders, isTrustedAppUrl } = require('./security-policy.cjs');
 const { createJobLifecycleBroker } = require('./job-lifecycle-broker.cjs');
 const { OfflineRuntimeManager } = require('./offline-runtime-manager.cjs');
-const { createOfflineAuthManager } = require('./offline-auth.cjs');
+const { createOfflineAuthManager, normalizePassword } = require('./offline-auth.cjs');
 const { createLocalAccountBroker } = require('./local-account-broker.cjs');
 const { createResultBroker } = require('./result-broker.cjs');
 const { createArtifactBroker } = require('./artifact-file-broker.cjs');
@@ -21,6 +21,8 @@ const { createReleaseUpdater } = require('./release-updater.cjs');
 const { createDiagnosticLogger } = require('./app-logger.cjs');
 const { validateExternalUrl } = require('./external-url-policy.cjs');
 const { loadOrCreateRuntimeSessionKey } = require('./runtime-session-key.cjs');
+const { PROXY_PROVIDER } = require('./proxy-provider-config.cjs');
+const { createProxyImportStore } = require('./proxy-import-store.cjs');
 
 // Keep the established user-data directory after changing the displayed product name.
 // This preserves existing accounts, local SQLite data, preferences, and licenses.
@@ -48,6 +50,7 @@ let licenseSessionActive = false;
 let offlineAuthManager;
 let offlineAuthSessionActive = false;
 let offlineRuntimeStartPromise;
+let proxyImportStore;
 
 function diagnosticDirectory() {
   return path.join(app.getPath('userData'), 'logs');
@@ -120,6 +123,7 @@ function licenses() {
     legacyPhonePaths: [...new Set([process.cwd(), path.dirname(app.getPath('exe'))])]
       .map((directory) => path.join(directory, '__pycache__', 'sdt.txt')),
     logger: electronLog(),
+    requireRecoveryEmail: true,
   });
   return licenseManagerInstance;
 }
@@ -139,16 +143,28 @@ function serializeLicenseError(error) {
   const allowed = new Set([
     'invalid_phone', 'license_api_not_configured', 'license_network_error', 'license_timeout',
     'insufficient_hardware', 'hardware_query_failed', 'hardware_query_timeout',
-    'device_profile_corrupt', 'license_state_corrupt', 'internal_error',
+    'device_profile_corrupt', 'license_state_corrupt', 'invalid_email', 'invalid_response',
+    'recovery_code_invalid', 'recovery_code_expired', 'recovery_code_locked',
+    'recovery_email_not_registered', 'recovery_wait_before_resend', 'recovery_rate_limited',
+    'recovery_email_unavailable', 'recovery_not_configured', 'internal_error',
   ]);
   const code = allowed.has(String(error?.code)) ? String(error.code) : 'internal_error';
-  electronLog().error('license_ipc_failed', { code, error_type: error?.name, message: error?.message });
-  return { ok: false, error: { code, message: code } };
+  electronLog().error('license_ipc_failed', {
+    code, error_type: error?.name, message: error?.message,
+    status: Number.isInteger(error?.status) ? error.status : null,
+    request_id: typeof error?.requestId === 'string' ? error.requestId : null,
+    transient: Boolean(error?.transient),
+  });
+  return { ok: false, error: {
+    code, message: code,
+    status: Number.isInteger(error?.status) ? error.status : undefined,
+    requestId: typeof error?.requestId === 'string' ? error.requestId : undefined,
+  } };
 }
 
 async function handleLicense(method, ...args) {
   try {
-    const verifiesAccess = ['initialize', 'submitPhone', 'retry', 'updatePhone'].includes(method);
+    const verifiesAccess = ['initialize', 'submitPhone', 'retry', 'updatePhone', 'confirmContact'].includes(method);
     if (verifiesAccess) {
       licenseSessionActive = false;
       offlineAuthSessionActive = false;
@@ -175,6 +191,14 @@ const OFFLINE_AUTH_MESSAGES = Object.freeze({
   offline_auth_rate_limited: 'Bạn đã nhập sai nhiều lần. Vui lòng chờ rồi thử lại.',
   offline_auth_state_corrupt: 'Dữ liệu mật khẩu trên máy bị lỗi. Vui lòng liên hệ hỗ trợ.',
   offline_auth_required: 'Cần đăng nhập bằng mật khẩu trên máy.',
+  recovery_code_invalid: 'Mã xác nhận không đúng.',
+  recovery_code_expired: 'Mã xác nhận đã hết hạn.',
+  recovery_code_locked: 'Mã xác nhận đã bị khóa do nhập sai quá số lần.',
+  recovery_email_not_registered: 'Chưa đăng ký email khôi phục.',
+  recovery_wait_before_resend: 'Vui lòng chờ trước khi gửi lại mã.',
+  recovery_rate_limited: 'Đã yêu cầu quá nhiều mã. Vui lòng thử lại sau.',
+  recovery_email_unavailable: 'Không thể gửi email xác nhận lúc này.',
+  recovery_not_configured: 'Tính năng khôi phục chưa được cấu hình trên server.',
 });
 
 function serializeOfflineAuthError(error) {
@@ -281,9 +305,11 @@ for (const [channel, method] of [
   ['mia:license:details', 'details'],
   ['mia:license:reveal-key', 'revealKey'],
   ['mia:license:update-phone', 'updatePhone'],
+  ['mia:license:request-contact', 'requestContactVerification'],
+  ['mia:license:confirm-contact', 'confirmContact'],
 ]) {
   ipcMain.handle(channel, (event, ...args) => {
-    const preAuthMethod = ['status', 'initialize', 'submitPhone', 'retry'].includes(method);
+    const preAuthMethod = ['status', 'initialize', 'submitPhone', 'retry', 'requestContactVerification', 'confirmContact'].includes(method);
     assertTrustedSender(event, preAuthMethod
       ? { licenseRequired: false, offlineAuthRequired: false }
       : { licenseRequired: true, offlineAuthRequired: true });
@@ -393,9 +419,71 @@ ipcMain.handle('mia:preferences:get', (event) => { assertTrustedSender(event); r
 ipcMain.handle('mia:preferences:set', (event, value) => { assertTrustedSender(event); return writePreferences(app.getPath('userData'), value); });
 ipcMain.handle('mia:logs:list', (event) => { assertTrustedSender(event); return readSanitizedLogs(app.getPath('userData')); });
 ipcMain.handle('mia:logs:entries', (event) => { assertTrustedSender(event); return readSanitizedLogEntries(app.getPath('userData')); });
+ipcMain.handle('mia:logs:exportSupport', async (event) => {
+  assertTrustedSender(event, { licenseRequired: false, offlineAuthRequired: false });
+  const { buildSupportDiagnostics } = require('./support-diagnostics.cjs');
+  const report = await buildSupportDiagnostics(app.getPath('userData'), app.getVersion(), licenses().status());
+  const chosen = await dialog.showSaveDialog({
+    title: 'Lưu log lỗi để gửi hỗ trợ',
+    defaultPath: `MIA_Log_Loi_${new Date().toISOString().replace(/[:.]/g, '-')}.json`,
+    filters: [{ name: 'Log chẩn đoán', extensions: ['json'] }],
+  });
+  if (chosen.canceled || !chosen.filePath) return { saved: false };
+  await fs.promises.writeFile(chosen.filePath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
+  return { saved: true };
+});
+ipcMain.handle('mia:proxy-provider:open-purchase-page', async (event) => {
+  assertTrustedSender(event);
+  await shell.openExternal(validateExternalUrl(PROXY_PROVIDER.purchaseUrl));
+  return true;
+});
+function importedProxies() {
+  if (!proxyImportStore) proxyImportStore = createProxyImportStore(app.getPath('userData'), safeStorage);
+  return proxyImportStore;
+}
+async function applyImportedProxies() {
+  const state = importedProxies().load();
+  await ensureOfflineRuntimeStarted();
+  await offlineRuntime.invoke('source.proxies.configure', { proxies: state.proxies });
+  return { count: state.count, source_name: state.source_name, imported_at: state.imported_at };
+}
+ipcMain.handle('mia:invoice-proxies:status', async (event) => {
+  assertTrustedSender(event);
+  return applyImportedProxies();
+});
+ipcMain.handle('mia:invoice-proxies:import', async (event) => {
+  assertTrustedSender(event);
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const selection = await dialog.showOpenDialog(owner, {
+    title: 'Chọn file Proxy MKVN',
+    properties: ['openFile'],
+    filters: [{ name: 'Danh sách Proxy', extensions: ['txt'] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { cancelled: true, count: 0, source_name: '', imported_at: '' };
+  const result = importedProxies().importFile(selection.filePaths[0]);
+  await applyImportedProxies();
+  electronLog().info('invoice_proxy_file_imported', { count: result.count, source_name: result.source_name });
+  return { cancelled: false, ...result };
+});
+ipcMain.handle('mia:logs:exportAccount', async (event, request) => {
+  assertTrustedSender(event);
+  const { buildAccountDiagnostics } = require('./support-diagnostics.cjs');
+  const report = await buildAccountDiagnostics(app.getPath('userData'), app.getVersion(), request);
+  const chosen = await dialog.showSaveDialog({
+    title: 'Tải mã lỗi tài khoản để gửi kỹ thuật',
+    defaultPath: `MIA_Ma_Loi_${report.report_id}.json`,
+    filters: [{ name: 'Mã lỗi và nhật ký chẩn đoán', extensions: ['json'] }],
+  });
+  if (chosen.canceled || !chosen.filePath) return { saved: false };
+  await fs.promises.writeFile(chosen.filePath, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
+  return { saved: true };
+});
 ipcMain.handle('mia:logs:clear', (event) => { assertTrustedSender(event); return clearDiagnosticLogs(app.getPath('userData')); });
 ipcMain.handle('mia:logs:write', (event, payload) => {
-  assertTrustedSender(event);
+  // Renderer failures can happen on the license/password gates, before either
+  // authenticated session exists. Payload validation and sanitization below
+  // keep this pre-auth diagnostic channel write-only and non-sensitive.
+  assertTrustedSender(event, { licenseRequired: false, offlineAuthRequired: false });
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new TypeError('invalid_log_payload');
   const level = String(payload.level ?? 'info').toLowerCase();
   if (!['info', 'warn', 'error'].includes(level)) throw new TypeError('invalid_log_level');
@@ -424,6 +512,24 @@ function localAccounts() {
   );
   return localAccountBroker;
 }
+ipcMain.handle('mia:offline-auth:request-recovery', async (event) => {
+  assertTrustedSender(event, { licenseRequired: true, offlineAuthRequired: false });
+  try { return { ok: true, data: await licenses().requestPasswordReset() }; }
+  catch (error) { return serializeOfflineAuthError(error); }
+});
+ipcMain.handle('mia:offline-auth:recover', async (event, challengeId, code, newPassword, confirmation) => {
+  assertTrustedSender(event, { licenseRequired: true, offlineAuthRequired: false });
+  try {
+    normalizePassword(newPassword);
+    if (newPassword !== confirmation) throw Object.assign(new Error('password confirmation mismatch'), { code: 'offline_password_confirmation_mismatch' });
+    const verified = await licenses().verifyPasswordReset(challengeId, code);
+    if (verified?.verified !== true) throw Object.assign(new Error('recovery code invalid'), { code: 'recovery_code_invalid' });
+    const data = await offlineAuth().recover(newPassword, confirmation);
+    await ensureOfflineRuntimeStarted();
+    offlineAuthSessionActive = true;
+    return { ok: true, data };
+  } catch (error) { return serializeOfflineAuthError(error); }
+});
 function results() {
   if (!resultBroker) resultBroker = createResultBroker(() => offlineRuntime);
   return resultBroker;
@@ -433,8 +539,12 @@ ipcMain.handle('mia:account-connections:create', (event, credentials) => {
   assertTrustedSender(event);
   return localAccounts().create(credentials);
 });
-ipcMain.handle('mia:account-connections:list', (event) => {
+ipcMain.handle('mia:account-connections:list', async (event) => {
   assertTrustedSender(event);
+  // The first renderer request can arrive while the packaged runtime is still
+  // completing its startup handshake. Always wait for the same ready promise
+  // used by offline unlock before reading the persistent account registry.
+  await ensureOfflineRuntimeStarted();
   return localAccounts().list();
 });
 ipcMain.handle('mia:account-connections:get', (event, connectionId) => {
@@ -483,6 +593,11 @@ function ensureOfflineRuntimeStarted() {
       dataDirectory: path.join(app.getPath('userData'), 'offline-runtime'),
       env: { MIA_SESSION_ENCRYPTION_KEY: runtimeSessionKey(), MIA_SESSION_ENCRYPTION_KEY_ID: 'desktop-dpapi-v1' },
       logger: electronLog(),
+      afterStart: async (client) => {
+        const state = importedProxies().load();
+        await client.call('source.proxies.configure', { proxies: state.proxies });
+        electronLog().info('invoice_proxy_pool_restored', { count: state.count });
+      },
       onNotification(method, payload) {
         const channel = method === 'export.progress'
           ? 'mia:artifacts:export-progress'

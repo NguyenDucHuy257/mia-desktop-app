@@ -2,7 +2,7 @@ import type { AccountConnection, CreateJobRequest, InvoiceDirection, InvoiceQuer
 
 export type LicenseStateName =
   | 'checking' | 'migrating' | 'active' | 'phone_required' | 'legacy_phone_required'
-  | 'activation_required' | 'expired' | 'revoked' | 'offline'
+  | 'activation_required' | 'email_required' | 'expired' | 'revoked' | 'offline'
   | 'verification_required' | 'error';
 
 export interface LicenseEntitlements {
@@ -39,6 +39,9 @@ export interface LicenseStateResponse {
     device_id?: string;
     canonical_key?: string;
     phone?: string | null;
+    email?: string | null;
+    pending_email?: string | null;
+    masked_email?: string | null;
     phone_status?: 'verified' | 'legacy' | 'pending';
     expires_at?: string | null;
   };
@@ -50,6 +53,9 @@ export interface LicenseDetails {
   state: LicenseStateName;
   active: boolean;
   phone: string | null;
+  phone_value?: string | null;
+  email?: string | null;
+  email_verified?: boolean;
   phone_status: 'verified' | 'legacy' | 'pending' | null;
   expires_at: string | null;
   activated_at?: string | null;
@@ -73,6 +79,8 @@ export interface OfflineAuthBridge {
   create(password: string, confirmation: string): Promise<OfflineAuthState>;
   unlock(password: string): Promise<OfflineAuthState>;
   change(currentPassword: string, newPassword: string, confirmation: string): Promise<OfflineAuthState>;
+  requestRecovery(): Promise<{ challenge_id: string; masked_email: string; expires_in: number; resend_after: number }>;
+  recover(challengeId: string, code: string, newPassword: string, confirmation: string): Promise<OfflineAuthState>;
 }
 
 export interface MiaAccountCredentials {
@@ -93,11 +101,13 @@ export interface MiaRuntimeBridge {
   license: {
     status(): Promise<LicenseStateResponse>;
     initialize(): Promise<LicenseStateResponse>;
-    submitPhone(phone: string): Promise<LicenseStateResponse>;
+    submitPhone(phone: string, email?: string): Promise<LicenseStateResponse>;
     retry(): Promise<LicenseStateResponse>;
     details(): Promise<LicenseDetails>;
     revealKey(): Promise<string | null>;
     updatePhone(phone: string): Promise<LicenseStateResponse>;
+    requestContactVerification(phone: string, email: string): Promise<{ challenge_id: string; masked_email: string; expires_in: number; resend_after: number }>;
+    confirmContact(challengeId: string, code: string): Promise<LicenseStateResponse>;
   };
   offlineAuth: OfflineAuthBridge;
   accountConnections: MiaAccountConnectionsBridge;
@@ -134,6 +144,8 @@ export interface MiaRuntimeBridge {
   };
   preferences: { get(): Promise<LocalPreferences>; set(value: LocalPreferences): Promise<LocalPreferences> };
   logs: {
+    exportAccount?(request: Record<string, unknown>): Promise<{ saved: boolean }>;
+    exportSupport?(): Promise<{ saved: boolean }>;
     list(): Promise<string[]>;
     entries(): Promise<DiagnosticLogEntry[]>;
     clear(): Promise<boolean>;
@@ -157,6 +169,19 @@ export interface MiaRuntimeBridge {
   external: {
     open(url: string): Promise<boolean>;
   };
+  proxyProvider: {
+    openPurchasePage(): Promise<boolean>;
+  };
+  invoiceProxies: {
+    status(): Promise<ProxyImportResult>;
+    importFile(): Promise<ProxyImportResult & { cancelled: boolean }>;
+  };
+}
+
+export interface ProxyImportResult {
+  count: number;
+  source_name: string;
+  imported_at: string;
 }
 
 export interface DiagnosticLogEntry {

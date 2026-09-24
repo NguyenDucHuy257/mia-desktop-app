@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { AccountErrorDownloadButton } from '../../components/AccountErrorDownloadButton';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { currentYearDateRange } from '../../components/date-input-utils';
@@ -9,6 +10,7 @@ import searchIcon from '../../assets/figma/search.png';
 import syncIcon from '../../assets/figma/sync.png';
 import { OptionCheck } from '../../components/OptionCheck';
 import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
+import { PromoProxyBanner } from '../../components/PromoProxyBanner';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
@@ -187,12 +189,38 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
   const [syncStates, setSyncStates] = useState<Record<string, InvoiceSyncState>>({});
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [proxyImport, setProxyImport] = useState({ count: 0, source_name: '', imported_at: '' });
+  const [proxyImporting, setProxyImporting] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
   const [accountPageSize, setAccountPageSize] = useState(ACCOUNT_PAGE_SIZE);
+
+  useEffect(() => {
+    let active = true;
+    window.miaRuntime?.invoiceProxies?.status()
+      .then((value) => { if (active) setProxyImport(value); })
+      .catch((error) => diagnosticLog('invoice_proxy_status_failed', { code: error?.code, message: error?.message }, 'warn'));
+    return () => { active = false; };
+  }, []);
+
+  async function importProxyFile() {
+    if (proxyImporting) return;
+    setProxyImporting(true);
+    try {
+      const bridge = window.miaRuntime?.invoiceProxies;
+      if (!bridge) throw Object.assign(new Error('Proxy import is unavailable.'), { code: 'proxy_import_unavailable' });
+      const result = await bridge.importFile();
+      if (!result.cancelled) setProxyImport(result);
+    } catch (error) {
+      diagnosticLog('invoice_proxy_import_failed', { code: (error as { code?: string })?.code, message: (error as Error)?.message }, 'error');
+      setSelectionError('Không thể đọc file Proxy. Hãy dùng đúng file TXT tải từ MKVN, giữ nguyên dòng tiêu đề và dữ liệu từ dòng 2 trở đi.');
+    } finally {
+      setProxyImporting(false);
+    }
+  }
   const pendingAutoExport = useRef<ResultExportSnapshot | null>(null);
   const autoSyncObservedActive = useRef(false);
   const {
@@ -594,6 +622,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
         </div>
       </section>
       <section className="invoice-content">
+        <PromoProxyBanner />
         <div className="filters">
           <div className="filters-left">
             <button className="add-account" type="button" onClick={onAddAccount}><img src={addIcon} alt="" /> Thêm tài khoản</button>
@@ -604,6 +633,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
             <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="stopped">Đã dừng</option><option value="ready">Sẵn sàng</option></select>
           </div>
           <div className="invoice-filter-actions">
+            <div className="invoice-proxy-import" title={proxyImport.source_name || 'Chưa import file Proxy'}>
+              <input aria-label="File Proxy đang sử dụng" readOnly value={proxyImport.count ? `${proxyImport.count} Proxy · ${proxyImport.source_name}` : 'Chưa có file Proxy'} />
+              <button type="button" disabled={proxyImporting || batchActive} onClick={() => void importProxyFile()}>
+                {proxyImporting ? 'Đang Import…' : 'Import file Proxy'}
+              </button>
+            </div>
             <div className="invoice-export-all-wrap">
               <button
                 className="invoice-export-all-button"
@@ -640,6 +675,10 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
           <div className="table-body">
             {pageRows.map((row, index) => {
               const account = accountByTaxCode.get(row.taxCode);
+              const batchItem = account ? batchItems[account.connection_id] : undefined;
+              const diagnosticJob = batchItem?.status ?? batchItem?.record;
+              const hasError = row.status === 'failed' || row.syncState?.status === 'failed'
+                || Boolean(batchItem?.error || batchItem?.errorCode || diagnosticJob?.error);
               return <div className="table-row table-grid" data-status={row.status} key={account?.connection_id ?? `${row.taxCode}-${firstRowIndex + index}`}>
                 {account ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <span>{row.taxCode}</span>
@@ -650,12 +689,25 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                 <ProgressCell row={row} />
                 <SyncStatusCell state={row.syncState} wantsDetails={resultScopes.includes('detail')} />
                 {account ? <span className="row-action-group">
-                  <button className="row-result-button" type="button" onClick={() => {
+                  {hasError ? <AccountErrorDownloadButton snapshot={{
+                    connection_id: account.connection_id,
+                    job_id: diagnosticJob?.job_id ?? row.syncState?.last_job_id ?? null,
+                    date_from: dateFrom, date_to: dateTo, direction,
+                    status: diagnosticJob?.status ?? row.status, account_status: account.status,
+                    error_code: diagnosticJob?.error?.code ?? batchItem?.errorCode ?? null,
+                    error_message: diagnosticJob?.error?.message ?? batchItem?.error ?? row.progressLabel,
+                    current_stage: row.syncState?.current_stage,
+                    overall_percent: row.progress,
+                    overview_ready: row.syncState?.overview_ready,
+                    detail_ready: row.syncState?.detail_ready,
+                    missing_overview_ranges: row.syncState?.missing_overview_ranges,
+                    missing_detail_ranges: row.syncState?.missing_detail_ranges,
+                  }} /> : <button className="row-result-button" type="button" onClick={() => {
                     const resultDateFrom = dateFrom;
                     const resultDateTo = dateTo;
                     diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: resultDateFrom, date_to: resultDateTo });
                     onViewResults(account.connection_id, resultDateFrom, resultDateTo, direction);
-                  }}>Xem kết quả</button>
+                  }}>Xem kết quả</button>}
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
               </div>;

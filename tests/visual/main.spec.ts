@@ -10,6 +10,23 @@ test('main invoice screen follows the 1500x1024 Figma reference', async ({ page 
   });
 });
 
+test('PROXY banner opens the in-app full guide before any provider website', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Tìm hiểu cách tăng tốc tải nhiều mã số thuế với PROXY' }).click();
+  const modal = page.getByRole('dialog', { name: 'TĂNG TỐC TẢI NHIỀU MST' });
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText('Tại sao nhiều MST phải chờ nhau?');
+  await expect(modal).toContainText('Mỗi Proxy = thêm 1 luồng tải');
+  await expect(modal).toContainText('Gợi ý tham khảo');
+  await expect(modal).toContainText('Hướng dẫn mua Proxy');
+  await expect(modal.getByRole('button', { name: 'Mở trang đăng ký Proxy' })).toBeVisible();
+  const size = await modal.boundingBox();
+  expect(size?.width).toBeGreaterThan(1200);
+  expect(size?.height).toBeGreaterThan(850);
+  await page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true }).first().click();
+  await expect(modal).toBeHidden();
+});
+
 test('single account form follows Figma frame 1:368', async ({ page }) => {
   await page.goto('/?figma=1');
   await page.evaluate(() => document.fonts.ready);

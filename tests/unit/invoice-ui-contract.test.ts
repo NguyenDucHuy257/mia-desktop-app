@@ -6,6 +6,28 @@ const root = process.cwd();
 const source = (filename: string) => readFile(path.join(root, filename), 'utf8');
 
 describe('invoice result control presentation', () => {
+  it('places the torn-paper PROXY promotion above the account toolbar', async () => {
+    const [page, banner, styles, actionStyles] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/components/PromoProxyBanner.tsx'),
+      source('src/styles/promo-proxy-banner.css'),
+      source('src/styles/result-export-progress.css'),
+    ]);
+    expect(page.indexOf('<PromoProxyBanner')).toBeLessThan(page.indexOf('<div className="filters">'));
+    expect(banner).toContain('Tải nhiều MST cùng lúc nhanh hơn');
+    expect(banner).toContain('Tìm hiểu ngay');
+    expect(banner).toContain('<svg className="promo-proxy-paper"');
+    expect(banner).toContain('<ProxySpeedIntroModal');
+    expect(styles).toContain('.promo-proxy-paper');
+    expect(styles).toContain('width: fit-content');
+    expect(styles).toContain('max-width: 100%');
+    expect(styles).toContain('height: 46px');
+    expect(styles).toContain('margin: 0 0 0 auto');
+    expect(styles).toContain('justify-content: flex-end');
+    expect(banner).toContain('animate attributeName="stop-color"');
+    expect(actionStyles).not.toContain('.proxy-upgrade-cta');
+  });
+
   it('keeps real bulk progress inside the compact blue export button', async () => {
     const [component, styles] = await Promise.all([
       source('src/features/invoices/InvoiceManagementPage.tsx'),

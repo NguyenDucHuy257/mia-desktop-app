@@ -144,6 +144,7 @@ class OfflineRuntimeManager {
       data_dir: this.options.dataDirectory,
       reset_desktop_session: this.sessionResetPending,
     }, startupOptions);
+    if (this.options.afterStart) await this.options.afterStart(client);
     this.sessionResetPending = false;
     this.client = client;
     return health;

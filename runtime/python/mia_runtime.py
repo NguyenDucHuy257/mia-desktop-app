@@ -447,6 +447,14 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
 
+    if method == "source.proxies.configure":
+        values = params.get("proxies") if isinstance(params, dict) else None
+        if (not isinstance(values, list) or len(values) > 200
+                or any(not isinstance(value, str) or not value.startswith("http://")
+                       or len(value) > 1024 for value in values)):
+            raise RpcError(-32602, "invalid_params")
+        return _production_backend().configure_proxies(values), False
+
     if method.startswith("source.accounts."):
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")

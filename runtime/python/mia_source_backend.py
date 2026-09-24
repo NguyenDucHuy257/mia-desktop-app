@@ -144,6 +144,13 @@ class SourceBackend:
         if self.worker.is_alive():
             self.worker.join(timeout=15)
 
+    def configure_proxies(self, proxies: list[str]) -> dict[str, int]:
+        """Atomically replace the HĐĐT runtime proxy pool without logging secrets."""
+        normalized = tuple(dict.fromkeys(value.strip() for value in proxies if value.strip()))
+        self.handler.runtime_proxies = normalized
+        self.handler.allow_cross_route_token = bool(normalized)
+        return {"count": len(normalized)}
+
     # ------------------------------------------------------------------
     # Account connections: source repo is authoritative.  The JSON file only
     # stores a non-sensitive display name because the source API intentionally
