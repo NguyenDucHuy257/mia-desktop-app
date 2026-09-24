@@ -54,12 +54,21 @@ def _process_lock(lock_path: Path):
 def _paths(base_dir: str | Path) -> dict[str, Path]:
     root = Path(base_dir).resolve()
     folder = root / TOOL
+    legacy_registries = sorted(
+        (
+            candidate / "vip.txt"
+            for candidate in root.iterdir()
+            if candidate.is_dir() and re.fullmatch(r"MIA\d+", candidate.name)
+        ),
+        key=lambda candidate: int(candidate.parent.name[3:]),
+    ) if root.exists() else []
     return {
+        "root": root,
         "vip": folder / "vip.txt",
         "legacy": folder / "legacy_vip.txt",
-        # The supplied 3.9.0 source requests tool=MIA2. It is a read-only
-        # migration source; all new state remains under MIA.
-        "legacy_mia2": root / "MIA2" / "vip.txt",
+        # Historical MIA clients used MIA2, MIA3, ... namespaces. They are
+        # migration registries for the same product, never other tool folders.
+        "legacy_registries": legacy_registries,
         "bindings": folder / "device_bindings.json",
         "migrations": folder / "legacy_migrations.json",
         "lock": folder / ".license_v2.lock",
@@ -102,6 +111,60 @@ def _load_json(path: Path) -> dict:
 
 def _find_key_line(lines: Iterable[str], key: str) -> Optional[str]:
     return next((line for line in lines if line.split("|", 1)[0].strip() == key), None)
+
+
+def _line_key(line: str) -> str:
+    return line.split("|", 1)[0].strip()
+
+
+def _canonical_line(key: str, source_line: str) -> str:
+    return key + "|" + source_line.split("|", 1)[1]
+
+
+def _replace_migrated_key(
+    path: Path,
+    legacy_key: str,
+    canonical_key: str,
+    canonical_line: str,
+    *,
+    ensure_canonical: bool,
+) -> bool:
+    """Replace one migrated legacy key and collapse canonical duplicates.
+
+    The first canonical row is authoritative. If none exists, the migrated
+    row replaces the first legacy row; MIA/vip.txt may additionally append it.
+    """
+    lines = _read_lines(path)
+    first_canonical = _find_key_line(lines, canonical_key)
+    selected = canonical_line
+    output: list[str] = []
+    inserted = False
+    touched = False
+    for line in lines:
+        key = _line_key(line)
+        if key == canonical_key:
+            if not inserted:
+                output.append(selected)
+                inserted = True
+            else:
+                touched = True
+            if line != selected:
+                touched = True
+            continue
+        if key == legacy_key:
+            touched = True
+            if not inserted and first_canonical is None:
+                output.append(selected)
+                inserted = True
+            continue
+        output.append(line)
+    if ensure_canonical and not inserted:
+        output.append(selected)
+        inserted = True
+        touched = True
+    if touched:
+        _atomic_write(path, "\n".join(output) + ("\n" if output else ""))
+    return touched
 
 
 def _expiry(line: str) -> str:
@@ -189,7 +252,10 @@ def _ensure_legacy_seed(paths: dict[str, Path]) -> None:
     legacy = _read_lines(paths["legacy"])
     existing = {line.split("|", 1)[0].strip() for line in legacy}
     changed = False
-    for line in [*_read_lines(paths["vip"]), *_read_lines(paths["legacy_mia2"])]:
+    source_lines = [*_read_lines(paths["vip"])]
+    for registry in paths["legacy_registries"]:
+        source_lines.extend(_read_lines(registry))
+    for line in source_lines:
         key = line.split("|", 1)[0].strip()
         if not (V1_RE.fullmatch(key) or OBSERVED_V2_RE.fullmatch(key)) or key in existing:
             continue
@@ -198,6 +264,95 @@ def _ensure_legacy_seed(paths: dict[str, Path]) -> None:
         changed = True
     if changed or not paths["legacy"].exists():
         _atomic_write(paths["legacy"], "\n".join(legacy) + ("\n" if legacy else ""))
+
+
+def _reconcile_migrations(
+    paths: dict[str, Path], migrations: dict, bindings: dict,
+    *, only_legacy_keys: Optional[Iterable[str]] = None,
+) -> bool:
+    """Converge registries with one read and at most one write per file."""
+    targets = (
+        {str(key or "").strip() for key in only_legacy_keys if str(key or "").strip()}
+        if only_legacy_keys is not None else None
+    )
+    migration_changed = False
+    registries = [paths["vip"], paths["legacy"], *paths["legacy_registries"]]
+    registry_lines = {registry: _read_lines(registry) for registry in registries}
+    first_by_key: dict[str, str] = {}
+    for registry in registries:
+        for line in registry_lines[registry]:
+            first_by_key.setdefault(_line_key(line), line)
+
+    canonical_lines: dict[str, str] = {}
+    legacy_replacements: dict[str, str] = {}
+    for legacy_key, raw_migration in list(migrations.items()):
+        if targets is not None and legacy_key not in targets:
+            continue
+        if not isinstance(raw_migration, dict):
+            continue
+        migration = dict(raw_migration)
+        canonical_key = str(migration.get("new_key") or "").strip()
+        binding = bindings.get(canonical_key)
+        if not canonical_key.startswith(NEW_KEY_PREFIX) or not isinstance(binding, dict) or not binding:
+            continue
+
+        selected = canonical_lines.get(canonical_key) or first_by_key.get(canonical_key)
+        if not selected:
+            stored = str(migration.get("canonical_line") or "").strip()
+            if "|" in stored and _line_key(stored) == canonical_key:
+                selected = stored
+        if not selected:
+            legacy_line = first_by_key.get(legacy_key)
+            if legacy_line and "|" in legacy_line:
+                selected = _canonical_line(canonical_key, legacy_line)
+        if not selected:
+            continue
+
+        selected = canonical_lines.setdefault(canonical_key, selected)
+        legacy_replacements[legacy_key] = canonical_key
+
+        if migration.get("canonical_line") != selected:
+            migration["canonical_line"] = selected
+            migrations[legacy_key] = migration
+            migration_changed = True
+
+    changed = False
+    canonical_order = list(canonical_lines)
+    for registry in registries:
+        lines = registry_lines[registry]
+        present_canonical = {
+            _line_key(line) for line in lines
+            if _line_key(line) in canonical_lines
+        }
+        output: list[str] = []
+        emitted: set[str] = set()
+        for line in lines:
+            key = _line_key(line)
+            if key in canonical_lines:
+                if key not in emitted:
+                    output.append(canonical_lines[key])
+                    emitted.add(key)
+                continue
+            canonical_key = legacy_replacements.get(key)
+            if canonical_key:
+                if canonical_key not in present_canonical and canonical_key not in emitted:
+                    output.append(canonical_lines[canonical_key])
+                    emitted.add(canonical_key)
+                continue
+            output.append(line)
+
+        if registry == paths["vip"]:
+            for canonical_key in canonical_order:
+                if canonical_key not in emitted:
+                    output.append(canonical_lines[canonical_key])
+                    emitted.add(canonical_key)
+
+        if output != lines:
+            _atomic_write(registry, "\n".join(output) + ("\n" if output else ""))
+            changed = True
+    if migration_changed:
+        _atomic_json(paths["migrations"], migrations)
+    return changed or migration_changed
 
 
 def _append_vip_line(path: Path, new_line: str) -> None:
@@ -270,12 +425,31 @@ def verify_mia_key_v2(
     if str(key or "").strip() != expected_key:
         raise ValueError("Invalid MIA v2 key for device_id")
     paths = _paths(base_dir)
+    requested_legacy_keys = [
+        str(value or "").strip()
+        for value in list(legacy_keys or [])[:32]
+        if str(value or "").strip()
+    ]
 
     with _LOCK, _process_lock(paths["lock"]):
         _ensure_legacy_seed(paths)
         vip_lines = _read_lines(paths["vip"])
         bindings = _load_json(paths["bindings"])
         migrations = _load_json(paths["migrations"])
+        reconcile_keys = set(requested_legacy_keys)
+        reconcile_keys.update(
+            legacy_key
+            for legacy_key, migration in migrations.items()
+            if isinstance(migration, dict)
+            and str(migration.get("new_key") or "").strip() == expected_key
+        )
+        # Repair only migrations evidenced by this device. This keeps the
+        # request cost bounded while preserving row replacement/self-healing.
+        if reconcile_keys and _reconcile_migrations(
+                paths, migrations, bindings,
+                only_legacy_keys=reconcile_keys,
+        ):
+            vip_lines = _read_lines(paths["vip"])
 
         # Normal verification; a manually-added KEYV2 key binds on first use.
         active_line = _find_key_line(vip_lines, expected_key)
@@ -325,22 +499,30 @@ def verify_mia_key_v2(
             _, _, canonical_key, line, saved = recovery[0]
             return _response(canonical_key, line, saved, current_hardware, now, recovered=True)
 
+        legacy_lines = [*_read_lines(paths["legacy"]), *vip_lines]
+        for registry in paths["legacy_registries"]:
+            legacy_lines.extend(_read_lines(registry))
         legacy_map = {
             line.split("|", 1)[0].strip(): line
-            for line in [*_read_lines(paths["legacy"]), *vip_lines]
+            for line in legacy_lines
             if V1_RE.fullmatch(line.split("|", 1)[0].strip())
             or OBSERVED_V2_RE.fullmatch(line.split("|", 1)[0].strip())
         }
-        candidates = [candidate for candidate in [str(value or "").strip() for value in list(legacy_keys or [])[:32]] if candidate in legacy_map]
+        candidates = [
+            candidate
+            for candidate in requested_legacy_keys
+            if candidate in legacy_map or candidate in migrations
+        ]
         # An old expired V1 candidate must not hide a renewed phone-bound key.
+        # A completed migration is preferred over any remaining legacy record.
         # Never combine grants from separate records.
         candidates.sort(key=lambda candidate: (
-            _expired(_expiry(legacy_map[candidate]), now),
+            candidate not in migrations,
+            _expired(_expiry(legacy_map[candidate]), now) if candidate in legacy_map else False,
             not candidate.startswith("KEY"),
         ))
         selected_key = candidates[0] if candidates else ""
         if selected_key:
-            legacy_line = legacy_map[selected_key]
             previous = dict(migrations.get(selected_key) or {})
             if previous:
                 previous_key = str(previous.get("new_key") or "")
@@ -349,6 +531,7 @@ def verify_mia_key_v2(
                 if previous_line and previous_binding:
                     return _response(previous_key, previous_line, previous_binding, current_hardware, now, migrated=True)
                 return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "expired": False, "migrated": False, "reason": "legacy_migration_record_incomplete"}
+            legacy_line = legacy_map[selected_key]
             expiry = _expiry(legacy_line)
             if _expired(expiry, now):
                 return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "phone_status": "verified" if clean_phone else "pending", "expires_at": expiry, "expired": True, "migrated": False, "reason": "legacy_key_expired"}
@@ -364,12 +547,17 @@ def verify_mia_key_v2(
             bindings[expected_key] = saved
             migrations[selected_key] = {
                 "new_key": expected_key,
+                "canonical_line": new_line,
                 "device_id": device_id,
                 "phone_status": saved["phone_status"],
                 "migrated_at": now.isoformat(timespec="seconds"),
             }
             _atomic_json(paths["bindings"], bindings)
             _atomic_json(paths["migrations"], migrations)
+            _reconcile_migrations(
+                paths, migrations, bindings,
+                only_legacy_keys=[selected_key],
+            )
             return _response(expected_key, new_line, saved, current_hardware, now, migrated=True)
 
         return {"valid": False, "key": expected_key, "device_id": device_id, "phone": clean_phone, "phone_status": "verified", "expired": False, "migrated": False, "reason": "key_not_activated"}

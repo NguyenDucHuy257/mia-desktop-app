@@ -30,16 +30,16 @@ def hardware(changed=()) -> dict[str, str]:
 
 
 class SharedMiaV2Tests(unittest.TestCase):
-    def test_supported_old_mia2_key_migrates_to_mia_without_mutating_mia2(self):
+    def test_supported_old_mia2_key_is_replaced_in_mia2_and_created_in_mia(self):
         original = f"{LEGACY_KEY}|v|31/12/2028|contact|0123456789|old MIA2"
         mia2 = self.base / "MIA2" / "vip.txt"
         mia2.write_text(original + "\n", encoding="utf-8")
-        before = mia2.read_bytes()
         response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
         self.assertTrue(response["valid"])
         self.assertTrue(response["migrated"])
         self.assertEqual(response["entitlements"]["allowed_tax_codes"], ["0123456789"])
-        self.assertEqual(mia2.read_bytes(), before)
+        self.assertNotIn(LEGACY_KEY, mia2.read_text(encoding="utf-8"))
+        self.assertIn(EXPECTED_KEY, mia2.read_text(encoding="utf-8"))
         self.assertIn(EXPECTED_KEY, (self.base / "MIA" / "vip.txt").read_text(encoding="utf-8"))
 
     def test_trial_policy_survives_migration_and_subsequent_verify(self):
@@ -153,15 +153,68 @@ class SharedMiaV2Tests(unittest.TestCase):
         self.assertEqual(response["phone_status"], "verified")
         self.assertEqual(response["expires_at"], "31/12/2028")
         lines = (self.base / "MIA" / "vip.txt").read_text(encoding="utf-8").splitlines()
-        self.assertIn(original, lines)
+        self.assertNotIn(original, lines)
         self.assertIn(f"{EXPECTED_KEY}|v|31/12/2028|ABC COMPANY|o|note old", lines)
         legacy_lines = (self.base / "MIA" / "legacy_vip.txt").read_text(encoding="utf-8").splitlines()
-        self.assertIn(original, legacy_lines)
+        self.assertNotIn(original, legacy_lines)
+        self.assertIn(f"{EXPECTED_KEY}|v|31/12/2028|ABC COMPANY|o|note old", legacy_lines)
         bindings = json.loads((self.base / "MIA" / "device_bindings.json").read_text(encoding="utf-8"))
         migrations = json.loads((self.base / "MIA" / "legacy_migrations.json").read_text(encoding="utf-8"))
         self.assertIn(EXPECTED_KEY, bindings)
         self.assertEqual(migrations[LEGACY_KEY]["new_key"], EXPECTED_KEY)
         self.assert_other_namespaces_unchanged()
+
+    def test_migration_replaces_same_old_key_across_all_mia_registries(self):
+        original = f"{LEGACY_KEY}|VIP|31/12/2028|contact|o|shared old key"
+        for tool in ("MIA", "MIA2", "MIA3"):
+            with (self.base / tool / "vip.txt").open("a", encoding="utf-8") as stream:
+                stream.write(original + "\n")
+
+        response = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+
+        self.assertTrue(response["valid"])
+        for tool in ("MIA", "MIA2", "MIA3"):
+            lines = (self.base / tool / "vip.txt").read_text(encoding="utf-8").splitlines()
+            self.assertFalse(any(line.startswith(LEGACY_KEY + "|") for line in lines), tool)
+            self.assertEqual(sum(line.startswith(EXPECTED_KEY + "|") for line in lines), 1, tool)
+        for tool in ("GSOFT", "GBOT", "IDQUICK"):
+            self.assertEqual((self.base / tool / "vip.txt").read_bytes(), self.other_before[tool], tool)
+
+    def test_existing_migration_repairs_missing_key_and_keeps_first_duplicate(self):
+        original = f"{LEGACY_KEY}|VIP|31/12/2028|contact|o|legacy"
+        mia = self.base / "MIA"
+        mia.joinpath("vip.txt").write_text(original + "\n", encoding="utf-8")
+        first = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+        self.assertTrue(first["valid"])
+
+        preferred = f"{EXPECTED_KEY}|VIP|30/11/2030|first|o|preferred"
+        duplicate = f"{EXPECTED_KEY}|VIP|31/12/2031|second|0123456789|duplicate"
+        mia.joinpath("vip.txt").write_text(
+            original + "\n" + preferred + "\n" + duplicate + "\n",
+            encoding="utf-8",
+        )
+
+        again = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+
+        self.assertTrue(again["valid"])
+        self.assertEqual(again["expires_at"], "30/11/2030")
+        lines = mia.joinpath("vip.txt").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([line for line in lines if line.startswith(EXPECTED_KEY + "|")], [preferred])
+        self.assertFalse(any(line.startswith(LEGACY_KEY + "|") for line in lines))
+
+    def test_existing_migration_restores_deleted_canonical_row(self):
+        original = f"{LEGACY_KEY}|VIP|31/12/2028|contact|o|repair source"
+        mia = self.base / "MIA"
+        mia.joinpath("vip.txt").write_text(original + "\n", encoding="utf-8")
+        self.assertTrue(self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])["valid"])
+        mia.joinpath("vip.txt").write_text("", encoding="utf-8")
+
+        repaired = self.verify(DEVICE_ID, legacy_keys=[LEGACY_KEY])
+
+        self.assertTrue(repaired["valid"])
+        self.assertEqual(repaired["reason"], "ok")
+        lines = mia.joinpath("vip.txt").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(sum(line.startswith(EXPECTED_KEY + "|") for line in lines), 1)
 
     def test_server_requires_phone_and_real_phone_gets_stable_pending_key(self):
         with self.assertRaisesRegex(ValueError, "phone"):

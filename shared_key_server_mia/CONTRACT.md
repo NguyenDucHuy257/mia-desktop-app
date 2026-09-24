@@ -66,8 +66,11 @@ Kết quả hợp lệ luôn dùng `reason: "ok"`; trạng thái migrate/recover
 `hardware_mismatch_below_50_percent`, `recovery_ambiguous` và
 `legacy_migration_record_incomplete`.
 
-Server giữ original legacy row, append canonical row với nguyên metadata/expiry,
-và lưu binding/migration JSON chỉ dưới `/opt/keys_app/MIA`.
+Server thay legacy row bằng canonical KEYV2 với nguyên metadata/expiry trong
+`MIA/vip.txt`, `MIA/legacy_vip.txt` và mọi registry lịch sử `MIA2`, `MIA3`, ...
+có cùng key. Nếu KEYV2 bị trùng, dòng KEYV2 đầu tiên theo thứ tự ưu tiên
+`MIA`, snapshot legacy, rồi `MIA<n>` là dòng chuẩn; các dòng trùng bị loại.
+Binding/migration JSON vẫn chỉ nằm dưới `/opt/keys_app/MIA`.
 
 ## Quyền sử dụng (bắt buộc từ bản sửa 10/09/2026)
 
@@ -88,9 +91,10 @@ và lưu binding/migration JSON chỉ dưới `/opt/keys_app/MIA`.
   không suy diễn thiếu quyền thành VIP. **Cập nhật server trước khi phát hành desktop mới.**
 - Metadata được giữ nguyên khi migrate; key đã migrate dùng bản ghi KEYV2 làm nguồn quyền.
   Không sửa/cấp lại toàn bộ key chỉ để thêm trường JSON này.
-- Source 3.9.0 gọi `tool=MIA2`. Server chỉ đọc các key MIA legacy có hình dạng
-  đã xác minh từ `MIA2/vip.txt`, seed vào `MIA/legacy_vip.txt`, rồi tạo state mới
-  dưới `MIA`. Không sửa/xóa `MIA2` và không claim key có hình dạng lạ.
+- Source cũ có thể gọi `tool=MIA2`, `MIA3`, ... Server chỉ nhận các key legacy
+  đúng hình dạng đã xác minh từ các registry `MIA<n>/vip.txt`. Khi migrate,
+  server thay đúng key cũ bằng KEYV2 trong mọi registry MIA có liên quan;
+  không đọc hoặc sửa registry của GSOFT, GBOT, IDQUICK hay tool khác.
 
 Kiểm tra read-only một registry (chỉ in số lượng, không in key/MST/điện thoại):
 
