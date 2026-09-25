@@ -334,6 +334,38 @@ class OptimizedSourcePipelineTests(unittest.TestCase):
         self.assertEqual(progress.get("completed_xml", 0), 0)
         self.assertEqual(progress.get("completed_html", 0), 0)
 
+    def test_overview_wrapper_does_not_pass_progress_callback_to_preflight(self):
+        observed = []
+
+        def prepare(_job, payload):
+            observed.append(("prepare", dict(payload)))
+            return {"planned_items": 45}
+
+        def download(_job, payload, *args, progress_callback=None, **_kwargs):
+            observed.append(("download", dict(payload)))
+            self.assertIsNotNone(progress_callback)
+            progress_callback("taxable_total_enrichment_progress", 1, 2)
+            return {"warning_count": 0, "warnings": []}
+
+        pipeline = object.__new__(OptimizedInvoiceCrawlPipeline)
+        pipeline.core = SimpleNamespace(
+            prepare_overview_unit=prepare,
+            run_overview_unit=download,
+        )
+        pipeline._state = {}
+        pipeline._desktop_current_unit = None
+        pipeline._persist = lambda **_kwargs: None
+        pipeline._install_unit_progress_wrappers()
+        payload = {"direction": "sold", "query_type": "query"}
+
+        result = pipeline.core.prepare_overview_unit(object(), payload)
+        pipeline.core.run_overview_unit(object(), payload, object())
+
+        self.assertEqual(result, {"planned_items": 45})
+        self.assertEqual([item[0] for item in observed], ["prepare", "download"])
+        self.assertEqual(pipeline._state["overview_post_processed"], 1)
+        self.assertEqual(pipeline._state["overview_post_total"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

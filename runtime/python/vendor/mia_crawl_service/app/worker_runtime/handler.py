@@ -48,12 +48,16 @@ from app.utils.date_utils import split_by_calendar_month
 from app.models.overview import OverviewDownloadRequest
 from app.parsers.invoice_xml_parser import InvoiceXmlError, parse_invoice_xml
 from app.session_manager.service import SessionTokenManager
+from app.session_manager.portal_authenticator import portal_auth_route
+from app.session_manager.models import AuthenticationFailedError
 from app.worker_runtime.errors import TaskExecutionError, classify_task_error
 from app.worker_runtime.metrics import WorkerMetrics
 from app.worker_runtime.proxy import EndpointCooldowns, ProxyLease, ProxyRegistry
 
 
 logger = logging.getLogger('mia.worker_runtime')
+AUTH_RETRY_ATTEMPTS = 3
+AUTH_RETRY_DELAYS_SECONDS = (1, 2)
 _PORTAL_TASKS = frozenset({
     'fetch_invoice_overview', 'fetch_invoice_detail', 'fetch_invoice_package'
 })
@@ -78,6 +82,7 @@ class InvoiceCrawlTaskHandler:
         detail_generation_batch_size: int = 500,
         runtime_proxies: Sequence[str] = (),
         allow_cross_route_token: bool = False,
+        fixed_runtime_route: str | None | object = ...,
         runtime_capabilities: RuntimeCapabilities | None = None,
     ) -> None:
         if not worker_id.strip():
@@ -96,6 +101,7 @@ class InvoiceCrawlTaskHandler:
         self.detail_generation_batch_size = detail_generation_batch_size
         self.runtime_proxies = tuple(proxy.strip() for proxy in runtime_proxies if proxy.strip())
         self.allow_cross_route_token = allow_cross_route_token
+        self.fixed_runtime_route = fixed_runtime_route
         self.runtime_capabilities = (
             runtime_capabilities or RuntimeCapabilities.from_environment()
         )
@@ -110,10 +116,54 @@ class InvoiceCrawlTaskHandler:
     @job_diagnostics('auth')
     def authenticate_job(self, job: JobRecord, progress_callback=None) -> None:
         session_hash = str(job.parameters['session_hash'])
-        self.session_manager.authenticate_session_hash(
-            session_hash, worker_id=self.worker_id,
-            progress_callback=progress_callback,
+        for attempt in range(1, AUTH_RETRY_ATTEMPTS + 1):
+            try:
+                if self.fixed_runtime_route is ...:
+                    self.session_manager.authenticate_session_hash(
+                        session_hash, worker_id=self.worker_id,
+                        force=attempt > 1,
+                        progress_callback=progress_callback,
+                    )
+                else:
+                    with portal_auth_route(self.fixed_runtime_route):
+                        # A proxy slot must authenticate on its own isolated
+                        # route. The direct slot keeps the cached-token fast path.
+                        self.session_manager.authenticate_session_hash(
+                            session_hash, worker_id=self.worker_id,
+                            force=self.fixed_runtime_route is not None or attempt > 1,
+                            progress_callback=progress_callback,
+                        )
+                return
+            except AuthenticationFailedError as error:
+                code = str(getattr(error, 'error_code', '') or '')
+                retryable = bool(getattr(error, 'retryable', False)) or code in {
+                    'source_login_rejected', 'source_token_missing',
+                    'source_authentication_failed',
+                }
+                if code in {'invalid_source_credentials', 'source_account_locked'}:
+                    retryable = False
+                if not retryable or attempt >= AUTH_RETRY_ATTEMPTS:
+                    raise
+                if progress_callback:
+                    progress_callback('auth_retry_wait')
+                delay = AUTH_RETRY_DELAYS_SECONDS[attempt - 1]
+                shutdown = getattr(self, '_shutdown_requested', None)
+                if shutdown is not None and shutdown.wait(delay):
+                    raise WorkerShutdownRequested('worker shutdown requested')
+                logger.warning(
+                    'Retrying rejected source login worker_id=%s attempt=%s/%s code=%s',
+                    self.worker_id, attempt + 1, AUTH_RETRY_ATTEMPTS, code,
+                )
+
+    def _routes_for_session(self, session_hash: str) -> tuple[str | None, ...]:
+        if self.fixed_runtime_route is not ...:
+            return (self.fixed_runtime_route,)
+        routes: tuple[str | None, ...] = (
+            self.session_manager.get_worker_proxy_url(session_hash),
         )
+        if self.allow_cross_route_token:
+            routes += self.runtime_proxies
+        return routes
 
     @job_diagnostics('overview')
     def run_overview_unit(
@@ -175,15 +225,13 @@ class InvoiceCrawlTaskHandler:
         if self._shutdown_requested.is_set():
             raise WorkerShutdownRequested('worker shutdown requested')
         session_hash = str(job.parameters['session_hash'])
-        default_route = self.session_manager.get_worker_proxy_url(session_hash)
-        routes: tuple[str | None, ...] = (default_route,)
-        if self.allow_cross_route_token:
-            routes += self.runtime_proxies
+        routes = self._routes_for_session(session_hash)
         self.proxy_registry.register(session_hash, routes)
         self.endpoint_cooldowns.wait(session_hash, endpoint)
         lease = self.proxy_registry.acquire(session_hash, f'{job.job_id}:{endpoint}')
         try:
-            result = operation(lease)
+            with portal_auth_route(lease.proxy_url):
+                result = operation(lease)
         except PipelineInterruption:
             self.proxy_registry.release(session_hash, lease, outcome='neutral_failure')
             raise
@@ -604,9 +652,16 @@ class InvoiceCrawlTaskHandler:
     def _authenticate(self, task: TaskRecord) -> None:
         session_hash = self._session_hash(task)
         try:
-            self.session_manager.authenticate_session_hash(
-                session_hash, worker_id=self.worker_id
-            )
+            if self.fixed_runtime_route is ...:
+                self.session_manager.authenticate_session_hash(
+                    session_hash, worker_id=self.worker_id
+                )
+            else:
+                with portal_auth_route(self.fixed_runtime_route):
+                    self.session_manager.authenticate_session_hash(
+                        session_hash, worker_id=self.worker_id,
+                        force=self.fixed_runtime_route is not None,
+                    )
         except Exception as error:
             raise TaskExecutionError(
                 classify_task_error(
@@ -617,15 +672,13 @@ class InvoiceCrawlTaskHandler:
 
     def _with_portal_route(self, task: TaskRecord, endpoint: str, operation) -> None:
         session_hash = self._session_hash(task)
-        default_route = self.session_manager.get_worker_proxy_url(session_hash)
-        routes: tuple[str | None, ...] = (default_route,)
-        if self.allow_cross_route_token:
-            routes += self.runtime_proxies
+        routes = self._routes_for_session(session_hash)
         self.proxy_registry.register(session_hash, routes)
         self.endpoint_cooldowns.wait(session_hash, endpoint)
         lease = self.proxy_registry.acquire(session_hash, task.task_id)
         try:
-            operation(task, lease)
+            with portal_auth_route(lease.proxy_url):
+                operation(task, lease)
         except Exception as error:
             classification = self._release_route_error(
                 session_hash=session_hash, endpoint=endpoint, lease=lease,
@@ -744,8 +797,85 @@ class InvoiceCrawlTaskHandler:
         )
         if self.runtime_capabilities.enable_excel_export:
             downloader.download_request(request)
-            return {'warning_count': 0, 'warnings': []}
-        return downloader.download_normalized_request(request)
+            result = {'warning_count': 0, 'warnings': []}
+        else:
+            result = downloader.download_normalized_request(request)
+        enrichment_warnings = self._enrich_missing_taxable_totals(
+            job, payload, lease, progress_callback=progress_callback,
+        )
+        if enrichment_warnings:
+            warnings = list(result.get('warnings') or [])
+            warnings.extend(enrichment_warnings)
+            result['warnings'] = warnings
+            result['warning_count'] = len(warnings)
+        return result
+
+    def _enrich_missing_taxable_totals(
+        self, job: JobRecord, payload: dict, lease: ProxyLease, *,
+        progress_callback=None,
+    ) -> list[dict[str, object]]:
+        """Fill blank overview pre-tax totals from cached or fetched detail.
+
+        Detail persistence remains the single cache authority.  Consequently a
+        later detail export reuses work performed here and no invoice is fetched
+        twice merely because both overview and detail were requested.
+        """
+        database_path = self._database_path(job.company_tax_code)
+        overview_repository = InvoiceOverviewRepository(database_path)
+        detail_repository = InvoiceDetailRepository(database_path)
+        missing = overview_repository.get_items_missing_taxable_total(
+            company_tax_code=job.company_tax_code,
+            direction=payload['direction'], query_type=payload['query_type'],
+            from_date=payload['date_from'], to_date=payload['date_to'],
+        )
+        warnings: list[dict[str, object]] = []
+        if missing and progress_callback:
+            progress_callback('taxable_total_enrichment_started', None, len(missing))
+        for index, item in enumerate(missing, start=1):
+            if self._shutdown_requested.is_set():
+                raise WorkerShutdownRequested('worker shutdown requested')
+            detail_payload = {
+                **item,
+                'session_hash': payload['session_hash'],
+                'date_from': payload['date_from'],
+                'date_to': payload['date_to'],
+            }
+            try:
+                total = detail_repository.taxable_total_by_invoice_key(
+                    job.company_tax_code, item['direction'], item['query_type'],
+                    item['nbmst'], item['khhdon'], item['shdon'], item['khmshdon'],
+                )
+                if total is None:
+                    self._fetch_detail_core(job, detail_payload, lease)
+                    total = detail_repository.taxable_total_by_invoice_key(
+                        job.company_tax_code, item['direction'], item['query_type'],
+                        item['nbmst'], item['khhdon'], item['shdon'], item['khmshdon'],
+                    )
+                if total is None:
+                    raise ValueError('detail does not contain usable product-line amounts')
+                overview_repository.set_taxable_total_from_detail(
+                    int(item['id']), format(total, 'f'),
+                )
+                self.metrics.increment('overview_taxable_total_from_detail')
+            except PipelineInterruption:
+                raise
+            except Exception as error:
+                self.metrics.increment('overview_taxable_total_detail_failed')
+                logger.warning(
+                    'Could not enrich overview taxable total invoice=%s/%s/%s: %s',
+                    item['khmshdon'], item['khhdon'], item['shdon'], error,
+                    exc_info=True,
+                )
+                warnings.append({
+                    'code': 'overview_taxable_total_detail_failed',
+                    'invoice': str(item['shdon']),
+                    'message': str(error),
+                })
+            if progress_callback:
+                progress_callback('taxable_total_enrichment_progress', index, len(missing))
+        if missing and progress_callback:
+            progress_callback('taxable_total_enrichment_completed', len(missing), len(missing))
+        return warnings
 
     def _prepare_overview_core(self, job, payload, lease):
         portal = self._build_portal(

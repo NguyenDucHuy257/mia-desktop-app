@@ -180,6 +180,10 @@ export interface MiaRuntimeBridge {
 
 export interface ProxyImportResult {
   count: number;
+  live_count: number;
+  failed_count: number;
+  ignored_count: number;
+  worker_count: number;
   source_name: string;
   imported_at: string;
 }

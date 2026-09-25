@@ -89,10 +89,39 @@
 .invoice-proxy-import button:focus-visible:not(:disabled) { background: #116a39; outline: 2px solid rgb(22 132 71 / 15%); }
 .invoice-proxy-import button:disabled { cursor: not-allowed; opacity: .55; }
 
+.proxy-purchase-button {
+  height: 42px;
+  padding: 0 15px;
+  border: 1px solid #c92332;
+  border-radius: 9px;
+  color: #fff;
+  background: #d92d3d;
+  box-shadow: 0 3px 9px rgb(168 26 42 / 18%);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+
+.proxy-purchase-button:hover:not(:disabled),
+.proxy-purchase-button:focus-visible:not(:disabled) {
+  border-color: #a81827;
+  background: #bd1f30;
+  box-shadow: 0 5px 13px rgb(168 26 42 / 24%);
+  outline: 2px solid rgb(217 45 61 / 18%);
+  transform: translateY(-1px);
+}
+
+.proxy-purchase-button:active:not(:disabled) { transform: translateY(0); }
+.proxy-purchase-button:disabled { cursor: wait; opacity: .65; }
+
 @media (max-width: 1280px) {
   .invoice-proxy-import { min-width: 165px; }
   .invoice-proxy-import input { display: none; }
   .invoice-proxy-import button { border-radius: 9px; }
+  .proxy-purchase-button { padding-inline: 11px; font-size: 11px; }
 }
 
 .invoice-export-all-wrap {

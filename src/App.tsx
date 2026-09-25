@@ -89,6 +89,7 @@ function WorkspaceApp() {
   const deletingIds = useRef(new Set<string>());
   const deleteWorkerActive = useRef(false);
   const preferenceWrite = useRef<Promise<void>>(Promise.resolve());
+  const accountRefreshInFlight = useRef<Promise<boolean> | null>(null);
 
   function updateExportFolder(value: string) {
     setExportFolder(value);
@@ -102,25 +103,33 @@ function WorkspaceApp() {
       });
   }
 
-  async function refreshAccounts(): Promise<boolean> {
-    try {
-      const items = await gateway.list();
-      const visibleItems = items.filter((item) => !deletingIds.current.has(item.connection_id));
-      setAccounts(visibleItems);
-      setConnectionId((current) => current || visibleItems[0]?.connection_id || '');
-      setSelectedAccountIds((current) => {
-        const available = new Set(visibleItems.map((item) => item.connection_id));
-        const retained = current.filter((id) => available.has(id));
-        return retained.length ? retained : visibleItems[0] ? [visibleItems[0].connection_id] : [];
-      });
-      return true;
-    } catch (error) {
-      setAccounts(null);
-      diagnosticLog('initial_account_list_failed', {
-        code: (error as { code?: string })?.code ?? 'unknown_error',
-      }, 'warn');
-      return false;
-    }
+  function refreshAccounts(): Promise<boolean> {
+    if (accountRefreshInFlight.current) return accountRefreshInFlight.current;
+    const request = (async () => {
+      try {
+        const items = await gateway.list();
+        const visibleItems = items.filter((item) => !deletingIds.current.has(item.connection_id));
+        setAccounts(visibleItems);
+        setConnectionId((current) => current || visibleItems[0]?.connection_id || '');
+        setSelectedAccountIds((current) => {
+          const available = new Set(visibleItems.map((item) => item.connection_id));
+          const retained = current.filter((id) => available.has(id));
+          return retained.length ? retained : visibleItems[0] ? [visibleItems[0].connection_id] : [];
+        });
+        return true;
+      } catch (error) {
+        // A transient runtime/database failure must not make persisted accounts
+        // disappear from the table. Keep the last good snapshot and retry.
+        diagnosticLog('account_list_refresh_failed', {
+          code: (error as { code?: string })?.code ?? 'unknown_error',
+        }, 'warn');
+        return false;
+      } finally {
+        accountRefreshInFlight.current = null;
+      }
+    })();
+    accountRefreshInFlight.current = request;
+    return request;
   }
 
   async function drainDeleteQueue() {

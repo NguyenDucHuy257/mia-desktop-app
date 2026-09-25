@@ -69,6 +69,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
   const generation = useRef(0);
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const pending = useRef<CreateJobRequest[]>([]);
+  const activeJobIds = useRef(new Set<string>());
   const batchConnectionIds = useRef(new Set<string>());
   const startingConnectionId = useRef<string | null>(null);
   const cancellingJobs = useRef(new Set<string>());
@@ -104,8 +105,10 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
     if (token !== generation.current || !jobs || stoppingRef.current) return;
     const intent = pending.current.shift();
     if (!intent) {
-      activeRef.current = false;
-      setActive(false);
+      if (activeJobIds.current.size === 0) {
+        activeRef.current = false;
+        setActive(false);
+      }
       return;
     }
 
@@ -196,6 +199,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
       }
 
       diagnosticLog('job_started', { job_id: jobId, connection_id: intent.connection_id, status: record.status });
+      activeJobIds.current.add(jobId);
       updateItems((current) => ({
         ...current,
         [intent.connection_id]: {
@@ -204,6 +208,10 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         },
       }));
       void poll(jobId, intent.connection_id, 0, token);
+      // Admission is lightweight and durable. Queue the remaining accounts
+      // immediately; the backend worker pool claims at most one account per
+      // direct/live-proxy slot while excess accounts remain safely queued.
+      void launchNext(token);
     } catch (error) {
       if (startingConnectionId.current === intent.connection_id) startingConnectionId.current = null;
       if (token !== generation.current || stoppingRef.current) {
@@ -220,8 +228,6 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
           errorCode: code,
         },
       }));
-      // One local worker, one sequential batch. Only advance after this account
-      // has definitively failed to start.
       void launchNext(token);
     }
   // poll is intentionally resolved from the current render, as in the previous
@@ -246,6 +252,8 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
           status,
           phase: stoppingRef.current && !isTerminalStatus(status.status)
             ? 'stopping'
+            : stoppingRef.current && isTerminalStatus(status.status)
+              ? 'stopped'
             : status.status === 'cancelled'
               ? 'stopped'
               : undefined,
@@ -285,6 +293,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         }, status.status === 'failed' ? 'error' : 'info');
       }
       if (isTerminalStatus(status.status)) {
+        activeJobIds.current.delete(jobId);
         cancellingJobs.current.delete(jobId);
         if (stoppingRef.current) {
           finishStoppingIfDone();
@@ -311,8 +320,8 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
           },
         }));
         // Never start the next account merely because polling failed. The
-        // current source job may still be running, so advancing would violate
-        // the single-worker desktop invariant.
+        // current source job may still be running, so keep the batch locked
+        // until authoritative status can be recovered.
         return;
       }
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, attempt + 1, token); }, backoffDelay(attempt + 1));
@@ -337,6 +346,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
       for (const record of activeRecords) {
         restored[record.connection_id] = { connectionId: record.connection_id, record };
         if (record.job_id) {
+          activeJobIds.current.add(record.job_id);
           void poll(record.job_id, record.connection_id, 0, token);
         }
       }
@@ -367,13 +377,14 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
     activeRef.current = true;
     stoppingRef.current = false;
     startingConnectionId.current = null;
+    activeJobIds.current.clear();
     cancellingJobs.current.clear();
     batchConnectionIds.current = new Set(normalized.map((intent) => intent.connection_id));
     setActive(true);
     setStopping(false);
     diagnosticLog('job_batch_started', {
       count: normalized.length,
-      execution_mode: 'local-sequential',
+      execution_mode: 'isolated-route-worker-pool',
       date_from: normalized[0]?.date_from,
       date_to: normalized[0]?.date_to,
       force_refresh: normalized.some((intent) => Boolean(intent.force_refresh)),
@@ -391,8 +402,8 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
       const preferences = await window.miaRuntime?.preferences?.get().catch(() => null);
       if (token !== generation.current) return;
       retryLimit.current = preferences?.retries ?? MAX_RETRIES;
-      // One desktop runtime owns one source worker. Start exactly one account;
-      // launchNext advances only after that account reaches a terminal state.
+      // Submit all accounts to the durable source queue. With no live proxy the
+      // backend has one direct worker and remains strictly sequential.
       void launchNext(token);
     })();
     return true;

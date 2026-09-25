@@ -442,10 +442,18 @@ function importedProxies() {
   return proxyImportStore;
 }
 async function applyImportedProxies() {
-  const state = importedProxies().load();
-  await ensureOfflineRuntimeStarted();
-  await offlineRuntime.invoke('source.proxies.configure', { proxies: state.proxies });
-  return { count: state.count, source_name: state.source_name, imported_at: state.imported_at };
+    const state = importedProxies().load();
+    await ensureOfflineRuntimeStarted();
+    const pool = await offlineRuntime.invoke('source.proxies.configure', { proxies: state.proxies });
+    return {
+      count: state.count,
+      source_name: state.source_name,
+      imported_at: state.imported_at,
+      live_count: Number(pool?.live_count || 0),
+      failed_count: Number(pool?.failed_count || 0),
+      ignored_count: Number(pool?.ignored_count || 0),
+      worker_count: Number(pool?.worker_count || 1),
+    };
 }
 ipcMain.handle('mia:invoice-proxies:status', async (event) => {
   assertTrustedSender(event);
@@ -459,11 +467,14 @@ ipcMain.handle('mia:invoice-proxies:import', async (event) => {
     properties: ['openFile'],
     filters: [{ name: 'Danh sách Proxy', extensions: ['txt'] }],
   });
-  if (selection.canceled || !selection.filePaths[0]) return { cancelled: true, count: 0, source_name: '', imported_at: '' };
+  if (selection.canceled || !selection.filePaths[0]) return {
+    cancelled: true, count: 0, live_count: 0, failed_count: 0,
+    ignored_count: 0, worker_count: 1, source_name: '', imported_at: '',
+  };
   const result = importedProxies().importFile(selection.filePaths[0]);
-  await applyImportedProxies();
+  const applied = await applyImportedProxies();
   electronLog().info('invoice_proxy_file_imported', { count: result.count, source_name: result.source_name });
-  return { cancelled: false, ...result };
+  return { cancelled: false, ...result, ...applied };
 });
 ipcMain.handle('mia:logs:exportAccount', async (event, request) => {
   assertTrustedSender(event);

@@ -2,11 +2,11 @@
 
 The upstream source service calls ``create_admitted_job`` because its web/server
 host adds worker-slot capacity admission around the relational repository.
-Desktop has exactly one local runtime and one sequential worker, so the source
-SQLite repository itself is the correct durable queue. This adapter changes
+Desktop has one local runtime and a bounded set of route-isolated workers, so
+the source SQLite repository itself is the correct durable queue. This adapter changes
 only host-facing behavior: web admission is bypassed and pre-refactor desktop
 jobs that cannot be executed by source ``conn_*`` accounts are retired before
-the single local worker starts. Queueing, leases, recovery, progress and job
+the local worker pool starts. Queueing, leases, recovery, progress and job
 state transitions for source-compatible jobs remain implemented upstream.
 """
 
@@ -52,7 +52,7 @@ class LocalSequentialJobRepository:
 
         Older desktop builds wrote pipeline-v2 jobs whose ``account_key`` was a
         desktop UUID. The source worker can still claim those rows because the
-        upstream claim query is intentionally global. With one local worker,
+        upstream claim query is intentionally global. With the local pool,
         such a recovered legacy job can therefore starve every new ``conn_*``
         job for hours. Retire only non-terminal jobs whose account key is not a
         source connection; persisted invoice/source data is left untouched.

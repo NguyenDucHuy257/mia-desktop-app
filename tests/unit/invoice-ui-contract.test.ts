@@ -14,6 +14,8 @@ describe('invoice result control presentation', () => {
       source('src/styles/result-export-progress.css'),
     ]);
     expect(page.indexOf('<PromoProxyBanner')).toBeLessThan(page.indexOf('<div className="filters">'));
+    expect(page).toContain('SHOW_INVOICE_PROXY_CONTROLS ? <PromoProxyBanner /> : null');
+    expect(await source('src/config/ui-feature-flags.ts')).toContain('SHOW_INVOICE_PROXY_CONTROLS = false');
     expect(banner).toContain('Tải nhiều MST cùng lúc nhanh hơn');
     expect(banner).toContain('Tìm hiểu ngay');
     expect(banner).toContain('<svg className="promo-proxy-paper"');
@@ -99,6 +101,10 @@ describe('invoice result control presentation', () => {
     expect(component).toContain("status !== 'completed' && status !== 'completed_with_warning'");
     expect(component).toContain('executeResultExport(snapshot, true)');
     expect(component).toContain('connectionIds: [...selectedAccountIds]');
+    expect(component).toContain('function stopBatchByUser()');
+    expect(component).toContain('pendingAutoExport.current = null');
+    expect(component).toContain('onClick={stopBatchByUser}');
+    expect(component).toContain('Đang tạo Excel · {resultExports.accountIndex}/{resultExports.accountTotal}');
     expect(lifecycle).toContain('return true;');
     expect(lifecycle).toContain('return false;');
     expect(styles).toContain('.invoice-sync-export-button');
@@ -223,6 +229,22 @@ describe('invoice result control presentation', () => {
     expect(styles).not.toContain('scale(');
   });
 
+  it('opens the affiliate proxy page from the red invoice toolbar action', async () => {
+    const [page, styles, main, provider] = await Promise.all([
+      source('src/features/invoices/InvoiceManagementPage.tsx'),
+      source('src/styles/result-export-progress.css'),
+      source('electron/main.cjs'),
+      source('electron/proxy-provider-config.cjs'),
+    ]);
+    expect(page).toContain('Mở web đăng ký Proxy');
+    expect(page).toContain('SHOW_INVOICE_PROXY_CONTROLS ? <>');
+    expect(page).toContain('proxyProvider?.openPurchasePage');
+    expect(styles).toContain('.proxy-purchase-button');
+    expect(styles).toContain('background: #d92d3d');
+    expect(main).toContain('shell.openExternal(validateExternalUrl(PROXY_PROVIDER.purchaseUrl))');
+    expect(provider).toContain('https://proxy.mkvn.net/aff/contactdh257');
+  });
+
   it('queues one VAT workbook per selected account instead of rejecting batch selection', async () => {
     const page = await source('src/features/artifacts/VatReturnExportPage.tsx');
     expect(page).not.toContain('selectedConnectionIds.length !== 1');
@@ -260,6 +282,9 @@ describe('invoice result control presentation', () => {
     expect(lifecycle).toContain('window.setTimeout');
     expect(lifecycle).toContain('transient monitoring failure');
     expect(page).toContain('className="row-result-button"');
+    expect(page).toContain('<AccountErrorDownloadButton snapshot={{');
+    expect(page).toContain("terminalAccount?.status === 'error'");
+    expect(page).toContain("supportLog={lifecycle.status?.status === 'failed' ? true : undefined}");
     expect(page).toContain('results-table--excel-schema');
     expect(page).toContain('<h1>Xem kết quả</h1>');
     expect(page).toContain('Bảng hóa đơn không tạo được file');

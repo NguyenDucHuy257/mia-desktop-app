@@ -1,8 +1,8 @@
 """Local desktop host for the source-of-truth crawl runtime.
 
-MIA Desktop does not expose the source HTTP control API and does not run a
-worker pool. Electron talks to one Python process over local JSON-RPC; that
-process hosts one sequential source worker backed by the source SQLite job
+MIA Desktop does not expose the source HTTP control API. Electron talks to one
+Python process over local JSON-RPC; that process hosts one direct worker plus
+one isolated worker per live imported proxy, backed by the source SQLite job
 repository. Crawl/cache/session/result behavior stays in the vendored source.
 """
 
@@ -262,15 +262,42 @@ class ProductionBackend(SourceBackend):
         # (_save -> _load/_write). RLock prevents a self-deadlock without
         # changing source crawler/session/job behavior.
         self._metadata_lock = threading.RLock()
+        self._metrics_cache = {}
+        self._metrics_cache_lock = threading.Lock()
 
-    def _invoice_direction_metrics(self, tax_code: str, direction: str, job=None):
+    def _invoice_direction_metrics(
+        self, tax_code: str, direction: str, job=None, *, use_cache: bool = True,
+    ):
+        active_statuses = {
+            "queued", "starting", "waiting_account", "running", "processing",
+            "downloading", "syncing", "cancelling",
+        }
+        job_status = str(getattr(job, "status", "") or "")
+        job_id = str(getattr(job, "job_id", "") or "")
+        cache_key = (str(tax_code), str(direction), job_id, job_status)
+        cache = getattr(self, "_metrics_cache", None)
+        cache_lock = getattr(self, "_metrics_cache_lock", None)
+        if cache is None or cache_lock is None:
+            cache = self._metrics_cache = {}
+            cache_lock = self._metrics_cache_lock = threading.Lock()
+        ttl = 5.0 if job_status in active_statuses else 30.0
+        now = time.monotonic()
+        if use_cache:
+            with cache_lock:
+                cached = cache.get(cache_key)
+                if cached and now - cached[0] < ttl:
+                    return dict(cached[1])
         database = self.data_root / tax_code / "db" / "invoices.sqlite3"
         if not database.is_file():
-            return {
+            result = {
                 "invoice_count": 0, "detail_invoice_count": 0, "added_count": 0,
                 "replaced_old_count": None, "downloaded_new_count": None,
                 "sync_from": None, "sync_until": None,
             }
+            if use_cache:
+                with cache_lock:
+                    cache[cache_key] = (now, result)
+            return dict(result)
         with closing(sqlite3.connect(database, timeout=5)) as connection:
             connection.execute("PRAGMA busy_timeout = 5000")
             count = int(connection.execute(
@@ -324,7 +351,7 @@ class ProductionBackend(SourceBackend):
                        WHERE company_tax_code=? AND direction=? AND nlap_date BETWEEN ? AND ?""",
                     (tax_code, direction, str(job.parameters.get("date_from")), str(job.parameters.get("date_to"))),
                 ).fetchone()[0])
-        return {
+        result = {
             "invoice_count": count,
             "detail_invoice_count": detail_count,
             "added_count": added,
@@ -333,6 +360,14 @@ class ProductionBackend(SourceBackend):
             "sync_from": coverage[0] if coverage else None,
             "sync_until": coverage[1] if coverage else None,
         }
+        if use_cache:
+            with cache_lock:
+                cache[cache_key] = (now, result)
+                if len(cache) > 1000:
+                    oldest = sorted(cache, key=lambda key: cache[key][0])[:250]
+                    for key in oldest:
+                        cache.pop(key, None)
+        return dict(result)
 
     @staticmethod
     def _current_processing_until(job, state, month_key):
@@ -368,7 +403,9 @@ class ProductionBackend(SourceBackend):
                 connection = self.service.get_account_connection(
                     str(intent["connection_id"]), owner_id=source_backend_module.OWNER_ID
                 )
-                baseline = self._invoice_direction_metrics(connection.username, direction)["invoice_count"]
+                baseline = self._invoice_direction_metrics(
+                    connection.username, direction, use_cache=False,
+                )["invoice_count"]
                 self.repository.desktop_job_metadata = {
                     "sync_mode": mode,
                     "baseline_invoice_count": baseline,

@@ -3,6 +3,7 @@ import { DateRangePicker } from '../../components/DateRangePicker';
 import { pageBounds, paginationTokens } from '../../components/pagination-utils';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { AccountErrorDownloadButton } from '../../components/AccountErrorDownloadButton';
 import searchIcon from '../../assets/figma/search.png';
 import backIcon from '../../assets/figma/back.png';
 import { OptionCheck } from '../../components/OptionCheck';
@@ -236,7 +237,8 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
     // A terminal download snapshot belongs to the direction/range used by that
     // completed task. Once it is no longer active, persisted coverage is again
     // authoritative so changing direction cannot reuse stale task totals.
-    const task = lifecycle.active ? lifecycle.status?.accounts[account.connection_id] : undefined;
+    const terminalAccount = lifecycle.status?.accounts[account.connection_id];
+    const task = lifecycle.active || terminalAccount?.status === 'error' ? terminalAccount : undefined;
     const failureCount = lifecycle.status?.accounts[account.connection_id]?.failure_count ?? 0;
     const snapshot = task ?? snapshots[account.connection_id];
     const status: RowStatus = task?.status === 'downloading' ? 'downloading'
@@ -246,7 +248,7 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
             : snapshotState === 'loading' ? 'checking'
               : snapshotState === 'error' ? 'error'
                 : snapshot?.ready ? 'ready' : 'not_ready';
-    return { account, snapshot, status, failureCount };
+    return { account, snapshot, status, failureCount, task };
   });
   const filteredRows = rows.filter(({ account, status }) => {
     const term = search.trim().toLocaleLowerCase('vi');
@@ -309,15 +311,15 @@ export function XmlHtmlPage({ accounts, selectedConnectionIds, onSelectAccount, 
       {lifecycle.status?.current_account_id ? <div className="artifact-progress-cards" data-count={Object.keys(lifecycle.status.formats).length}>{kinds.map((kind) => <ProgressCard key={kind} kind={kind} lifecycle={lifecycle} />)}</div> : null}
       <div className="artifact-account-table data-card">
         <div className="artifact-account-row artifact-account-row--head table-header table-grid"><button className="selection-button" type="button" aria-label="Chọn tất cả tài khoản đã lọc" onClick={() => onSelectAccounts(selectedFiltered.length === filteredIds.length ? selectedConnectionIds.filter((id) => !filteredIds.includes(id)) : [...new Set([...selectedConnectionIds, ...filteredIds])])}><SelectionBox checked={filteredIds.length > 0 && selectedFiltered.length === filteredIds.length} indeterminate={selectedFiltered.length > 0 && selectedFiltered.length < filteredIds.length} /></button><span>MST</span><span>Tên công ty</span><span className="artifact-quantity-header"><strong>Số lượng hóa đơn</strong><span><b data-kind="xml">XML</b><b data-kind="html">HTML</b><b data-kind="pdf">PDF</b></span></span><span>Trạng thái đồng bộ</span><span>Tiến trình</span><span>Xem kết quả</span></div>
-        <div className="artifact-account-body table-body">{pageRows.map(({ account, snapshot, status, failureCount }) => {
+        <div className="artifact-account-body table-body">{pageRows.map(({ account, snapshot, status, failureCount, task }) => {
           const formats = lifecycle.status?.current_account_id === account.connection_id ? lifecycle.status.formats : null;
           const progress = formats ? Math.round(Object.values(formats).reduce((sum, item) => sum + (item?.percent ?? 0), 0) / Math.max(1, Object.keys(formats).length)) : status === 'completed' ? 100 : 0;
-          return <div className="artifact-account-row table-row table-grid" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><CoverageBadge snapshot={snapshots[account.connection_id]} state={snapshotState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action row-action-group">{failureCount > 0 ? <button className="row-result-button" type="button" onClick={() => setFailureAccountId(account.connection_id)}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}</span></div>;
+          return <div className="artifact-account-row table-row table-grid" data-status={status} key={account.connection_id}><button className="selection-button" type="button" aria-label={`Chọn ${account.username}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={selectedConnectionIds.includes(account.connection_id)} /></button><span>{account.username}</span><strong title={account.company_name ?? ''}>{account.company_name || '—'}</strong><Quantity snapshot={snapshot} /><CoverageBadge snapshot={snapshots[account.connection_id]} state={snapshotState} dateFrom={selection.dateFrom} dateTo={selection.dateTo} /><span className="artifact-row-progress"><i><b style={{ width: `${progress}%` }} /></i><em>{progress}%</em></span><span className="artifact-row-action row-action-group">{status === 'error' ? <AccountErrorDownloadButton snapshot={{ connection_id: account.connection_id, username: account.username, company_name: account.company_name, operation: 'artifact_download', task_id: lifecycle.status?.task_id, task_status: lifecycle.status?.status, task_error: lifecycle.status?.error, account_error: task?.error, direction: selection.direction, date_from: selection.dateFrom, date_to: selection.dateTo, formats: kinds }} /> : failureCount > 0 ? <button className="row-result-button" type="button" onClick={() => setFailureAccountId(account.connection_id)}>Xem kết quả</button> : <span className="row-action-placeholder">—</span>}</span></div>;
         })}</div>
         {snapshotState === 'loading' && !pageRows.length ? <div className="artifact-table-state">Đang kiểm tra dữ liệu cục bộ...</div> : null}{snapshotState === 'error' ? <div className="artifact-table-state">Không thể kiểm tra trạng thái tải xuống.</div> : null}{snapshotState === 'ready' && !pageRows.length ? <div className="artifact-table-state">Không có tài khoản phù hợp.</div> : null}
       </div>
       <footer className="pagination"><label>Số tài khoản/trang: <select aria-label="Số tài khoản mỗi trang" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option><option value={100}>100</option><option value={ALL_ACCOUNT_ROWS}>Toàn bộ</option></select></label><span>{`Hiển thị ${filteredRows.length ? start + 1 : 0}–${end} trên tổng ${filteredRows.length} tài khoản`}</span><div><span>Chọn trang:</span><button type="button" aria-label="Trang trước" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>‹</button>{tokens.map((token, index) => token === 'ellipsis' ? <span key={`ellipsis-${index}`}>...</span> : <button type="button" key={token} data-active={currentPage === token} onClick={() => setPage(token)}>{token}</button>)}<button type="button" aria-label="Trang sau" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>›</button></div></footer>
     </section>
-    {(feedback || lifecycle.message) ? <NoticeDialog kind={lifecycle.status?.status === 'completed' ? 'success' : 'notice'} message={feedback || lifecycle.message || ''} onClose={() => { setFeedback(null); lifecycle.clearMessage(); }} /> : null}
+    {(feedback || lifecycle.message) ? <NoticeDialog kind={lifecycle.status?.status === 'completed' ? 'success' : lifecycle.status?.status === 'failed' ? 'error' : 'notice'} message={feedback || lifecycle.message || ''} supportLog={lifecycle.status?.status === 'failed' ? true : undefined} onClose={() => { setFeedback(null); lifecycle.clearMessage(); }} /> : null}
   </section>;
 }

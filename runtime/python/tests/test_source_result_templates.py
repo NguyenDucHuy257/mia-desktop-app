@@ -21,6 +21,7 @@ from mia_source_results import (
 )
 from app.services.overview_downloader import _cash_register_buyer_name, _processing_result
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
+from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 
 
 class SourceResultTemplateTests(unittest.TestCase):
@@ -39,13 +40,13 @@ class SourceResultTemplateTests(unittest.TestCase):
             "Cục Thuế đã nhận hóa đơn có mã khởi tạo từ máy tính tiền",
         )
 
-    def test_overview_display_repairs_direct_invoice_taxable_total(self):
+    def test_overview_display_does_not_use_payment_total_for_missing_taxable_total(self):
         self.assertEqual(
             _overview_display_value(
                 {"khmshdon": "2", "tgtcthue": "", "tgtttbso": 235000},
                 "tgtcthue", category="electronic", direction="purchase",
             ),
-            235000,
+            "",
         )
 
     def test_overview_processing_result_falls_back_to_processing_status(self):
@@ -73,15 +74,15 @@ class SourceResultTemplateTests(unittest.TestCase):
             "Khách hàng trên hóa đơn",
         )
 
-    def test_direct_invoice_uses_payment_total_when_taxable_total_is_blank(self):
+    def test_direct_invoice_keeps_taxable_total_blank_until_detail_is_available(self):
         fields = _safe_fields({
             "khmshdon": 2,
             "tgtcthue": None,
             "tgtttbso": 67864,
         })
-        self.assertEqual(fields["tgtcthue"], 67864)
+        self.assertIsNone(fields["tgtcthue"])
 
-    def test_existing_direct_invoice_database_is_backfilled(self):
+    def test_detail_lines_supply_missing_taxable_total_without_payment_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "invoices.sqlite3"
             repository = InvoiceOverviewRepository(database)
@@ -100,7 +101,26 @@ class SourceResultTemplateTests(unittest.TestCase):
                 }],
                 timestamp="2026-09-13T00:00:00+00:00",
             )
-            repository.init_db()
+            detail_repository = InvoiceDetailRepository(database)
+            detail_repository.replace_normalized_detail_success(
+                company_tax_code="0100000000", direction="sold",
+                query_type="query", invoice_category="electronic",
+                nbmst="0100000000", khhdon="C26", shdon="1",
+                khmshdon="2", nlap="2026-09-01", nlap_date="2026-09-01",
+                raw_detail_path="", http_status=200,
+                fetched_at="2026-09-13T00:00:00+00:00",
+                lines=[{"thtien": "50000.25"}, {"thtien": "10000.75"}],
+            )
+            total = detail_repository.taxable_total_by_invoice_key(
+                "0100000000", "sold", "query", "0100000000", "C26", "1", "2",
+            )
+            self.assertEqual(str(total), "60001.00")
+            missing = repository.get_items_missing_taxable_total(
+                company_tax_code="0100000000", direction="sold", query_type="query",
+                from_date="2026-09-01", to_date="2026-09-01",
+            )
+            self.assertEqual(len(missing), 1)
+            repository.set_taxable_total_from_detail(missing[0]["id"], str(total))
             connection = sqlite3.connect(database)
             try:
                 value_json = connection.execute(
@@ -109,7 +129,7 @@ class SourceResultTemplateTests(unittest.TestCase):
                 ).fetchone()[0]
             finally:
                 connection.close()
-            self.assertEqual(json.loads(value_json), 67864)
+            self.assertEqual(json.loads(value_json), "60001.00")
 
     def test_combined_overview_schema_contains_columns_from_both_sources(self):
         purchase_keys = [key for key, _label in _combined_overview_schema("purchase")]

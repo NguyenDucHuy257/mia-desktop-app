@@ -11,6 +11,7 @@ import syncIcon from '../../assets/figma/sync.png';
 import { OptionCheck } from '../../components/OptionCheck';
 import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
 import { PromoProxyBanner } from '../../components/PromoProxyBanner';
+import { SHOW_INVOICE_PROXY_CONTROLS } from '../../config/ui-feature-flags';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
@@ -189,8 +190,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
   const [syncStates, setSyncStates] = useState<Record<string, InvoiceSyncState>>({});
   const [selectionError, setSelectionError] = useState<string | null>(null);
-  const [proxyImport, setProxyImport] = useState({ count: 0, source_name: '', imported_at: '' });
+  const [proxyImport, setProxyImport] = useState({
+    count: 0, live_count: 0, failed_count: 0, ignored_count: 0,
+    worker_count: 1, source_name: '', imported_at: '',
+  });
   const [proxyImporting, setProxyImporting] = useState(false);
+  const [proxyPurchaseOpening, setProxyPurchaseOpening] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
@@ -221,6 +226,25 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
       setProxyImporting(false);
     }
   }
+
+  async function openProxyPurchasePage() {
+    if (proxyPurchaseOpening) return;
+    setProxyPurchaseOpening(true);
+    try {
+      const opener = window.miaRuntime?.proxyProvider?.openPurchasePage;
+      if (!opener) throw Object.assign(new Error('Proxy provider is unavailable.'), { code: 'proxy_provider_unavailable' });
+      await opener();
+      diagnosticLog('proxy_purchase_page_opened', { provider: 'MKVN', browser: 'system-default' });
+    } catch (error) {
+      diagnosticLog('proxy_purchase_page_open_failed', {
+        code: (error as { code?: string })?.code,
+        message: (error as Error)?.message,
+      }, 'error');
+      setSelectionError('Không thể mở trang đăng ký Proxy. Vui lòng thử lại.');
+    } finally {
+      setProxyPurchaseOpening(false);
+    }
+  }
   const pendingAutoExport = useRef<ResultExportSnapshot | null>(null);
   const autoSyncObservedActive = useRef(false);
   const {
@@ -234,6 +258,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   } = jobLifecycle;
   const figmaFixture = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('figma') === '1';
+  const activeSyncIds = Object.keys(batchItems).filter((connectionId) => {
+    const item = batchItems[connectionId];
+    const status = item.status?.status ?? item.record?.status;
+    return item.phase === 'queued' || item.phase === 'starting' || item.phase === 'stopping'
+      || (status !== undefined && !['completed', 'failed', 'cancelled', 'abandoned'].includes(status));
+  }).sort().join('|');
 
   useEffect(() => {
     if (!menu) return;
@@ -251,7 +281,9 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   }, [menu]);
 
   useEffect(() => {
-    const ids = (accounts ?? []).map((account) => account.connection_id);
+    const allIds = (accounts ?? []).map((account) => account.connection_id);
+    const activeIds = activeSyncIds ? activeSyncIds.split('|') : [];
+    const ids = batchActive && activeIds.length ? activeIds : allIds;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
@@ -261,15 +293,18 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
       }
       try {
         const values = await window.miaRuntime.jobs.syncStates(ids, direction, dateFrom, dateTo);
-        if (!disposed) setSyncStates(Object.fromEntries(values.map((value) => [value.connection_id, value])));
+        if (!disposed) setSyncStates((current) => ({
+          ...current,
+          ...Object.fromEntries(values.map((value) => [value.connection_id, value])),
+        }));
       } catch (error) {
         diagnosticLog('sync_states_refresh_failed', { code: (error as { code?: string })?.code }, 'warn');
       }
-      if (!disposed && batchActive) timer = setTimeout(refresh, 1000);
+      if (!disposed && batchActive) timer = setTimeout(refresh, 3000);
     };
     void refresh();
     return () => { disposed = true; if (timer) clearTimeout(timer); };
-  }, [accounts, batchActive, dateFrom, dateTo, direction]);
+  }, [accounts, activeSyncIds, batchActive, dateFrom, dateTo, direction]);
 
   async function chooseExportFolder() {
     const folder = await window.miaRuntime?.artifacts?.selectDirectory();
@@ -439,6 +474,16 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
     setResultScopes((current) => current.includes(value)
       ? current.filter((item) => item !== value)
       : [...current, value]);
+  }
+
+  function stopBatchByUser() {
+    // A deliberate stop cancels the promised automatic export; it is not a
+    // failed sync and must not show the "not completed" warning afterwards.
+    pendingAutoExport.current = null;
+    autoSyncObservedActive.current = false;
+    setSelectionError(null);
+    diagnosticLog('sync_auto_export_cancelled_by_user', {}, 'info');
+    void cancelAll();
   }
 
   const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => {
@@ -622,7 +667,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
         </div>
       </section>
       <section className="invoice-content">
-        <PromoProxyBanner />
+        {SHOW_INVOICE_PROXY_CONTROLS ? <PromoProxyBanner /> : null}
         <div className="filters">
           <div className="filters-left">
             <button className="add-account" type="button" onClick={onAddAccount}><img src={addIcon} alt="" /> Thêm tài khoản</button>
@@ -633,12 +678,24 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
             <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="stopped">Đã dừng</option><option value="ready">Sẵn sàng</option></select>
           </div>
           <div className="invoice-filter-actions">
-            <div className="invoice-proxy-import" title={proxyImport.source_name || 'Chưa import file Proxy'}>
-              <input aria-label="File Proxy đang sử dụng" readOnly value={proxyImport.count ? `${proxyImport.count} Proxy · ${proxyImport.source_name}` : 'Chưa có file Proxy'} />
-              <button type="button" disabled={proxyImporting || batchActive} onClick={() => void importProxyFile()}>
-                {proxyImporting ? 'Đang Import…' : 'Import file Proxy'}
+            {SHOW_INVOICE_PROXY_CONTROLS ? <>
+              <div className="invoice-proxy-import" title={proxyImport.source_name || 'Chưa import file Proxy'}>
+                <input aria-label="File Proxy đang sử dụng" readOnly value={proxyImport.count
+                  ? `${proxyImport.live_count}/${proxyImport.count} Proxy live · ${proxyImport.worker_count} luồng`
+                  : 'Không Proxy · 1 luồng tuần tự'} />
+                <button type="button" disabled={proxyImporting || batchActive} onClick={() => void importProxyFile()}>
+                  {proxyImporting ? 'Đang Import…' : 'Import file Proxy'}
+                </button>
+              </div>
+              <button
+                className="proxy-purchase-button"
+                type="button"
+                disabled={proxyPurchaseOpening}
+                onClick={() => void openProxyPurchasePage()}
+              >
+                {proxyPurchaseOpening ? 'Đang mở…' : 'Mở web đăng ký Proxy'}
               </button>
-            </div>
+            </> : null}
             <div className="invoice-export-all-wrap">
               <button
                 className="invoice-export-all-button"
@@ -657,14 +714,14 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                   <>
                     <span className="invoice-export-button-fill" style={{ width: `${Math.max(0, Math.min(100, resultExports.percent))}%` }} />
                     <span className="invoice-export-button-progress">
-                      <strong>{resultExports.accountIndex}/{resultExports.accountTotal}</strong>
+                      <strong>Đang tạo Excel · {resultExports.accountIndex}/{resultExports.accountTotal}</strong>
                       <strong>{Math.round(resultExports.percent)}%</strong>
                     </span>
                   </>
                 ) : <><DownloadIcon /><span>Tải xuống kết quả</span></>}
               </button>
             </div>
-            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><StopIcon /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={stopBatchByUser}><StopIcon /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
           </div>
         </div>
         <div className="data-card">

@@ -239,6 +239,28 @@ class SyncStateTests(unittest.TestCase):
         self.assertEqual(state["invoice_count"], 0)
         self.assertEqual(state["detail_invoice_count"], 0)
 
+    def test_running_metrics_are_cached_between_ui_polls(self):
+        job = SimpleNamespace(
+            job_id="job-cache", status="running", current_stage="overview",
+            parameters={"directions": ["purchase"], "date_from": "2025-01-01", "date_to": "2025-01-31"},
+            progress_state={"current_stage": "overview", "modules": {}},
+        )
+        self.backend.repository.latest_invoice_job_for_direction.return_value = job
+        self.backend.sync_states(["conn_account"], "purchase")
+        database = self.root / self.tax_code / "db" / "invoices.sqlite3"
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                "INSERT INTO invoice_overview_items VALUES(?,?,?,?,?,?,?,?,?)",
+                (3, self.tax_code, "purchase", "query", "0200000002", "AA/25E", "3", "1", "2025-01-11"),
+            )
+            connection.commit()
+        cached = self.backend.sync_states(["conn_account"], "purchase")[0]
+        fresh = self.backend._invoice_direction_metrics(
+            self.tax_code, "purchase", job, use_cache=False,
+        )
+        self.assertEqual(cached["invoice_count"], 2)
+        self.assertEqual(fresh["invoice_count"], 3)
+
     def test_progress_totals_accumulate_discovered_months(self):
         totals = _progress_totals_from_state({"modules": {"overview": {"status": "running", "months": [
             {"planned": 100, "processed": 100}, {"planned": 80, "processed": 5}, {"processed": 0},

@@ -109,6 +109,12 @@ def _excel_safe_record(value: dict[str, Any]) -> dict[str, Any]:
     return {key: _excel_safe_value(field) for key, field in value.items()}
 
 
+def _excel_numeric_value(value: Any) -> Any:
+    """Convert persisted canonical numeric text to a typed Excel value."""
+    parsed = _as_source_decimal(value)
+    return parsed if parsed is not None else _excel_safe_value(value)
+
+
 class _ExcelSafeDetailRowBuilder:
     """Delegate source row construction, sanitizing only final Excel cells."""
 
@@ -275,12 +281,6 @@ def _safe_fields(item: dict[str, Any]) -> dict[str, Any]:
         for key, field_value in value.items()
         if _public_field_name(str(key))
     }
-    if (
-        str(safe.get("khmshdon") or "").strip() in {"2", "2.0"}
-        and safe.get("tgtcthue") in (None, "")
-        and safe.get("tgtttbso") not in (None, "")
-    ):
-        safe["tgtcthue"] = safe["tgtttbso"]
     return safe
 
 
@@ -701,7 +701,8 @@ def _overview_display_value(
     if key == "nmten" and category == "cash_register" and direction == "sold":
         return _cash_register_buyer_name(fields)
     if key == "tgtcthue":
-        # Also repair historical sales invoices at export time, without a re-crawl.
+        # Missing values remain blank unless detail enrichment has produced an
+        # exact product-line total.  Never use the payment total as a proxy.
         return _taxable_total(fields)
     if key == "kqcht":
         result = _processing_result(fields)
@@ -2417,7 +2418,12 @@ def _write_combined_overview_excel(
             value = row_index if key == "stt" else _overview_display_value(
                 record, key, category=category, direction=direction
             )
-            cell = worksheet.cell(header_row + row_index, column_index, _excel_safe_value(value))
+            excel_value = (
+                _excel_numeric_value(value)
+                if key in NUMBER_RESULT_FIELDS
+                else _excel_safe_value(value)
+            )
+            cell = worksheet.cell(header_row + row_index, column_index, excel_value)
             cell.border = border
             if key in NUMBER_RESULT_FIELDS:
                 cell.number_format = '#,##0.###;[Red]-#,##0.###;0'

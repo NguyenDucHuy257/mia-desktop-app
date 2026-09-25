@@ -218,6 +218,7 @@ class InvoiceCrawlPipeline:
                 'login_response_received': '80.0000',
                 'login_response_validated': '85.0000',
                 'login_token_received': '90.0000', 'token_persisted': '99.9999',
+                'auth_retry_wait': '20.0000',
             }
 
             def progress(event):

@@ -770,7 +770,7 @@ class ArtifactPipelineTests(unittest.TestCase):
             self.assertEqual(result["warning_count"], 0)
             self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 0)
 
-    def test_retry_exhausted_package_is_one_structured_terminal_failure(self):
+    def test_retry_exhausted_package_is_skipped_without_user_facing_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             target = {
@@ -792,9 +792,10 @@ class ArtifactPipelineTests(unittest.TestCase):
                     "date_from": "2026-01-01", "date_to": "2026-01-31",
                     "pdf_concurrency": 1,
                 }, logger=logger).run()
-            self.assertEqual(result["formats"]["xml"]["failed"], 1)
-            self.assertEqual(result["warning_count"], 1)
-            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 1)
+            self.assertEqual(result["formats"]["xml"]["failed"], 0)
+            self.assertEqual(result["formats"]["xml"]["skipped"], 1)
+            self.assertEqual(result["warning_count"], 0)
+            self.assertEqual(result["accounts"]["conn_1"]["failure_count"], 0)
             logger.warning.assert_not_called()
 
     def test_structured_failures_deduplicate_invoice_and_merge_formats(self):

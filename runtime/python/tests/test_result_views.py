@@ -19,6 +19,7 @@ from mia_source_results import (
     _DETAIL_EXPORT_COLUMNS,
     _available_path,
     _combined_overview_schema,
+    _overview_template_schema,
 )
 
 
@@ -549,7 +550,7 @@ class ResultViewTests(unittest.TestCase):
                     "nmmst": "0315394414",
                     "nmten": "CÔNG TY TNHH HỒNG TRÀ NGỌC",
                     "nmdchi": "TP Hồ Chí Minh",
-                    "tgtcthue": 100,
+                    "tgtcthue": "100.0",
                     "tgtthue": 8,
                     "ttcktmai": 0,
                     "tgtphi": 0,
@@ -704,6 +705,21 @@ class ResultViewTests(unittest.TestCase):
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(str(rows[0][3]), "101")
                 self.assertNotIn("\x0b", str(rows[0][6]))
+                overview_schema = _overview_template_schema(
+                    "electronic", "purchase"
+                )
+                taxable_column = next(
+                    index for index, (key, _label) in enumerate(
+                        overview_schema, start=1
+                    ) if key == "tgtcthue"
+                )
+                taxable_cell = worksheet.cell(header_row + 1, taxable_column)
+                self.assertEqual(taxable_cell.value, 100)
+                self.assertEqual(taxable_cell.data_type, "n")
+                self.assertEqual(
+                    taxable_cell.number_format,
+                    "#,##0.###;[Red]-#,##0.###;0",
+                )
             finally:
                 overview_workbook.close()
 
@@ -749,7 +765,7 @@ class ResultViewTests(unittest.TestCase):
             raw.write_text("{}", encoding="utf-8")
 
             for query_type, shdon, partner, processing_status, model, taxable, citizen_id in (
-                ("query", "000101", "0300000001", 5, "1", 100, ""),
+                ("query", "000101", "0300000001", 5, "1", "3020000.0", ""),
                 ("query", "000102", "0300000002", 6, "1", 100, ""),
                 ("query", "000103", "0300000003", 8, "2", None, ""),
                 ("sco-query", "000103", "0300000003", 8, "2", None, "012345678901"),
@@ -818,9 +834,20 @@ class ResultViewTests(unittest.TestCase):
                     worksheet.cell(rows["000103"], columns["nmcmnd"]).value,
                     "012345678901",
                 )
+                taxable_cell = worksheet.cell(
+                    rows["000101"], columns["tgtcthue"]
+                )
+                self.assertEqual(taxable_cell.value, 3020000)
+                self.assertEqual(taxable_cell.data_type, "n")
                 self.assertEqual(
-                    worksheet.cell(rows["000103"], columns["tgtcthue"]).value,
-                    235000,
+                    taxable_cell.number_format,
+                    "#,##0.###;[Red]-#,##0.###;0",
+                )
+                # A missing pre-tax total must never be replaced by the payment
+                # total. Production overview sync enriches it from detail lines;
+                # this fixture intentionally inserts overview rows directly.
+                self.assertIsNone(
+                    worksheet.cell(rows["000103"], columns["tgtcthue"]).value
                 )
             finally:
                 workbook.close()

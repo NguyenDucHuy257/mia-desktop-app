@@ -63,6 +63,6 @@ describe('MIA desktop shell', () => {
     expect(html).toContain('0383.466.992 - 0865.219.286');
     expect(html).toContain('CÔNG TY CỔ PHẦN GIẢI PHÁP VÀ CÔNG NGHỆ SỐ WETECH');
     expect(html).toContain('Giải pháp tải HDDT hàng loạt');
-    expect(html).toContain('Phiên bản MIA TOOL 2026 4.1.1');
+    expect(html).toContain('Phiên bản MIA TOOL 2026 4.2.2');
   });
 });

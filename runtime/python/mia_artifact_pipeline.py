@@ -1138,42 +1138,32 @@ class ArtifactBatchCoordinator:
             if state == "unavailable" or outcome in {
                 "unavailable", "source_confirmed_unavailable", "source_retry_exhausted",
             }:
-                with self.lock:
-                    self.state["warning_count"] += 1
-                message = (
-                    "Không lấy được gói dữ liệu sau 7 lần thử"
-                    if outcome == "source_retry_exhausted"
-                    else "Không thể lấy gói dữ liệu từ nguồn"
-                )
-                self._record_failure(
-                    connection_id, target, self.value["kinds"], outcome, message,
-                )
                 for kind in self.value["kinds"]:
-                    self._advance(kind, display, failed=True)
-                return
-            if state != "completed":
-                with self.lock:
-                    self.state["warning_count"] += 1
+                    self._skip(kind, display)
                 if self.logger is not None:
-                    self.logger.error(
-                        "artifact_package_failed format=XML/HTML account_ref=%s invoice_ref=%s outcome=%s",
+                    self.logger.info(
+                        "artifact_invoice_skipped account_ref=%s invoice_ref=%s outcome=%s",
                         connection_id[-8:], _safe_filename(display)[:80], outcome,
                     )
-                self._record_failure(
-                    connection_id, target, self.value["kinds"],
-                    "package_failed", "Không thể tải gói dữ liệu hóa đơn",
-                )
+                return
+            if state != "completed":
+                if self.logger is not None:
+                    self.logger.info(
+                        "artifact_invoice_skipped account_ref=%s invoice_ref=%s outcome=%s",
+                        connection_id[-8:], _safe_filename(display)[:80], outcome,
+                    )
                 for kind in self.value["kinds"]:
-                    self._advance(kind, display, failed=True)
+                    self._skip(kind, display)
                 return
             package = _package_row(database, tax_code, target)
             if package is None:
-                self._record_failure(
-                    connection_id, target, self.value["kinds"],
-                    "package_cache_missing", "Không tìm thấy gói dữ liệu đã tải",
-                )
                 for kind in self.value["kinds"]:
-                    self._advance(kind, display, failed=True)
+                    self._skip(kind, display)
+                if self.logger is not None:
+                    self.logger.info(
+                        "artifact_invoice_skipped account_ref=%s invoice_ref=%s outcome=package_cache_missing",
+                        connection_id[-8:], _safe_filename(display)[:80],
+                    )
                 return
             xml_path = Path(str(package.get("xml_path") or ""))
             html_path = Path(str(package.get("html_path") or ""))
@@ -1382,11 +1372,10 @@ class ArtifactBatchCoordinator:
                     str(item.get("connection_id") or "")[-8:], _safe_filename(display)[:80],
                     type(error).__name__, str(error)[:200],
                 )
-            self._record_failure(
-                str(item.get("connection_id") or ""), target, ["pdf"],
-                "pdf_failed", str(error)[:240] or type(error).__name__,
-            )
-            self._advance("pdf", display, failed=True)
+            # A malformed/missing source package can prevent one invoice from
+            # rendering without making the account or the whole batch invalid.
+            # Keep the technical warning in diagnostics and continue quietly.
+            self._skip("pdf", display)
 
     @staticmethod
     def _copy_html_assets(source_root: Path, output_root: Path) -> None:

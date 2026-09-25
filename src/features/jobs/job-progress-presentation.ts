@@ -22,6 +22,7 @@ const AUTH_MESSAGES: Record<string, string> = {
   login_request_started: 'Đang gửi yêu cầu đăng nhập Cổng HĐĐT', login_request_succeeded: 'Cổng HĐĐT đã nhận yêu cầu đăng nhập',
   login_response_received: 'Đã nhận phản hồi đăng nhập', login_response_validated: 'Đã xác minh phản hồi đăng nhập',
   login_token_received: 'Đã nhận token đăng nhập', token_persisted: 'Đã lưu phiên đăng nhập an toàn',
+  auth_retry_wait: 'Cổng HĐĐT từ chối tạm thời, MIA đang tự thử đăng nhập lại',
 };
 const FINALIZE_MESSAGES: Record<string, string> = {
   validate_modules: 'Đang kiểm tra các phần dữ liệu đã tải', validate_results: 'Đang kiểm tra kết quả hóa đơn đã lưu',
@@ -76,6 +77,10 @@ export function formatSourceJobProgress(job?: JobProgressView | null) {
   const raw = String(job.message ?? '').trim();
   if (raw.startsWith('auth:')) return withStagePercent(AUTH_MESSAGES[raw.slice(5)] ?? STAGE_MESSAGES.auth, job.stage_percent);
   if (raw.startsWith('finalize:')) return withStagePercent(FINALIZE_MESSAGES[raw.slice(9)] ?? STAGE_MESSAGES.finalize, job.stage_percent);
+  if (raw === 'overview:taxable_total_enrichment_started') return 'Đang kiểm tra các hóa đơn thiếu Tổng tiền chưa thuế';
+  if (raw === 'overview:taxable_total_enrichment_progress') return 'Đang tải ngầm chi tiết để bổ sung Tổng tiền chưa thuế';
+  if (raw === 'overview:taxable_total_enrichment_completed') return 'Đã bổ sung Tổng tiền chưa thuế, đang hoàn tất dữ liệu';
+  if (job.stage === 'finalize') return withStagePercent(STAGE_MESSAGES.finalize, job.stage_percent);
   const aggregate = scopeProgress(job);
   if (aggregate) return aggregate;
   if (job.stage && STAGE_MESSAGES[job.stage]) {
