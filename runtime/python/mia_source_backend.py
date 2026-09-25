@@ -14,12 +14,14 @@ import sqlite3
 import sys
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+import requests
 from openpyxl import Workbook
 
 VENDOR_ROOT = Path(__file__).resolve().parent / "vendor" / "mia_crawl_service"
@@ -32,6 +34,7 @@ from app.account_connections.repository import (
     _connection_from_row,
 )
 from app.account_connections.service import AccountConnectionManager
+from app.crawlers.web_client import PORTAL_ROOT_URL
 from app.external_api.models import (
     CreateAccountConnectionBody,
     CreateJobBody,
@@ -61,6 +64,8 @@ from mia_crawler import verify_account
 
 OWNER_ID = "mia-desktop-local"
 WORKER_ID = "slot-direct"
+MAX_DESKTOP_WORKERS = 10
+PROXY_HEALTH_TIMEOUT_SECONDS = 10
 
 
 class SourceBackend:
@@ -73,6 +78,9 @@ class SourceBackend:
         self.control_db = self.data_dir / "source-control.sqlite3"
         self.metadata_path = self.data_dir / "account-display.json"
         self._metadata_lock = threading.Lock()
+        self._pool_lock = threading.RLock()
+        self._start_worker = start_worker
+        self._worker_slots: list[dict[str, Any]] = []
 
         # Source-owned durable repositories and authentication/session model.
         self.repository = create_job_engine_repository(sqlite_path=self.control_db)
@@ -99,50 +107,129 @@ class SourceBackend:
         )
         self.service.initialize()
 
-        # Exact source pipeline.  No desktop subclass calculates progress,
-        # coverage decisions, retries, cache policy, lease behavior or stages.
-        self.handler = InvoiceCrawlTaskHandler(
-            self.repository,
-            self.sessions,
-            worker_id=WORKER_ID,
-            data_root=self.data_root,
-            proxy_registry=ProxyRegistry(direct_capacity=1),
-        )
-        self.pipeline = InvoiceCrawlPipeline(
-            self.repository,
-            self.handler,
-            self.planner,
-            clock=lambda: datetime.now(BUSINESS_TIMEZONE),
-        )
-        self.supervisor = SequentialWorkerSupervisor(
-            self.repository,
-            worker_id=WORKER_ID,
-            pipeline=self.pipeline,
-            job_lease_seconds=120,
-            heartbeat_interval_seconds=10,
-        )
-        self.stop_event = threading.Event()
-        self.supervisor.set_stop_event(self.stop_event)
-        self.loop = WorkerLoop(
-            self.supervisor,
-            idle_backoff_seconds=0.25,
-            error_backoff_seconds=1.0,
-            orphan_scan_seconds=30.0,
-        )
-        self.worker = threading.Thread(
-            target=self.loop.run,
-            args=(self.stop_event,),
-            daemon=True,
-            name="mia-source-worker",
-        )
-        if start_worker:
-            self.worker.start()
+        self._replace_worker_pool(())
 
     def close(self) -> None:
-        self.stop_event.set()
-        self.supervisor.request_shutdown()
-        if self.worker.is_alive():
-            self.worker.join(timeout=15)
+        with self._pool_lock:
+            self._stop_worker_pool()
+
+    def _build_worker_slot(self, worker_id: str, route: str | None) -> dict[str, Any]:
+        handler = InvoiceCrawlTaskHandler(
+            self.repository, self.sessions, worker_id=worker_id,
+            data_root=self.data_root, proxy_registry=ProxyRegistry(direct_capacity=1),
+            fixed_runtime_route=route,
+        )
+        pipeline = InvoiceCrawlPipeline(
+            self.repository, handler, self.planner,
+            clock=lambda: datetime.now(BUSINESS_TIMEZONE),
+        )
+        supervisor = SequentialWorkerSupervisor(
+            self.repository, worker_id=worker_id, pipeline=pipeline,
+            job_lease_seconds=120, heartbeat_interval_seconds=10,
+        )
+        stop_event = threading.Event()
+        supervisor.set_stop_event(stop_event)
+        loop = WorkerLoop(
+            supervisor, idle_backoff_seconds=0.25,
+            error_backoff_seconds=1.0, orphan_scan_seconds=30.0,
+            serialize_source=False,
+        )
+        worker = threading.Thread(
+            target=loop.run, args=(stop_event,), daemon=True,
+            name=f"mia-source-{worker_id}",
+        )
+        return {
+            "worker_id": worker_id, "route": route, "handler": handler,
+            "pipeline": pipeline, "supervisor": supervisor,
+            "stop_event": stop_event, "loop": loop, "worker": worker,
+        }
+
+    def _stop_worker_pool(self, *, require_stopped: bool = False) -> None:
+        slots, self._worker_slots = self._worker_slots, []
+        for slot in slots:
+            slot["stop_event"].set()
+            slot["supervisor"].request_shutdown()
+        for slot in slots:
+            worker = slot["worker"]
+            if worker.is_alive():
+                worker.join(timeout=15)
+        lingering = [slot for slot in slots if slot["worker"].is_alive()]
+        if lingering:
+            # Never start a replacement pool on top of an old live worker: that
+            # would violate the hard direct+proxy concurrency limit.
+            self._worker_slots = lingering
+            if self.logger is not None:
+                self.logger.error(
+                    "proxy_pool event=stop_timeout lingering_workers=%s",
+                    len(lingering),
+                )
+            if require_stopped:
+                raise RuntimeError("worker_pool_stop_timeout")
+
+    def _replace_worker_pool(self, live_proxies: tuple[str, ...]) -> None:
+        self._stop_worker_pool(require_stopped=True)
+        slots: list[dict[str, Any]] = []
+        for route in (None, *live_proxies):
+            worker_id = WORKER_ID if route is None else (
+                "slot-proxy-" + hashlib.sha256(route.encode("utf-8")).hexdigest()[:12]
+            )
+            slots.append(self._build_worker_slot(worker_id, route))
+        self._worker_slots = slots
+        direct = slots[0]
+        for name in ("handler", "pipeline", "supervisor", "stop_event", "loop", "worker"):
+            setattr(self, name, direct[name])
+        if self._start_worker:
+            for slot in slots:
+                slot["worker"].start()
+
+    @staticmethod
+    def _probe_proxy(proxy_url: str) -> bool:
+        response = requests.get(
+            PORTAL_ROOT_URL,
+            proxies={"http": proxy_url, "https": proxy_url},
+            timeout=PROXY_HEALTH_TIMEOUT_SECONDS, allow_redirects=True,
+        )
+        return response.status_code < 500
+
+    def _live_proxies(self, proxies: tuple[str, ...]) -> tuple[str, ...]:
+        if not proxies:
+            return ()
+        live: set[str] = set()
+        with ThreadPoolExecutor(max_workers=min(len(proxies), MAX_DESKTOP_WORKERS - 1)) as pool:
+            futures = {pool.submit(self._probe_proxy, proxy): proxy for proxy in proxies}
+            for future in as_completed(futures):
+                try:
+                    if future.result():
+                        live.add(futures[future])
+                except requests.RequestException:
+                    continue
+        return tuple(proxy for proxy in proxies if proxy in live)
+
+    def configure_proxies(self, proxies: list[str]) -> dict[str, int]:
+        """Probe routes and install one isolated account worker per live proxy."""
+        normalized = tuple(dict.fromkeys(
+            value.strip() for value in proxies
+            if isinstance(value, str) and value.strip()
+        ))
+        considered = normalized[:MAX_DESKTOP_WORKERS - 1]
+        with self._pool_lock:
+            if self.resume_all():
+                raise ValueError("proxy_reconfigure_busy")
+            live = self._live_proxies(considered)
+            self._replace_worker_pool(live)
+        result = {
+            "count": len(normalized), "checked_count": len(considered),
+            "live_count": len(live), "failed_count": len(considered) - len(live),
+            "ignored_count": len(normalized) - len(considered),
+            "worker_count": 1 + len(live),
+        }
+        if self.logger is not None:
+            self.logger.info(
+                "proxy_pool event=configured imported=%s checked=%s live=%s workers=%s",
+                result["count"], result["checked_count"], result["live_count"],
+                result["worker_count"],
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Account connections: source repo is authoritative.  The JSON file only

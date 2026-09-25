@@ -12,7 +12,7 @@ from app.session_manager.models import CredentialBundle
 DEFAULT_USER_AGENT = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
     'AppleWebKit/537.36 (KHTML, like Gecko) '
-    'Chrome/149.0.0.0 Safari/537.36'
+    'Chrome/152.0.0.0 Safari/537.36'
 )
 _ROUTE_OVERRIDE: ContextVar[str | None | object] = ContextVar(
     'mia_auth_route_override', default=...

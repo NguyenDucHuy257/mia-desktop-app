@@ -9,6 +9,7 @@ import time
 from copy import copy
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable, Sequence
 
@@ -33,6 +34,20 @@ from app.utils.date_utils import split_by_calendar_month
 from app.utils.date_utils import BUSINESS_TIMEZONE
 
 logger = logging.getLogger(__name__)
+
+OVERVIEW_NUMBER_FORMAT = '#,##0.###;[Red]-#,##0.###;0'
+
+
+def _excel_number(value: object) -> object:
+    """Return a real Excel number for canonical portal/SQLite numeric text."""
+    if value in (None, '') or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, Decimal)):
+        return value
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError):
+        return value
 
 
 def _load_workbook(*args, **kwargs):
@@ -89,12 +104,9 @@ def _cash_register_buyer_name(item: dict) -> object:
 
 
 def _taxable_total(item: dict) -> object:
-    value = item.get('tgtcthue')
-    if value not in (None, ''):
-        return value
-    if str(item.get('khmshdon') or '').strip() in {'2', '2.0'}:
-        return item.get('tgtttbso')
-    return value
+    # Never substitute the payment total for a missing pre-tax total.  The
+    # worker enriches missing values from persisted/fetched invoice detail.
+    return item.get('tgtcthue')
 ELECTRONIC_STATUSES = (5, 6, 8)
 HEADER_MARKER = 'STT'
 INVOICE_STATUS_LABELS = {
@@ -999,7 +1011,11 @@ class OverviewDownloader:
                 target = ws.cell(target_row, col)
                 if target_row != prototype_row:
                     _clone_cell(source, target)
-                target.value = value
+                if col in {12, 13, 14, 15}:
+                    target.value = _excel_number(value)
+                    target.number_format = OVERVIEW_NUMBER_FORMAT
+                else:
+                    target.value = value
         if not records:
             for cell in ws[prototype_row]:
                 cell.value = None
@@ -1062,7 +1078,11 @@ class OverviewDownloader:
                 target = ws.cell(target_row, col)
                 if target_row != prototype_row:
                     _clone_cell(source, target)
-                target.value = value
+                if col in {11, 12, 13, 14, 15, 17}:
+                    target.value = _excel_number(value)
+                    target.number_format = OVERVIEW_NUMBER_FORMAT
+                else:
+                    target.value = value
         if not records:
             for cell in ws[prototype_row]:
                 cell.value = None

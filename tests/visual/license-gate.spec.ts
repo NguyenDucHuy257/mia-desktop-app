@@ -44,7 +44,8 @@ test('opens Phone Form only for no-match and keeps the activation action in the 
   await expect(phone).toBeVisible();
   await page.screenshot({ path: 'test-results/license/new-device-phone.png', fullPage: true });
   await phone.fill('0981234567');
-  await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
+  await page.getByLabel('Email khôi phục').fill('ketoan@example.com');
+  await page.getByRole('button', { name: 'Cập nhật' }).click();
   await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toBeVisible();
   await expect(page.getByText('KEYV2-STABLE-TEST-KEY-0981234567')).toBeVisible();
   await page.screenshot({ path: 'test-results/license/activation-required.png', fullPage: true });
@@ -64,7 +65,8 @@ test('rejects dummy phone before calling activation', async ({ page }) => {
   await installLicenseBridge(page, { state: 'phone_required', active: false });
   await page.goto('/');
   await page.getByLabel('Số điện thoại đăng ký').fill('0000000000');
-  await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
+  await page.getByLabel('Email khôi phục').fill('ketoan@example.com');
+  await page.getByRole('button', { name: 'Cập nhật' }).click();
   await expect(page.getByText(/Vui lòng nhập số điện thoại hợp lệ/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toHaveCount(0);
 });
@@ -93,7 +95,8 @@ test('does not accept a support hotline as the registration phone', async ({ pag
   await installLicenseBridge(page, { state: 'phone_required', active: false });
   await page.goto('/');
   await page.getByLabel('Số điện thoại đăng ký').fill('0865219286');
-  await page.getByRole('button', { name: 'Tạo mã kích hoạt' }).click();
+  await page.getByLabel('Email khôi phục').fill('ketoan@example.com');
+  await page.getByRole('button', { name: 'Cập nhật' }).click();
   await expect(page.getByText(/Vui lòng nhập số điện thoại hợp lệ/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Mã kích hoạt chưa được cấp quyền' })).toHaveCount(0);
 });

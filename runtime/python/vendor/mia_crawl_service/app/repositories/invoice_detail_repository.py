@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -556,6 +556,38 @@ class InvoiceDetailRepository:
                             if canonical_invoice_identity(company_tax_code, direction, dict(item)) == wanted), None)
         return dict(row) if row is not None else None
 
+    def taxable_total_by_invoice_key(
+        self, company_tax_code: str, direction: str, query_type: str,
+        nbmst: str, khhdon: str, shdon: str | int, khmshdon: str | int,
+    ) -> Decimal | None:
+        """Sum exact product-line amounts from a verified normalized detail."""
+        detail = self.get_detail_by_invoice_key(
+            company_tax_code, direction, query_type,
+            nbmst, khhdon, shdon, khmshdon,
+        )
+        if not detail or detail.get('error_message') or not detail.get('normalized_ready'):
+            return None
+        outcome = str(detail.get('detail_outcome') or '')
+        if outcome == 'valid_empty':
+            return Decimal(0)
+        if outcome != 'with_lines':
+            return None
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                'SELECT thtien FROM invoice_detail_lines '
+                'WHERE detail_item_id=? ORDER BY line_number',
+                (int(detail['id']),),
+            ).fetchall()
+        total = Decimal(0)
+        try:
+            for row in rows:
+                value = row['thtien']
+                if value not in (None, ''):
+                    total += Decimal(str(value).strip())
+        except (InvalidOperation, ValueError):
+            return None
+        return total
+
     def mark_missing_detail_file(
         self,
         company_tax_code: str,
@@ -626,3 +658,4 @@ class InvoiceDetailRepository:
                 'UPDATE invoice_detail_items SET nlap_date = ? WHERE id = ?',
                 updates,
             )
+from decimal import Decimal, InvalidOperation

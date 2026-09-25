@@ -155,46 +155,6 @@ class InvoiceOverviewRepository:
                     );
                     """
                 )
-                self._backfill_direct_invoice_taxable_totals(connection)
-
-    @staticmethod
-    def _backfill_direct_invoice_taxable_totals(connection: sqlite3.Connection) -> None:
-        """Repair already-synced direct invoices without requiring a fresh crawl."""
-        connection.execute(
-            """
-            UPDATE invoice_overview_attributes
-               SET value_json = (
-                   SELECT payment.value_json
-                     FROM invoice_overview_attributes AS payment
-                    WHERE payment.invoice_item_id = invoice_overview_attributes.invoice_item_id
-                      AND payment.field_name = 'tgtttbso'
-               )
-             WHERE field_name = 'tgtcthue'
-               AND lower(trim(value_json)) IN ('null', '""')
-               AND invoice_item_id IN (
-                   SELECT item.id
-                     FROM invoice_overview_items AS item
-                     JOIN invoice_overview_attributes AS payment
-                       ON payment.invoice_item_id = item.id
-                      AND payment.field_name = 'tgtttbso'
-                    WHERE trim(item.khmshdon) IN ('2', '2.0')
-                      AND lower(trim(payment.value_json)) NOT IN ('null', '""')
-               )
-            """
-        )
-        connection.execute(
-            """
-            INSERT OR IGNORE INTO invoice_overview_attributes
-                (invoice_item_id, field_name, value_json)
-            SELECT item.id, 'tgtcthue', payment.value_json
-              FROM invoice_overview_items AS item
-              JOIN invoice_overview_attributes AS payment
-                ON payment.invoice_item_id = item.id
-               AND payment.field_name = 'tgtttbso'
-             WHERE trim(item.khmshdon) IN ('2', '2.0')
-               AND lower(trim(payment.value_json)) NOT IN ('null', '""')
-            """
-        )
 
     def upsert_items(
         self,
@@ -965,6 +925,55 @@ class InvoiceOverviewRepository:
         with closing(self._connect()) as connection:
             rows = connection.execute(sql, parameters).fetchall()
         return [dict(row) for row in rows]
+
+    def get_items_missing_taxable_total(
+        self, *, company_tax_code: str, direction: str, query_type: str,
+        from_date: str, to_date: str,
+    ) -> list[dict[str, Any]]:
+        """Return overview invoices whose source pre-tax total is blank."""
+        self._validate_date_range(from_date, to_date)
+        self.init_db()
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT item.id, item.company_tax_code, item.direction,
+                       item.query_type, item.invoice_category, item.nbmst,
+                       item.khhdon, item.shdon, item.khmshdon, item.nlap,
+                       item.nlap_date
+                  FROM invoice_overview_items AS item
+             LEFT JOIN invoice_overview_attributes AS taxable
+                    ON taxable.invoice_item_id = item.id
+                   AND taxable.field_name = 'tgtcthue'
+                 WHERE item.company_tax_code = ?
+                   AND item.direction = ?
+                   AND item.query_type = ?
+                   AND item.nlap_date BETWEEN ? AND ?
+                   AND (
+                       taxable.invoice_item_id IS NULL
+                       OR lower(trim(taxable.value_json)) IN ('null', '""')
+                   )
+              ORDER BY item.nlap_date, item.id
+                """,
+                (company_tax_code, direction, query_type, from_date, to_date),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_taxable_total_from_detail(self, invoice_item_id: int, value: str) -> None:
+        """Persist an exact detail-derived pre-tax total for one overview row."""
+        self.init_db()
+        encoded = json.dumps(str(value), ensure_ascii=False)
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT INTO invoice_overview_attributes
+                    (invoice_item_id, field_name, value_json)
+                VALUES (?, 'tgtcthue', ?)
+                ON CONFLICT(invoice_item_id, field_name)
+                DO UPDATE SET value_json=excluded.value_json
+                """,
+                (int(invoice_item_id), encoded),
+            )
+            connection.commit()
 
     def iter_items_for_detail_task_generation(
         self,

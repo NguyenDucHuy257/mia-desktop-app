@@ -22,6 +22,7 @@ from app.job_engine.progress import (
 )
 from app.worker_runtime.coverage_planner import CoveragePlanner
 from app.worker_runtime.metrics import WorkerMetrics
+from app.crawlers.diagnostics import job_diagnostics
 
 
 logger = logging.getLogger('mia.worker_runtime.pipeline')
@@ -68,6 +69,7 @@ class InvoiceCrawlPipeline:
         # own shutdown flag remains reserved for process-level SIGTERM/SIGINT.
         self._lease_abort_requested = threading.Event()
 
+    @job_diagnostics('pipeline')
     def run(self, job: JobRecord, worker_id: str, lease_token: str) -> JobRecord:
         self._lease_abort_requested.clear()
         started = time.perf_counter()
@@ -216,6 +218,7 @@ class InvoiceCrawlPipeline:
                 'login_response_received': '80.0000',
                 'login_response_validated': '85.0000',
                 'login_token_received': '90.0000', 'token_persisted': '99.9999',
+                'auth_retry_wait': '20.0000',
             }
 
             def progress(event):

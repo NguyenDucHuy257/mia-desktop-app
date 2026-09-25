@@ -17,6 +17,7 @@ AUTH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUTH)
 
 APP_PATH = AUTH_PATH.with_name("app.py")
+sys.path.insert(0, str(APP_PATH.parent))
 APP_SPEC = importlib.util.spec_from_file_location("mia_deliverable_app", APP_PATH)
 assert APP_SPEC and APP_SPEC.loader
 APP = importlib.util.module_from_spec(APP_SPEC)
@@ -29,6 +30,7 @@ finally:
         sys.modules.pop("auth", None)
     else:
         sys.modules["auth"] = PREVIOUS_AUTH
+RECOVERY = sys.modules["mia_recovery"]
 
 DEVICE_ID = "ec3fc9c7-e2a1-4260-b2a9-2014d003a76d"
 MST = "0109067059"
@@ -66,11 +68,60 @@ class DeliverableServerSecurityTests(unittest.TestCase):
         AUTH.BASE_DIR = self.original_base
         self.temp.cleanup()
 
-    def verify(self, phone: str, *, signals=None, device_id=DEVICE_ID, current_version="4.0.8"):
+    def verify(self, phone: str, *, signals=None, device_id=DEVICE_ID,
+               current_version="4.0.8", legacy_keys=()):
         return AUTH.verify_key_v2(
             "MIA", key=key(phone, device_id), device_id=device_id,
-            phone=phone, hardware=signals or hardware(), legacy_keys=[],
+            phone=phone, hardware=signals or hardware(), legacy_keys=list(legacy_keys),
             current_version=current_version,
+        )
+
+    def test_mia_migration_replaces_legacy_in_all_mia_registries(self):
+        phone = "0900001090"
+        legacy = "KEY" + "a" * 29 + phone
+        original = f"{legacy}|VIP|31/12/2099|{phone}|o|legacy"
+        for tool in ("MIA", "MIA2", "MIA3"):
+            (self.base / tool / "vip.txt").write_text(original + "\n", encoding="utf-8")
+
+        response = self.verify(phone, legacy_keys=[legacy])
+
+        self.assertTrue(response["valid"])
+        canonical = key(phone)
+        for tool in ("MIA", "MIA2", "MIA3"):
+            rows = (self.base / tool / "vip.txt").read_text(encoding="utf-8").splitlines()
+            self.assertFalse(any(row.startswith(legacy + "|") for row in rows), tool)
+            self.assertEqual(sum(row.startswith(canonical + "|") for row in rows), 1, tool)
+
+    def test_mia_existing_migration_repairs_missing_row_and_keeps_first_duplicate(self):
+        phone = "0900001091"
+        legacy = "KEY" + "b" * 29 + phone
+        original = f"{legacy}|VIP|31/12/2099|{phone}|o|legacy"
+        mia = self.base / "MIA"
+        mia.joinpath("vip.txt").write_text(original + "\n", encoding="utf-8")
+        self.assertTrue(self.verify(phone, legacy_keys=[legacy])["valid"])
+
+        canonical = key(phone)
+        preferred = f"{canonical}|VIP|30/11/2030|{phone}|o|first"
+        duplicate = f"{canonical}|VIP|31/12/2031|other|{MST}|second"
+        mia.joinpath("vip.txt").write_text(
+            original + "\n" + preferred + "\n" + duplicate + "\n",
+            encoding="utf-8",
+        )
+
+        response = self.verify(phone, legacy_keys=[legacy])
+
+        self.assertTrue(response["valid"])
+        self.assertEqual(response["expires_at"], "30/11/2030")
+        rows = mia.joinpath("vip.txt").read_text(encoding="utf-8").splitlines()
+        self.assertEqual([row for row in rows if row.startswith(canonical + "|")], [preferred])
+        self.assertFalse(any(row.startswith(legacy + "|") for row in rows))
+
+        mia.joinpath("vip.txt").write_text("", encoding="utf-8")
+        repaired = self.verify(phone, legacy_keys=[legacy])
+        self.assertTrue(repaired["valid"])
+        self.assertEqual(
+            sum(row.startswith(canonical + "|") for row in mia.joinpath("vip.txt").read_text(encoding="utf-8").splitlines()),
+            1,
         )
 
     def test_requested_vip1_test1_vip_and_test_matrix(self):
@@ -114,6 +165,48 @@ class DeliverableServerSecurityTests(unittest.TestCase):
         self.assertEqual(response["entitlements"]["plan"], "TEST")
         self.assertTrue(response["mst_authorized"])
         self.assertTrue(response["date_authorized"])
+
+    def test_recovery_actions_reuse_verify_key_v2_without_changing_default_verify(self):
+        phone = "0900001051"
+        (self.base / "MIA" / "vip.txt").write_text(
+            f"{key(phone)}|VIP|31/12/2099|SECURITY-QA|o\n", encoding="utf-8",
+        )
+        messages = []
+        recovery = RECOVERY.RecoveryService(
+            self.base / "recovery.sqlite3", secret="r" * 32,
+            send_mail=lambda email, code: messages.append((email, code)),
+        )
+        original = APP.recovery_service
+        APP.recovery_service = lambda: recovery
+        payload = dict(
+            tool="MIA", key=key(phone), device_id=DEVICE_ID, phone=phone,
+            hardware=hardware(), current_version="4.0.8",
+        )
+        try:
+            ordinary = APP.verify_key_v2_endpoint(APP.KeyV2Req(**payload))
+            self.assertTrue(ordinary["valid"])
+
+            challenge = APP.verify_key_v2_endpoint(APP.KeyV2Req(
+                **payload, action="contact_request", email="owner@example.com",
+            ))
+            confirmed = APP.verify_key_v2_endpoint(APP.KeyV2Req(
+                **payload, action="contact_confirm",
+                challenge_id=challenge["challenge_id"], code=messages[-1][1],
+            ))
+            self.assertTrue(confirmed["verified"])
+        finally:
+            APP.recovery_service = original
+
+    def test_invalid_recovery_license_keeps_client_error_instead_of_becoming_500(self):
+        request = APP.KeyV2Req(
+            tool="MIA", key="invalid", device_id="deployment-test",
+            phone="0981234567", hardware={}, action="password_reset_request",
+        )
+        with self.assertRaises(APP.HTTPException) as raised:
+            APP.verify_key_v2_endpoint(request)
+        self.assertEqual(raised.exception.status_code, 400)
+        self.assertEqual(raised.exception.detail["code"], "recovery_license_invalid")
+        self.assertRegex(raised.exception.detail["request_id"], r"^[0-9a-f]{16}$")
 
     def test_limited_policies_require_an_explicit_scope(self):
         for plan in ("VIP1", "TEST1", "TEST"):

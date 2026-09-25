@@ -9,6 +9,7 @@ import logging
 import math
 import random
 import time
+from urllib.parse import quote
 
 import requests
 
@@ -23,6 +24,30 @@ from app.crawlers.web_client import WebClient
 from app.models.overview import OverviewPageCommit, OverviewResumeState
 
 logger = logging.getLogger(__name__)
+
+
+def build_invoice_list_headers(
+    base_headers: dict[str, str], direction: str,
+) -> dict[str, str]:
+    """Match the portal's current lookup action/context headers."""
+    if direction not in {'sold', 'purchase'}:
+        raise ValueError(f'Unsupported invoice direction: {direction!r}')
+    headers = dict(base_headers)
+
+    def set_header(name: str, value: str) -> None:
+        for existing_name in list(headers):
+            if existing_name.lower() == name.lower():
+                del headers[existing_name]
+        headers[name] = value
+
+    action = (
+        'Tìm kiếm (hóa đơn bán ra)'
+        if direction == 'sold'
+        else 'Tìm kiếm (hóa đơn mua vào)'
+    )
+    set_header('End-Point', '/tra-cuu/tra-cuu-hoa-don')
+    set_header('Action', quote(action, safe='()'))
+    return headers
 
 
 @dataclass(frozen=True)
@@ -344,7 +369,7 @@ class InvoiceCrawler:
         invoice_list = self.request_get(
             f'https://hoadondientu.gdt.gov.vn/api/{query_type}/invoices/{invoice_type}',
             params=params,
-            headers=headers,
+            headers=build_invoice_list_headers(headers, invoice_type),
         ).json()
         datas = invoice_list.get('datas',[])
         total = invoice_list.get('total')
@@ -392,7 +417,7 @@ class InvoiceCrawler:
         response = self.request_get(
             invoice_list_url(category, direction),
             params=params,
-            headers=headers,
+            headers=build_invoice_list_headers(headers, direction),
             timeout=timeout,
             retry_attempts=retry_attempts,
             # Adaptive overview pagination owns its 429 counter so the session

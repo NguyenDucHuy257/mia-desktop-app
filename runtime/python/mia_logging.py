@@ -12,6 +12,7 @@ LOGGER_NAMES = (
     "app",
     "mia.worker_runtime",
     "mia.job_engine",
+    "app.crawl_diagnostics",
 )
 
 PATTERNS = (
@@ -99,5 +100,7 @@ def configure_logging(log_directory: Path, level: str = "INFO") -> logging.Logge
     _reset_logger("app", resolved_level, crawler_handler)
     _reset_logger("mia.worker_runtime", resolved_level, crawler_handler)
     _reset_logger("mia.job_engine", resolved_level, crawler_handler)
+    _reset_logger("app.crawl_diagnostics", resolved_level,
+                  _file_handler(log_directory / "crawl-diagnostics.log"))
 
     return runtime

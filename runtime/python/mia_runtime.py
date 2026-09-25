@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -32,6 +33,7 @@ MAX_MESSAGE_BYTES = 1024 * 1024
 PROTOCOL_VERSION = "1.0"
 RUNTIME_VERSION = "0.5.0"
 storage: Storage | None = None
+_source_plan_lock = threading.Lock()
 # Compatibility marker for older tests/state only. The local runtime never
 # creates a legacy CrawlerCoordinator or a second crawl worker.
 crawler = None
@@ -330,8 +332,9 @@ def _run_unified_artifact_task(task_id: str, coordinator: Any) -> None:
         result = coordinator.run()
         status = str(result.get("status") or "completed")
         error = None
-    except Exception:
-        result, status, error = None, "failed", "internal_error"
+    except Exception as exception:
+        result, status = None, "failed"
+        error = type(exception).__name__ or "internal_error"
         if logger is not None:
             logger.exception("unified_artifact_task_failed task_id=%s", task_id)
     with _artifact_task_lock:
@@ -447,6 +450,22 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         except StorageError as error:
             raise RpcError(-32010, error.code) from None
 
+    if method == "source.proxies.configure":
+        values = params.get("proxies") if isinstance(params, dict) else None
+        if (not isinstance(values, list) or len(values) > 200
+                or any(not isinstance(value, str)
+                       or urlparse(value).scheme != "http"
+                       or not urlparse(value).hostname
+                       or len(value) > 1024 for value in values)):
+            raise RpcError(-32602, "invalid_params")
+        try:
+            return _production_backend().configure_proxies(values), False
+        except ValueError as error:
+            code = str(error)
+            if code == "proxy_reconfigure_busy":
+                raise RpcError(-32065, code) from None
+            raise RpcError(-32602, "invalid_params") from None
+
     if method.startswith("source.accounts."):
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
@@ -494,7 +513,12 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                     ",".join(intent.get("directions") or ()),
                     ",".join(intent.get("scopes") or ()),
                 )
-                result = backend.start(dict(params))
+                # Coverage planning initializes/reads the same company invoice
+                # database as sync-state inspection. Serialize this short
+                # admission phase so an older range scan cannot starve job
+                # creation and trigger an unbounded polling backlog.
+                with _source_plan_lock:
+                    result = backend.start(dict(params))
                 _crawler_logger().info(
                     "job_created job_id=%s connection_id=%s status=%s",
                     result.get("job_id"), result.get("connection_id"), result.get("status"),
@@ -561,7 +585,16 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 ))
             ):
                 raise ValueError("invalid_params")
-            return _production_backend().sync_states(connection_ids, direction, date_from, date_to), False
+            if not _source_plan_lock.acquire(blocking=False):
+                raise RpcError(-32066, "source_sync_busy")
+            try:
+                return _production_backend().sync_states(
+                    connection_ids, direction, date_from, date_to
+                ), False
+            finally:
+                _source_plan_lock.release()
+        except RpcError:
+            raise
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
 
@@ -637,7 +670,7 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
             raise RpcError(-32030, error.code) from None
 
     # The pre-refactor crawler.* RPC surface is intentionally absent. There is
-    # exactly one source-owned sequential worker behind source.jobs.*.
+    # the source-owned route-isolated worker pool behind source.jobs.*.
 
     if method == "artifacts.pdf_health":
         try:

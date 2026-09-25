@@ -14,8 +14,9 @@ from app.config.crawl_config import (
     parse_proxy_list,
 )
 from app.crawlers.auth_crawler import AuthCrawler
+from app.crawlers.diagnostics import emit
 from app.crawlers.endpoints import GET_COMPANY_INFO_API
-from app.crawlers.web_client import WebClient
+from app.crawlers.web_client import PORTAL_ROOT_URL, WebClient
 from app.services.rate_limit_diagnostics import (
     RateLimitEvidenceLog,
     decode_jwt_claims,
@@ -67,7 +68,7 @@ class TaxPortalSession:
         self.user_agent = user_agent or (
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) '
-            'Chrome/149.0.0.0 Safari/537.36'
+            'Chrome/152.0.0.0 Safari/537.36'
         )
         if isinstance(proxies, str):
             configured_proxies = parse_proxy_list(proxies)
@@ -139,6 +140,18 @@ class TaxPortalSession:
             raise RuntimeError('Not authenticated')
         return self.client.build_headers(authorization=self.token, ua=self.user_agent)
 
+    @property
+    def authentication_headers(self) -> dict[str, str]:
+        if not self.token:
+            raise RuntimeError('Not authenticated')
+        return self.client.build_headers(
+            authorization=self.token,
+            endpoint='/',
+            ua=self.user_agent,
+            referer=PORTAL_ROOT_URL,
+            action='',
+        )
+
     def login(self) -> str:
         if self.token_provider is not None:
             snapshot = self.token_provider.get_token()
@@ -164,9 +177,9 @@ class TaxPortalSession:
 
     def get_company_info(self) -> dict[str, str]:
         if self.auth is not None:
-            self.company_info = self.auth.get_company_info(self.headers)
+            self.company_info = self.auth.get_company_info(self.authentication_headers)
             return self.company_info
-        response = self.get(GET_COMPANY_INFO_API)
+        response = self.get(GET_COMPANY_INFO_API, headers=self.authentication_headers)
         try:
             payload = response.json()
         except (requests.JSONDecodeError, ValueError) as error:
@@ -258,6 +271,8 @@ class TaxPortalSession:
                     )
                 elif status == 401:
                     normal_failures += 1
+                    emit('source_unauthorized', generation=self.token_generation,
+                         normal_failures=normal_failures, retry_limit=request_retries)
                     if normal_failures >= request_retries:
                         raise
                     logger.warning(
@@ -306,6 +321,8 @@ class TaxPortalSession:
                 wait_seconds = self._rate_limit_wait_seconds(
                     rate_limit_failures
                 )
+                emit('rate_limit_wait', consecutive_429=rate_limit_failures,
+                     cooldown_seconds=wait_seconds, generation=self.token_generation)
                 logger.warning(
                     'Rate limited endpoint=%s status_code=429 attempt=%d '
                     'cooldown_ms=%d profile=%s terminal=false',

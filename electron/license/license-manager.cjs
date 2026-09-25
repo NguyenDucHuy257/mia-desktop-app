@@ -30,11 +30,25 @@ function maskKey(key) {
   return value.length > 12 ? `${value.slice(0, 8)}****${value.slice(-4)}` : value || null;
 }
 
+function normalizeEmail(value) {
+  const email = String(value || '').trim().toLocaleLowerCase('en-US');
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : null;
+}
+
+function maskEmail(value) {
+  const email = normalizeEmail(value);
+  if (!email) return null;
+  const [local, domain] = email.split('@');
+  return `${local.slice(0, 1)}${'*'.repeat(Math.max(3, local.length - 1))}@${domain}`;
+}
+
 function newProfile(evidence, phone = null, deviceId = crypto.randomUUID()) {
   return {
     version: 3,
     device_id: deviceId,
     phone: normalizePhone(phone),
+    email: null,
+    email_verified: false,
     hardware: { ...evidence.hardware },
   };
 }
@@ -58,6 +72,9 @@ function responseDiagnostic(response) {
     recovered: response?.recovered === true,
     has_key: typeof response?.key === 'string' && response.key.length > 0,
     has_device_id: typeof response?.device_id === 'string' && response.device_id.length > 0,
+    hardware_matches: Number.isInteger(response?.hardware_matches) ? response.hardware_matches : null,
+    hardware_total: Number.isInteger(response?.hardware_total) ? response.hardware_total : null,
+    hardware_match_ratio: Number.isFinite(response?.hardware_match) ? response.hardware_match : null,
   };
 }
 
@@ -90,7 +107,7 @@ function normalizeUpdateInfo(value, currentVersion = '') {
 }
 
 class LicenseManager {
-  constructor({ enabled, store, api, currentVersion = '', securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID() }) {
+  constructor({ enabled, store, api, currentVersion = '', securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID(), requireRecoveryEmail = false }) {
     this.enabled = Boolean(enabled);
     this.store = store;
     this.api = api;
@@ -102,6 +119,7 @@ class LicenseManager {
     this.legacyPhonePaths = legacyPhonePaths;
     this.createDeviceId = createDeviceId;
     this.currentVersion = String(currentVersion || '').trim();
+    this.requireRecoveryEmail = Boolean(requireRecoveryEmail);
     this.current = this.enabled
       ? safeState('checking', { valid: false, expired: false })
       : safeState('error', { valid: false, expired: false, reason: 'license_disabled', mode: 'disabled' });
@@ -125,6 +143,9 @@ class LicenseManager {
       state: this.current.state,
       active: this.current.active,
       phone: maskPhone(details.phone),
+      phone_value: normalizePhone(details.phone),
+      email: normalizeEmail(this.profile?.email),
+      email_verified: this.profile?.email_verified === true,
       phone_status: details.phone_status || null,
       expires_at: details.expires_at || null,
       activated_at: firstUseDate || details.activated_at || null,
@@ -200,6 +221,8 @@ class LicenseManager {
       version: 3,
       device_id: response.device_id,
       phone,
+      email: normalizeEmail(this.profile?.email),
+      email_verified: this.profile?.email_verified === true,
       hardware: Object.keys(response.hardware_profile || {}).length >= 3
         ? { ...response.hardware_profile }
         : { ...this.evidence.hardware },
@@ -218,7 +241,8 @@ class LicenseManager {
       entitlements,
     });
     this.store.saveMigrationState({ status: 'completed', reason: source, updated_at: this.now().toISOString() });
-    this.current = safeState('active', {
+    const contactReady = !this.requireRecoveryEmail || (this.profile.email_verified === true && Boolean(this.profile.email));
+    this.current = safeState(contactReady ? 'active' : 'email_required', {
       entitlements,
       update,
       valid: true,
@@ -227,6 +251,9 @@ class LicenseManager {
       details: {
         device_id: response.device_id,
         phone,
+        email: normalizeEmail(this.profile.email),
+        pending_email: normalizeEmail(this.profile.pending_email),
+        masked_email: maskEmail(this.profile.email),
         phone_status: response.phone_status || (phone ? 'verified' : 'pending'),
         expires_at: response.expires_at || null,
         activated_at: firstUseDate,
@@ -305,6 +332,8 @@ class LicenseManager {
     } catch (error) {
       this.log('license_operation_verify_failed', {
         code: error.code || 'license_request_failed', error_type: error?.name || 'Error',
+        status: Number.isInteger(error?.status) ? error.status : null,
+        transient: Boolean(error?.transient),
       });
       this.current = safeState('error', { valid: false, expired: false, reason: 'license_policy_missing' });
       return this.current;
@@ -369,13 +398,15 @@ class LicenseManager {
     }
   }
 
-  async submitPhone(value) {
+  async submitPhone(value, emailValue = null) {
     if (!this.enabled) return this.current;
     const phone = normalizePhone(value);
     if (!phone) throw Object.assign(new Error('invalid phone'), { code: 'invalid_phone' });
     try {
       if (!this.identity || !this.evidence || !this.profile) await this.prepareLocalState();
-      this.profile = { ...this.profile, phone };
+      const pendingEmail = emailValue == null ? normalizeEmail(this.profile?.pending_email) : normalizeEmail(emailValue);
+      if (emailValue != null && !pendingEmail) throw Object.assign(new Error('invalid email'), { code: 'invalid_email' });
+      this.profile = { ...this.profile, phone, pending_email: pendingEmail };
       this.store.saveProfile(this.profile);
       this.detection = buildLegacyDetection(this.evidence, [phone]);
       const response = await this.api.verifyKeyV2(this.requestPayload({
@@ -399,10 +430,63 @@ class LicenseManager {
 
   updatePhone(value) { return this.submitPhone(value); }
 
+  async requestContactVerification(phoneValue, emailValue) {
+    if (!this.identity || !this.evidence || !this.profile) await this.prepareLocalState();
+    const phone = normalizePhone(phoneValue || this.profile?.phone);
+    const email = normalizeEmail(emailValue);
+    if (!phone) throw Object.assign(new Error('invalid phone'), { code: 'invalid_phone' });
+    if (!email) throw Object.assign(new Error('invalid email'), { code: 'invalid_email' });
+    let saved = null;
+    try { saved = this.store.loadLicense(); } catch { saved = null; }
+    if (phone !== this.profile.phone || !saved?.canonical_key) {
+      const state = await this.submitPhone(phone);
+      if (!['active', 'email_required'].includes(state.state)) return state;
+    }
+    const result = await this.api.requestContactVerification({ ...this.requestPayload({ phone }), email });
+    if (!result?.challenge_id) throw Object.assign(new Error('invalid contact response'), { code: 'invalid_response' });
+    this.profile = {
+      ...this.profile,
+      phone,
+      pending_email: email,
+      pending_contact_challenge: String(result.challenge_id),
+    };
+    this.store.saveProfile(this.profile);
+    return result;
+  }
+
+  async confirmContact(challengeId, code) {
+    const normalizedChallenge = String(challengeId || '');
+    if (!this.profile || normalizedChallenge !== this.profile.pending_contact_challenge) {
+      throw Object.assign(new Error('invalid contact challenge'), { code: 'recovery_code_invalid' });
+    }
+    const result = await this.api.confirmContact({
+      ...this.requestPayload(), challenge_id: normalizedChallenge, code: String(code || ''),
+    });
+    if (result?.verified !== true || !normalizeEmail(this.profile.pending_email)) {
+      throw Object.assign(new Error('invalid contact response'), { code: 'invalid_response' });
+    }
+    this.profile = { ...this.profile, email: normalizeEmail(this.profile.pending_email), email_verified: true };
+    delete this.profile.pending_email;
+    delete this.profile.pending_contact_challenge;
+    this.store.saveProfile(this.profile);
+    return this.initializeOnce();
+  }
+
+  async requestPasswordReset() {
+    if (!this.identity || !this.evidence || !this.profile) await this.prepareLocalState();
+    return this.api.requestPasswordReset(this.requestPayload());
+  }
+
+  verifyPasswordReset(challengeId, code) {
+    return this.api.verifyPasswordReset({
+      ...this.requestPayload(), challenge_id: String(challengeId || ''), code: String(code || ''),
+    });
+  }
+
   retry() {
     if (this.current.state === 'activation_required' && this.profile?.phone) return this.submitPhone(this.profile.phone);
     return this.initialize();
   }
 }
 
-module.exports = { LicenseManager, maskKey, maskPhone, miaV2Key, newProfile, normalizeUpdateInfo, responseGrantsLicense };
+module.exports = { LicenseManager, maskEmail, maskKey, maskPhone, miaV2Key, newProfile, normalizeEmail, normalizeUpdateInfo, responseGrantsLicense };

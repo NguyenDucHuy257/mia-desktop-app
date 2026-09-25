@@ -10,6 +10,23 @@ test('main invoice screen follows the 1500x1024 Figma reference', async ({ page 
   });
 });
 
+test('PROXY banner opens the in-app full guide before any provider website', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Tìm hiểu cách tăng tốc tải nhiều mã số thuế với PROXY' }).click();
+  const modal = page.getByRole('dialog', { name: 'TĂNG TỐC TẢI NHIỀU MST' });
+  await expect(modal).toBeVisible();
+  await expect(modal).toContainText('Tại sao nhiều MST phải chờ nhau?');
+  await expect(modal).toContainText('Mỗi Proxy = thêm 1 luồng tải');
+  await expect(modal).toContainText('Gợi ý tham khảo');
+  await expect(modal).toContainText('Hướng dẫn mua Proxy');
+  await expect(modal.getByRole('button', { name: 'Mở trang đăng ký Proxy' })).toBeVisible();
+  const size = await modal.boundingBox();
+  expect(size?.width).toBeGreaterThan(1200);
+  expect(size?.height).toBeGreaterThan(850);
+  await page.getByRole('button', { name: 'Đóng hướng dẫn', exact: true }).first().click();
+  await expect(modal).toBeHidden();
+});
+
 test('single account form follows Figma frame 1:368', async ({ page }) => {
   await page.goto('/?figma=1');
   await page.evaluate(() => document.fonts.ready);
@@ -104,6 +121,31 @@ test('local account list starts empty, persists in the gateway and supports dele
   await expect(accountSelection).toHaveAttribute('data-checked', 'true');
   await page.getByRole('button', { name: 'Xóa 0101234567' }).click();
   await expect(page.getByText('Hiển thị 0–0 trên tổng 0 tài khoản')).toBeVisible();
+});
+
+test('keeps the last account rows when a background refresh fails', async ({ page }) => {
+  await page.addInitScript(() => {
+    const account = {
+      connection_id: 'conn_stable_account', username: '2900517387',
+      company_name: 'Doanh nghiep du lieu lon', status: 'ready',
+      token_generation: 1, created_at: 'now', updated_at: 'now', reused: false,
+    };
+    let listCalls = 0;
+    Object.defineProperty(window, 'miaRuntime', { value: { accountConnections: {
+      list: async () => {
+        listCalls += 1;
+        if (listCalls > 1) throw Object.assign(new Error('temporary runtime failure'), { code: 'runtime_timeout' });
+        return [account];
+      },
+      create: async () => account, get: async () => account,
+      reconnect: async () => account, revoke: async () => undefined,
+    } } });
+  });
+  await page.goto('/');
+  await expect(page.getByText('2900517387')).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.waitForTimeout(100);
+  await expect(page.getByText('2900517387')).toBeVisible();
 });
 
 test('invoice accounts paginate by twenty after filtering and preserve selection', async ({ page }) => {

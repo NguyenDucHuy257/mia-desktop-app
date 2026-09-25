@@ -73,4 +73,15 @@ describe('offline password protection', () => {
     fs.writeFileSync(path.join(value.directory, AUTH_FILE), 'corrupt');
     expect(() => value.manager.status()).toThrowError(expect.objectContaining({ code: 'offline_auth_state_corrupt' }));
   });
+
+  it('replaces a configured password only through the recovery entry point', async () => {
+    const value = setup();
+    await value.manager.create('Mat-khau-cu-2026', 'Mat-khau-cu-2026');
+    value.manager.lock();
+    await expect(value.manager.recover('Mat-khau-moi-2026', 'khong-khop')).rejects.toMatchObject({ code: 'offline_password_confirmation_mismatch' });
+    await expect(value.manager.recover('Mat-khau-moi-2026', 'Mat-khau-moi-2026')).resolves.toMatchObject({ unlocked: true });
+    const restarted = createOfflineAuthManager({ directory: value.directory, protector: protector() });
+    await expect(restarted.unlock('Mat-khau-cu-2026')).rejects.toMatchObject({ code: 'offline_password_incorrect' });
+    await expect(restarted.unlock('Mat-khau-moi-2026')).resolves.toMatchObject({ unlocked: true });
+  });
 });

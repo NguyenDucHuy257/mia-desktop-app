@@ -9,7 +9,7 @@ import verifiedBlueIcon from '../assets/figma/verified-blue.png';
 import { NoticeDialog } from './NoticeDialog';
 import { useLicenseUpdate } from '../features/licensing/LicensePolicyContext';
 
-const APP_VERSION = '4.0.8';
+const APP_VERSION = '4.2.2';
 
 export type NavigationKey = 'invoices' | 'xml-html' | 'vat-return' | 'pdf-lookup' | 'mvt' | 'logs' | 'settings' | 'guide';
 

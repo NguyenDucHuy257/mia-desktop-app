@@ -1,9 +1,8 @@
 """Single-worker process loop for MIA Desktop.
 
-The upstream ``app.job_engine.worker`` module also contains the web/server host
-that discovers logical worker slots and starts one thread per slot. Desktop
-needs none of that. This loop drives exactly one upstream
-SequentialWorkerSupervisor and keeps only durable lease recovery/backoff.
+The upstream ``app.job_engine.worker`` module also contains the web/server host.
+Desktop creates these lightweight loops itself: one loop per direct/proxy slot,
+while each loop still owns exactly one SequentialWorkerSupervisor.
 """
 
 from __future__ import annotations
@@ -11,20 +10,19 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import nullcontext
 
 
 logger = logging.getLogger("mia.job_engine")
 
-# Source portal work has one execution lane in the desktop process.  The local
-# worker holds this lock for a complete source job; the XML/HTML artifact
-# adapter uses the same lock while it calls the source package handler.  This
-# prevents a queued crawl and an artifact batch from sharing a managed portal
-# session concurrently without introducing another crawler worker.
+# Legacy/default callers keep the original serialized lane. The 4.2 desktop
+# pool explicitly disables this lock because every slot has an isolated route,
+# handler and account job; SQLite lease fencing remains authoritative.
 SOURCE_EXECUTION_LOCK = threading.Lock()
 
 
 class LocalWorkerLoop:
-    """Run one sequential source supervisor until the desktop runtime stops."""
+    """Run one logical source slot until the desktop runtime stops."""
 
     def __init__(
         self,
@@ -33,6 +31,7 @@ class LocalWorkerLoop:
         idle_backoff_seconds: float = 2.0,
         error_backoff_seconds: float = 5.0,
         orphan_scan_seconds: float = 30.0,
+        serialize_source: bool = True,
     ) -> None:
         if min(idle_backoff_seconds, error_backoff_seconds, orphan_scan_seconds) <= 0:
             raise ValueError("worker backoff values must be positive")
@@ -40,6 +39,7 @@ class LocalWorkerLoop:
         self.idle_backoff_seconds = idle_backoff_seconds
         self.error_backoff_seconds = error_backoff_seconds
         self.orphan_scan_seconds = orphan_scan_seconds
+        self.serialize_source = serialize_source
 
     def run(self, stop_event: threading.Event, *, max_iterations=None) -> int:
         self.supervisor.set_stop_event(stop_event)
@@ -54,7 +54,7 @@ class LocalWorkerLoop:
                 if time.monotonic() >= next_orphan_scan:
                     self.supervisor.repository.recover_expired_leases()
                     next_orphan_scan = time.monotonic() + self.orphan_scan_seconds
-                with SOURCE_EXECUTION_LOCK:
+                with SOURCE_EXECUTION_LOCK if self.serialize_source else nullcontext():
                     result = self.supervisor.run_once()
             except Exception as exc:
                 logger.exception(

@@ -253,7 +253,10 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
                 continue
             originals[name] = original
 
-            def wrapped(job, payload, *args, _original=original, _stage=stage, **kwargs):
+            def wrapped(
+                job, payload, *args, _original=original, _stage=stage,
+                _name=name, **kwargs,
+            ):
                 if _stage == "ensure_xml" and isinstance(payload, dict):
                     # The source package response contains both invoice.xml and
                     # invoice.html. Ask the existing source handler/storage
@@ -261,6 +264,20 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
                     # This changes no portal, retry, cache or naming rule.
                     payload = {**payload, "export_xml": True, "export_html": True}
                 self._set_current_source_unit(_stage, payload)
+                # prepare_overview_unit is a lightweight count preflight and
+                # deliberately has no progress_callback parameter. Only the
+                # actual overview download accepts the storage/enrichment
+                # callback. Passing it to both caused every fresh Overview job
+                # to fail before the first portal data request.
+                if _name == "run_overview_unit" and "progress_callback" not in kwargs:
+                    def overview_progress(event, current=None, total=None):
+                        self._state["message"] = f"overview:{event}"
+                        if str(event).startswith("taxable_total_") and current is not None:
+                            self._state["overview_post_processed"] = int(current)
+                        if str(event).startswith("taxable_total_") and total is not None:
+                            self._state["overview_post_total"] = int(total)
+                        self._persist(force=True)
+                    kwargs["progress_callback"] = overview_progress
                 try:
                     outcome = _original(job, payload, *args, **kwargs)
                 except Exception:

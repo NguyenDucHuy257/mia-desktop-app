@@ -140,6 +140,17 @@ function createOfflineAuthManager({ directory, protector, logger, now = () => Da
       logger?.info?.('offline_password_changed');
       return status();
     },
+    async recover(newPassword, confirmation) {
+      if (!load()) throw new OfflineAuthError('offline_password_not_configured');
+      if (newPassword !== confirmation) throw new OfflineAuthError('offline_password_confirmation_mismatch');
+      const existing = load();
+      await savePassword(newPassword, existing.created_at);
+      failedAttempts = 0;
+      blockedUntil = 0;
+      unlocked = true;
+      logger?.info?.('offline_password_recovered');
+      return status();
+    },
     lock() {
       unlocked = false;
       return status();

@@ -35,5 +35,12 @@
 .offline-password-settings-card > small { display: block; margin-top: 12px; font-size: 12px; }
 .offline-password-settings-card > small.success { color: #166534; }
 .offline-password-settings-card > small.error { color: #b91c1c; }
+.offline-auth-forgot { margin-top: 10px !important; border: 0 !important; padding: 0 !important; height: auto !important; color: #147a42 !important; background: transparent !important; text-align: left; text-decoration: underline; font-size: 12px; cursor: pointer; }
+.offline-recovery-panel { display: grid; gap: 13px; margin-top: 14px; padding: 16px; border: 1px solid #dbe8e0; border-radius: 10px; background: #f8fbf9; }
+.offline-recovery-panel h2 { margin: 0; font-size: 17px; }
+.offline-recovery-panel p { margin: 0; color: #64748b; font-size: 12px; line-height: 1.5; }
+.offline-recovery-panel > div:last-child { display: flex; justify-content: flex-end; gap: 9px; }
+.offline-recovery-panel button { min-height: 38px; padding: 0 14px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; font-weight: 700; cursor: pointer; }
+.offline-recovery-panel button[type="submit"], .offline-recovery-panel > div:last-child button:last-child { border-color: #147a42; color: #fff; background: #147a42; }
 @media (max-width: 560px) { .offline-auth-page { padding: 14px; } .offline-auth-card { padding: 24px 19px; } .offline-password-settings-card header { flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { .offline-auth-loading span { animation: none; width: 65%; } }

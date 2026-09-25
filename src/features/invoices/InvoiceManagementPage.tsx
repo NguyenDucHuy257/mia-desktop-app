@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NoticeDialog } from '../../components/NoticeDialog';
+import { AccountErrorDownloadButton } from '../../components/AccountErrorDownloadButton';
 import { DateRangePicker } from '../../components/DateRangePicker';
 import { StorageFolderPicker } from '../../components/StorageFolderPicker';
 import { currentYearDateRange } from '../../components/date-input-utils';
@@ -9,6 +10,8 @@ import searchIcon from '../../assets/figma/search.png';
 import syncIcon from '../../assets/figma/sync.png';
 import { OptionCheck } from '../../components/OptionCheck';
 import { DownloadIcon, StopIcon } from '../../components/InvoiceActionIcons';
+import { PromoProxyBanner } from '../../components/PromoProxyBanner';
+import { SHOW_INVOICE_PROXY_CONTROLS } from '../../config/ui-feature-flags';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
@@ -187,12 +190,61 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   const [activeBatchDirection, setActiveBatchDirection] = useState<InvoiceDirection | null>(null);
   const [syncStates, setSyncStates] = useState<Record<string, InvoiceSyncState>>({});
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [proxyImport, setProxyImport] = useState({
+    count: 0, live_count: 0, failed_count: 0, ignored_count: 0,
+    worker_count: 1, source_name: '', imported_at: '',
+  });
+  const [proxyImporting, setProxyImporting] = useState(false);
+  const [proxyPurchaseOpening, setProxyPurchaseOpening] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<RowStatus | ''>('');
   const [dateFrom, setDateFrom] = useState(initialRange.dateFrom);
   const [dateTo, setDateTo] = useState(initialRange.dateTo);
   const [page, setPage] = useState(1);
   const [accountPageSize, setAccountPageSize] = useState(ACCOUNT_PAGE_SIZE);
+
+  useEffect(() => {
+    let active = true;
+    window.miaRuntime?.invoiceProxies?.status()
+      .then((value) => { if (active) setProxyImport(value); })
+      .catch((error) => diagnosticLog('invoice_proxy_status_failed', { code: error?.code, message: error?.message }, 'warn'));
+    return () => { active = false; };
+  }, []);
+
+  async function importProxyFile() {
+    if (proxyImporting) return;
+    setProxyImporting(true);
+    try {
+      const bridge = window.miaRuntime?.invoiceProxies;
+      if (!bridge) throw Object.assign(new Error('Proxy import is unavailable.'), { code: 'proxy_import_unavailable' });
+      const result = await bridge.importFile();
+      if (!result.cancelled) setProxyImport(result);
+    } catch (error) {
+      diagnosticLog('invoice_proxy_import_failed', { code: (error as { code?: string })?.code, message: (error as Error)?.message }, 'error');
+      setSelectionError('Không thể đọc file Proxy. Hãy dùng đúng file TXT tải từ MKVN, giữ nguyên dòng tiêu đề và dữ liệu từ dòng 2 trở đi.');
+    } finally {
+      setProxyImporting(false);
+    }
+  }
+
+  async function openProxyPurchasePage() {
+    if (proxyPurchaseOpening) return;
+    setProxyPurchaseOpening(true);
+    try {
+      const opener = window.miaRuntime?.proxyProvider?.openPurchasePage;
+      if (!opener) throw Object.assign(new Error('Proxy provider is unavailable.'), { code: 'proxy_provider_unavailable' });
+      await opener();
+      diagnosticLog('proxy_purchase_page_opened', { provider: 'MKVN', browser: 'system-default' });
+    } catch (error) {
+      diagnosticLog('proxy_purchase_page_open_failed', {
+        code: (error as { code?: string })?.code,
+        message: (error as Error)?.message,
+      }, 'error');
+      setSelectionError('Không thể mở trang đăng ký Proxy. Vui lòng thử lại.');
+    } finally {
+      setProxyPurchaseOpening(false);
+    }
+  }
   const pendingAutoExport = useRef<ResultExportSnapshot | null>(null);
   const autoSyncObservedActive = useRef(false);
   const {
@@ -206,6 +258,12 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   } = jobLifecycle;
   const figmaFixture = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('figma') === '1';
+  const activeSyncIds = Object.keys(batchItems).filter((connectionId) => {
+    const item = batchItems[connectionId];
+    const status = item.status?.status ?? item.record?.status;
+    return item.phase === 'queued' || item.phase === 'starting' || item.phase === 'stopping'
+      || (status !== undefined && !['completed', 'failed', 'cancelled', 'abandoned'].includes(status));
+  }).sort().join('|');
 
   useEffect(() => {
     if (!menu) return;
@@ -223,7 +281,9 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
   }, [menu]);
 
   useEffect(() => {
-    const ids = (accounts ?? []).map((account) => account.connection_id);
+    const allIds = (accounts ?? []).map((account) => account.connection_id);
+    const activeIds = activeSyncIds ? activeSyncIds.split('|') : [];
+    const ids = batchActive && activeIds.length ? activeIds : allIds;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
@@ -233,15 +293,18 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
       }
       try {
         const values = await window.miaRuntime.jobs.syncStates(ids, direction, dateFrom, dateTo);
-        if (!disposed) setSyncStates(Object.fromEntries(values.map((value) => [value.connection_id, value])));
+        if (!disposed) setSyncStates((current) => ({
+          ...current,
+          ...Object.fromEntries(values.map((value) => [value.connection_id, value])),
+        }));
       } catch (error) {
         diagnosticLog('sync_states_refresh_failed', { code: (error as { code?: string })?.code }, 'warn');
       }
-      if (!disposed && batchActive) timer = setTimeout(refresh, 1000);
+      if (!disposed && batchActive) timer = setTimeout(refresh, 3000);
     };
     void refresh();
     return () => { disposed = true; if (timer) clearTimeout(timer); };
-  }, [accounts, batchActive, dateFrom, dateTo, direction]);
+  }, [accounts, activeSyncIds, batchActive, dateFrom, dateTo, direction]);
 
   async function chooseExportFolder() {
     const folder = await window.miaRuntime?.artifacts?.selectDirectory();
@@ -411,6 +474,16 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
     setResultScopes((current) => current.includes(value)
       ? current.filter((item) => item !== value)
       : [...current, value]);
+  }
+
+  function stopBatchByUser() {
+    // A deliberate stop cancels the promised automatic export; it is not a
+    // failed sync and must not show the "not completed" warning afterwards.
+    pendingAutoExport.current = null;
+    autoSyncObservedActive.current = false;
+    setSelectionError(null);
+    diagnosticLog('sync_auto_export_cancelled_by_user', {}, 'info');
+    void cancelAll();
   }
 
   const allRows: InvoiceRow[] = figmaFixture ? rows : (accounts ?? []).map((account) => {
@@ -594,6 +667,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
         </div>
       </section>
       <section className="invoice-content">
+        {SHOW_INVOICE_PROXY_CONTROLS ? <PromoProxyBanner /> : null}
         <div className="filters">
           <div className="filters-left">
             <button className="add-account" type="button" onClick={onAddAccount}><img src={addIcon} alt="" /> Thêm tài khoản</button>
@@ -604,6 +678,24 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
             <select className="status-filter" aria-label="Lọc trạng thái" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as RowStatus | ''); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="completed">Hoàn thành</option><option value="processing">Đang xử lý</option><option value="failed">Lỗi</option><option value="pending">Chờ xử lý</option><option value="stopped">Đã dừng</option><option value="ready">Sẵn sàng</option></select>
           </div>
           <div className="invoice-filter-actions">
+            {SHOW_INVOICE_PROXY_CONTROLS ? <>
+              <div className="invoice-proxy-import" title={proxyImport.source_name || 'Chưa import file Proxy'}>
+                <input aria-label="File Proxy đang sử dụng" readOnly value={proxyImport.count
+                  ? `${proxyImport.live_count}/${proxyImport.count} Proxy live · ${proxyImport.worker_count} luồng`
+                  : 'Không Proxy · 1 luồng tuần tự'} />
+                <button type="button" disabled={proxyImporting || batchActive} onClick={() => void importProxyFile()}>
+                  {proxyImporting ? 'Đang Import…' : 'Import file Proxy'}
+                </button>
+              </div>
+              <button
+                className="proxy-purchase-button"
+                type="button"
+                disabled={proxyPurchaseOpening}
+                onClick={() => void openProxyPurchasePage()}
+              >
+                {proxyPurchaseOpening ? 'Đang mở…' : 'Mở web đăng ký Proxy'}
+              </button>
+            </> : null}
             <div className="invoice-export-all-wrap">
               <button
                 className="invoice-export-all-button"
@@ -622,14 +714,14 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                   <>
                     <span className="invoice-export-button-fill" style={{ width: `${Math.max(0, Math.min(100, resultExports.percent))}%` }} />
                     <span className="invoice-export-button-progress">
-                      <strong>{resultExports.accountIndex}/{resultExports.accountTotal}</strong>
+                      <strong>Đang tạo Excel · {resultExports.accountIndex}/{resultExports.accountTotal}</strong>
                       <strong>{Math.round(resultExports.percent)}%</strong>
                     </span>
                   </>
                 ) : <><DownloadIcon /><span>Tải xuống kết quả</span></>}
               </button>
             </div>
-            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={() => void cancelAll()}><StopIcon /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
+            <button className="stop-button" type="button" disabled={!batchActive || batchStopping} onClick={stopBatchByUser}><StopIcon /> {batchStopping ? 'Đang dừng…' : 'Dừng tải'}</button>
           </div>
         </div>
         <div className="data-card">
@@ -640,6 +732,10 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
           <div className="table-body">
             {pageRows.map((row, index) => {
               const account = accountByTaxCode.get(row.taxCode);
+              const batchItem = account ? batchItems[account.connection_id] : undefined;
+              const diagnosticJob = batchItem?.status ?? batchItem?.record;
+              const hasError = row.status === 'failed' || row.syncState?.status === 'failed'
+                || Boolean(batchItem?.error || batchItem?.errorCode || diagnosticJob?.error);
               return <div className="table-row table-grid" data-status={row.status} key={account?.connection_id ?? `${row.taxCode}-${firstRowIndex + index}`}>
                 {account ? <button className="selection-button" type="button" aria-label={`Chọn ${row.taxCode}`} onClick={() => onSelectAccount(account.connection_id)}><SelectionBox checked={row.selected} /></button> : <SelectionBox checked={row.selected} />}
                 <span>{row.taxCode}</span>
@@ -650,12 +746,25 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
                 <ProgressCell row={row} />
                 <SyncStatusCell state={row.syncState} wantsDetails={resultScopes.includes('detail')} />
                 {account ? <span className="row-action-group">
-                  <button className="row-result-button" type="button" onClick={() => {
+                  {hasError ? <AccountErrorDownloadButton snapshot={{
+                    connection_id: account.connection_id,
+                    job_id: diagnosticJob?.job_id ?? row.syncState?.last_job_id ?? null,
+                    date_from: dateFrom, date_to: dateTo, direction,
+                    status: diagnosticJob?.status ?? row.status, account_status: account.status,
+                    error_code: diagnosticJob?.error?.code ?? batchItem?.errorCode ?? null,
+                    error_message: diagnosticJob?.error?.message ?? batchItem?.error ?? row.progressLabel,
+                    current_stage: row.syncState?.current_stage,
+                    overall_percent: row.progress,
+                    overview_ready: row.syncState?.overview_ready,
+                    detail_ready: row.syncState?.detail_ready,
+                    missing_overview_ranges: row.syncState?.missing_overview_ranges,
+                    missing_detail_ranges: row.syncState?.missing_detail_ranges,
+                  }} /> : <button className="row-result-button" type="button" onClick={() => {
                     const resultDateFrom = dateFrom;
                     const resultDateTo = dateTo;
                     diagnosticLog('results_opened', { connection_id: account.connection_id, date_from: resultDateFrom, date_to: resultDateTo });
                     onViewResults(account.connection_id, resultDateFrom, resultDateTo, direction);
-                  }}>Xem kết quả</button>
+                  }}>Xem kết quả</button>}
                   <button className="row-delete-button" type="button" aria-label={`Xóa ${row.taxCode}`} onClick={() => void onDeleteAccount(account.connection_id)}>×</button>
                 </span> : <span className="row-action-placeholder">—</span>}
               </div>;
