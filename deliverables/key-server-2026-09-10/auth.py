@@ -441,7 +441,9 @@ def _entitlements_from_state(
         raise ValueError("TEST license requires an MST")
     return {
         "version": 1,
-        "plan": policy["raw"].upper(),
+        # Keep the V2 response canonical even when vip.txt still uses the
+        # historical unlimited marker ``v``.
+        "plan": "VIP" if policy["raw"].lower() == "v" else policy["raw"].upper(),
         "trial": bool(policy["test"]),
         "max_tax_codes": limit if limit is not None else (len(allowed) or None),
         "allowed_tax_codes": allowed,
