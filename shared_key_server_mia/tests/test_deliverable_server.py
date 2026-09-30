@@ -116,13 +116,69 @@ class DeliverableServerSecurityTests(unittest.TestCase):
         self.assertEqual([row for row in rows if row.startswith(canonical + "|")], [preferred])
         self.assertFalse(any(row.startswith(legacy + "|") for row in rows))
 
+        # Support removing the row from every registry revokes the key: the
+        # migration snapshot must not resurrect it, and the device sees the
+        # activation screen with its KEYV2 again.
         mia.joinpath("vip.txt").write_text("", encoding="utf-8")
-        repaired = self.verify(phone, legacy_keys=[legacy])
-        self.assertTrue(repaired["valid"])
-        self.assertEqual(
-            sum(row.startswith(canonical + "|") for row in mia.joinpath("vip.txt").read_text(encoding="utf-8").splitlines()),
-            1,
-        )
+        revoked = self.verify(phone, legacy_keys=[legacy])
+        self.assertFalse(revoked["valid"])
+        self.assertEqual(revoked["reason"], "key_not_activated")
+        self.assertEqual(revoked["key"], canonical)
+        self.assertEqual(mia.joinpath("vip.txt").read_text(encoding="utf-8"), "")
+        self.assertNotIn(canonical, mia.joinpath("legacy_vip.txt").read_text(encoding="utf-8"))
+        self.assertNotIn(legacy, json.loads(mia.joinpath("legacy_migrations.json").read_text(encoding="utf-8")))
+
+        # Adding the KEYV2 row back by hand re-activates the same device.
+        mia.joinpath("vip.txt").write_text(preferred + "\n", encoding="utf-8")
+        restored = self.verify(phone, legacy_keys=[legacy])
+        self.assertTrue(restored["valid"])
+        self.assertEqual(restored["expires_at"], "30/11/2030")
+
+    def test_support_renewing_an_expired_legacy_row_in_vip_applies_immediately(self):
+        phone = "0900001092"
+        legacy = "KEY" + "c" * 29 + phone
+        mia = self.base / "MIA"
+        mia.joinpath("vip.txt").write_text(f"{legacy}|VIP|17/06/2026|{phone}|o|legacy\n", encoding="utf-8")
+
+        expired = self.verify(phone, legacy_keys=[legacy])
+        self.assertFalse(expired["valid"])
+        self.assertEqual(expired["reason"], "legacy_key_expired")
+        self.assertEqual(expired["expires_at"], "17/06/2026")
+        self.assertIn("17/06/2026", mia.joinpath("legacy_vip.txt").read_text(encoding="utf-8"))
+
+        # Case 1: support edits the expiry (and plan) by hand in vip.txt only.
+        mia.joinpath("vip.txt").write_text(f"{legacy}|VIP1|31/12/2030|{phone}|{MST}|renewed\n", encoding="utf-8")
+        renewed = self.verify(phone, legacy_keys=[legacy])
+        self.assertTrue(renewed["valid"])
+        self.assertEqual(renewed["expires_at"], "31/12/2030")
+        self.assertEqual(renewed["entitlements"]["plan"], "VIP1")
+        self.assertEqual(renewed["entitlements"]["allowed_tax_codes"], [MST])
+        self.assertNotIn("17/06/2026", mia.joinpath("legacy_vip.txt").read_text(encoding="utf-8"))
+
+    def test_support_deleting_an_expired_legacy_row_returns_key_not_activated(self):
+        phone = "0900001093"
+        legacy = "KEY" + "d" * 29 + phone
+        mia = self.base / "MIA"
+        row = f"{legacy}|VIP|17/06/2026|{phone}|o|legacy\n"
+        mia.joinpath("vip.txt").write_text(row, encoding="utf-8")
+        # An old copy in a historical namespace must not keep the key alive
+        # once support removes it from there as well.
+        (self.base / "MIA2" / "vip.txt").write_text(row, encoding="utf-8")
+        self.assertEqual(self.verify(phone, legacy_keys=[legacy])["reason"], "legacy_key_expired")
+
+        mia.joinpath("vip.txt").write_text("", encoding="utf-8")
+        still_expired = self.verify(phone, legacy_keys=[legacy])
+        self.assertEqual(still_expired["reason"], "legacy_key_expired")
+
+        # Case 2: support deletes the key from every vip.txt.
+        (self.base / "MIA2" / "vip.txt").write_text("", encoding="utf-8")
+        revoked = self.verify(phone, legacy_keys=[legacy])
+        self.assertFalse(revoked["valid"])
+        self.assertFalse(revoked["expired"])
+        self.assertEqual(revoked["reason"], "key_not_activated")
+        self.assertEqual(revoked["key"], key(phone))
+        self.assertNotIn(legacy, mia.joinpath("legacy_vip.txt").read_text(encoding="utf-8"))
+        self.assertEqual(self.verify(phone, legacy_keys=[legacy])["reason"], "key_not_activated")
 
     def test_requested_vip1_test1_vip_and_test_matrix(self):
         rows = [

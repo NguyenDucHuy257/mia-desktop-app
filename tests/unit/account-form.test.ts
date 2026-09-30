@@ -13,9 +13,17 @@ describe('account form validation', () => {
     expect(validateCredentials({ username: '0101234567-001', password: 'secret' })).toEqual({});
   });
 
+  it('accepts delegated-user and other portal login formats', () => {
+    expect(validateCredentials({ username: '0104998537-U001', password: 'secret' })).toEqual({});
+    expect(validateCredentials({ username: 'ABC.123_x@y', password: 'secret' })).toEqual({});
+    expect(parseBulkAccounts('0104998537-U001|secret').errors).toEqual([]);
+  });
+
   it('rejects malformed credentials without returning the password', () => {
-    const errors = validateCredentials({ username: 'abc', password: '' });
-    expect(errors.username).toContain('10 số');
+    const errors = validateCredentials({ username: 'abc/../x', password: '' });
+    expect(errors.username).toContain('không hợp lệ');
+    expect(validateCredentials({ username: 'a b', password: 'x' }).username).toContain('không hợp lệ');
+    expect(validateCredentials({ username: 'x'.repeat(65), password: 'x' }).username).toContain('không hợp lệ');
     expect(errors.password).toContain('mật khẩu');
     expect(JSON.stringify(errors)).not.toContain('abc|');
   });

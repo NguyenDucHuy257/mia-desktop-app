@@ -15,7 +15,7 @@ import { SHOW_INVOICE_PROXY_CONTROLS } from '../../config/ui-feature-flags';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
 import type { ArtifactExportRequest } from '../../lib/runtime-bridge';
 import { formatSourceJobProgress } from '../jobs/job-progress-presentation';
-import { type BatchJobLifecycle } from '../jobs/use-batch-job-lifecycle';
+import { type BatchJobLifecycle, jobFailureMessage } from '../jobs/use-batch-job-lifecycle';
 import { resultExportErrorMessage } from '../results/result-export-errors';
 import type { ResultExportLifecycle } from '../results/use-result-export-lifecycle';
 import type { AccountConnection, InvoiceDirection, InvoiceSyncState } from '../../lib/api/contracts';
@@ -70,11 +70,25 @@ const statusLabels: Record<RowStatus, string> = {
   ready: 'Sẵn sàng',
 };
 
+const TRANSIENT_SOURCE_CODES = new Set([
+  'source_rate_limited', 'source_authentication_failed', 'source_auth_wait_timeout', 'source_timeout',
+  'source_connect_failure', 'proxy_connection_failure', 'source_invalid_response',
+]);
+
 function jobFailureHint(code?: string) {
   if (code === 'invalid_source_credentials') return 'Vui lòng kiểm tra lại MST hoặc mật khẩu.';
   if (code === 'source_account_locked') return 'Vui lòng mở khóa tài khoản trên Cổng HĐĐT trước khi thử lại.';
-  if (code === 'source_rate_limited' || code?.startsWith('source_http_')) return 'Hãy chờ dịch vụ nguồn ổn định rồi thử lại.';
+  if (code?.startsWith('source_http_') || TRANSIENT_SOURCE_CODES.has(code ?? '')) return 'Tool đã tự thử lại nhiều lần. Hãy chờ cổng ổn định rồi bấm đồng bộ lại.';
+  if (code === 'source_parse_failure' || code === 'source_schema_failure') return 'Bấm "Tải log lỗi" và gửi cho kỹ thuật để bổ sung định dạng hóa đơn này.';
   return 'Hãy thử lại hoặc xem Nhật ký để biết thêm chi tiết.';
+}
+
+// Runtime messages are English/raw codes; always present the Vietnamese copy
+// keyed by error code and keep the raw text for diagnostics only.
+function jobFailureLabel(errorCode?: string, sourceError?: string, accountNeedsAuth = false) {
+  if (errorCode) return jobFailureMessage(errorCode);
+  if (accountNeedsAuth) return 'Cần xác thực lại tài khoản.';
+  return sourceError && !/^[a-z0-9_]+$/i.test(sourceError) && !/^[A-Za-z ]+$/.test(sourceError) ? sourceError : 'Job xử lý thất bại.';
 }
 
 function clampProgress(value: number) {
@@ -551,9 +565,7 @@ export function InvoiceManagementPage({ jobLifecycle, resultExports, activeWorks
           : phase === 'queued'
             ? 'Chờ đến lượt xử lý…'
             : status === 'failed'
-              ? inlineError ?? sourceError ?? errorCode ?? (accountNeedsAuth
-                ? 'Cần xác thực lại tài khoản.'
-                : 'Job xử lý thất bại.')
+              ? inlineError ?? jobFailureLabel(errorCode, sourceError, accountNeedsAuth)
               : status === 'ready'
                 ? 'Chưa đồng bộ'
                 : formatSourceJobProgress(job);

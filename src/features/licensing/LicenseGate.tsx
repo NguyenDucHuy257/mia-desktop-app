@@ -3,7 +3,15 @@ import logo from '../../assets/figma/logo.png';
 import type { LicenseStateResponse } from '../../lib/runtime-bridge';
 import '../../styles/license.css';
 import { ExportSupportLogButton, InlineErrorWithSupport } from '../../components/ExportSupportLogButton';
+import { ipcErrorCode, ipcErrorMessage } from '../../lib/ipc-error';
 import { LicensePolicyContext, LicenseUpdateContext } from './LicensePolicyContext';
+
+export const DEFAULT_RECOVERY_CODE_MINUTES = 5;
+
+export function recoveryCodeMinutes(expiresIn: unknown) {
+  const seconds = Number(expiresIn);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : DEFAULT_RECOVERY_CODE_MINUTES;
+}
 
 const copy: Record<string, { title: string; description: string }> = {
   checking: { title: 'Đang kiểm tra bản quyền', description: 'Đang nhận diện thiết bị và kiểm tra trạng thái sử dụng...' },
@@ -51,6 +59,7 @@ const reasonCopy: Record<string, { title: string; description: string }> = {
 
 export function licenseActionError(error: unknown, fallback: string) {
   const value = error as { code?: string; message?: string; status?: number; requestId?: string };
+  const code = ipcErrorCode(error, '');
   const messages: Record<string, string> = {
     recovery_code_invalid: 'Mã xác nhận không đúng hoặc không thuộc yêu cầu hiện tại.',
     recovery_code_expired: 'Mã xác nhận đã hết hạn. Vui lòng gửi mã mới.',
@@ -61,7 +70,7 @@ export function licenseActionError(error: unknown, fallback: string) {
     recovery_license_invalid: 'Bản quyền hoặc thiết bị không còn hợp lệ tại bước xác nhận.',
     recovery_not_configured: 'Server chưa cấu hình dịch vụ khôi phục mật khẩu.',
   };
-  const detail = messages[value?.code || ''] || value?.message?.replace(/^\[[^\]]+\]\s*/, '') || fallback;
+  const detail = messages[code] || (code ? fallback : ipcErrorMessage(error)) || fallback;
   return value?.requestId ? `${detail} Mã yêu cầu: ${value.requestId}` : detail;
 }
 
@@ -139,6 +148,7 @@ function EmailVerificationForm({ state, onDone }: { state: LicenseStateResponse;
   const [email, setEmail] = useState(state.details?.pending_email || state.details?.email || '');
   const [challenge, setChallenge] = useState('');
   const [masked, setMasked] = useState('');
+  const [minutes, setMinutes] = useState(DEFAULT_RECOVERY_CODE_MINUTES);
   const [code, setCode] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -146,7 +156,7 @@ function EmailVerificationForm({ state, onDone }: { state: LicenseStateResponse;
     event.preventDefault(); setBusy(true); setMessage('');
     try {
       const result = await bridge.requestContactVerification(phone, email);
-      setChallenge(result.challenge_id); setMasked(result.masked_email);
+      setChallenge(result.challenge_id); setMasked(result.masked_email); setMinutes(recoveryCodeMinutes(result.expires_in));
     } catch (error) { setMessage(licenseActionError(error, 'Không thể gửi mã xác nhận.')); }
     finally { setBusy(false); }
   }
@@ -162,7 +172,7 @@ function EmailVerificationForm({ state, onDone }: { state: LicenseStateResponse;
     {!challenge ? <><p>Email được dùng để nhận mã khi bạn quên mật khẩu đăng nhập trên máy.</p>
       <label className="license-phone-field">Số điện thoại đăng ký<input inputMode="numeric" autoComplete="tel" maxLength={10} value={phone} onChange={(event) => setPhone(event.target.value.replace(/\D/g, '').slice(0, 10))} /></label>
       <label className="license-phone-field">Email khôi phục<input autoFocus type="email" autoComplete="email" maxLength={254} required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-    </> : <><p>Mã gồm 6 chữ số đã được gửi tới <strong>{masked}</strong>. Mã có hiệu lực trong 10 phút.</p>
+    </> : <><p>Mã gồm 6 chữ số đã được gửi tới <strong>{masked}</strong>. Mã có hiệu lực trong {minutes} phút, hết hạn thì bấm gửi lại mã mới.</p>
       <label className="license-phone-field">Mã xác nhận<input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} pattern="[0-9]{6}" required value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></label>
     </>}
     {message ? <InlineErrorWithSupport className="license-form-error" message={message} /> : null}
@@ -198,7 +208,7 @@ export function LicenseGate({ children }: PropsWithChildren) {
     if (!bridge) return;
     setState((current) => current?.active ? current : { state: 'checking', active: false });
     try { setState(await bridge.initialize()); }
-    catch (error) { setState({ state: 'error', active: false, reason: String((error as { code?: string })?.code || 'internal_error') }); }
+    catch (error) { setState({ state: 'error', active: false, reason: ipcErrorCode(error) }); }
   }
   async function submitPhone(phone: string, email: string) {
     if (!bridge) return;

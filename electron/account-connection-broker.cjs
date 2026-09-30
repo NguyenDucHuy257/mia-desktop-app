@@ -1,6 +1,10 @@
 'use strict';
 
-const TAX_CODE_PATTERN = /^(?:\d{10}(?:-\d{3})?|\d{12})$/;
+// Portal logins are not limited to 10/12-digit tax codes (branch and delegated
+// user accounts such as 0104998537-U001 exist). Keep the same permissive shape
+// as the renderer; the runtime uses the username as a local folder name, so
+// path separators and whitespace stay forbidden.
+const TAX_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 const CONNECTION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 
 class BrokerInputError extends Error {

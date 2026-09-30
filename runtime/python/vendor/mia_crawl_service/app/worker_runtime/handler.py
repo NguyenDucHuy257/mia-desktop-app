@@ -56,8 +56,12 @@ from app.worker_runtime.proxy import EndpointCooldowns, ProxyLease, ProxyRegistr
 
 
 logger = logging.getLogger('mia.worker_runtime')
-AUTH_RETRY_ATTEMPTS = 3
-AUTH_RETRY_DELAYS_SECONDS = (1, 2)
+# Portal hiccups (HTTP 5xx on /api/captcha, 429, timeouts) usually clear within
+# a few minutes. Keep retrying with a growing pause instead of failing the job
+# and flagging the account after three attempts a few seconds apart.
+AUTH_RETRY_ATTEMPTS = 6
+AUTH_RETRY_DELAYS_SECONDS = (5, 15, 30, 60, 120)
+AUTH_RETRY_PROGRESS_INTERVAL_SECONDS = 5
 _PORTAL_TASKS = frozenset({
     'fetch_invoice_overview', 'fetch_invoice_detail', 'fetch_invoice_package'
 })
@@ -146,14 +150,32 @@ class InvoiceCrawlTaskHandler:
                     raise
                 if progress_callback:
                     progress_callback('auth_retry_wait')
-                delay = AUTH_RETRY_DELAYS_SECONDS[attempt - 1]
-                shutdown = getattr(self, '_shutdown_requested', None)
-                if shutdown is not None and shutdown.wait(delay):
-                    raise WorkerShutdownRequested('worker shutdown requested')
+                delay = AUTH_RETRY_DELAYS_SECONDS[
+                    min(attempt - 1, len(AUTH_RETRY_DELAYS_SECONDS) - 1)
+                ]
+                self._wait_before_auth_retry(delay, progress_callback)
                 logger.warning(
                     'Retrying rejected source login worker_id=%s attempt=%s/%s code=%s',
                     self.worker_id, attempt + 1, AUTH_RETRY_ATTEMPTS, code,
                 )
+
+    def _wait_before_auth_retry(self, delay: float, progress_callback=None) -> None:
+        """Sleep in short slices so shutdown and user cancellation stay responsive."""
+        shutdown = getattr(self, '_shutdown_requested', None)
+        deadline = time.monotonic() + max(0.0, float(delay))
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            step = min(AUTH_RETRY_PROGRESS_INTERVAL_SECONDS, remaining)
+            if shutdown is not None:
+                if shutdown.wait(step):
+                    raise WorkerShutdownRequested('worker shutdown requested')
+            else:
+                time.sleep(step)
+            # The pipeline progress hook persists state and raises on cancel.
+            if progress_callback:
+                progress_callback('auth_retry_wait')
 
     def _routes_for_session(self, session_hash: str) -> tuple[str | None, ...]:
         if self.fixed_runtime_route is not ...:
