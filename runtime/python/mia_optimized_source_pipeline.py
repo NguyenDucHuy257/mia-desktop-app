@@ -28,6 +28,7 @@ from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import logging
+import os
 import sqlite3
 import sys
 import time
@@ -40,10 +41,43 @@ if str(VENDOR_ROOT) not in sys.path:
 from app.repositories.invoice_detail_repository import InvoiceDetailRepository
 from app.repositories.invoice_overview_repository import InvoiceOverviewRepository
 from app.repositories.invoice_package_repository import InvoicePackageRepository
+from app.worker_runtime.errors import TaskExecutionError
 from app.worker_runtime.pipeline import InvoiceCrawlPipeline
 
 
 logger = logging.getLogger("mia.desktop_source_pipeline")
+
+
+def _env_int(name: str, default: int, *, minimum: int) -> int:
+    try:
+        return max(minimum, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def scale_crawl_timeouts(config, multiplier: float):
+    """Return a copy of ``CrawlConfig`` with every portal timeout multiplied."""
+    if config is None or multiplier <= 1:
+        return config
+    overview = replace(
+        config.overview,
+        connect_timeout_seconds=config.overview.connect_timeout_seconds * multiplier,
+        page_schedule=tuple(
+            (page_size, read_timeout * multiplier)
+            for page_size, read_timeout in config.overview.page_schedule
+        ),
+    )
+    detail = replace(
+        config.detail,
+        connect_timeout_seconds=config.detail.connect_timeout_seconds * multiplier,
+        read_timeout_seconds=config.detail.read_timeout_seconds * multiplier,
+    )
+    package = replace(
+        config.package,
+        connect_timeout_seconds=config.package.connect_timeout_seconds * multiplier,
+        read_timeout_seconds=config.package.read_timeout_seconds * multiplier,
+    )
+    return replace(config, overview=overview, detail=detail, package=package)
 
 
 def prepare_invoice_database(database_path: Path | str) -> None:
@@ -75,6 +109,15 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
 
     SOURCE_TIMEOUT_RETRY_BASE_SECONDS = 15.0
     SOURCE_TIMEOUT_RETRY_MAX_SECONDS = 60.0
+
+    # Random portal failures (5xx, 429, timeouts, HTML instead of JSON, dropped
+    # connections) must not end the job. Every crawl unit sleeps and retries
+    # with a growing pause, and the portal timeouts are doubled after the first
+    # failure (capped at 4x) before the desktop gives up on that unit.
+    UNIT_RETRY_ATTEMPTS = _env_int("MIA_DESKTOP_UNIT_RETRY_ATTEMPTS", 8, minimum=1)
+    UNIT_RETRY_MIN_DELAY_SECONDS = 5.0
+    UNIT_RETRY_MAX_DELAY_SECONDS = 120.0
+    UNIT_TIMEOUT_MULTIPLIER_CAP = 4.0
 
     def _latest_month_force_slices(self, parameters):
         if parameters.get("sync_mode") != "supplement":
@@ -116,6 +159,9 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         self._desktop_detail_plan = None
         self._desktop_detail_plan_by_month = None
         self._desktop_current_unit = None
+        self._desktop_base_crawl_config = getattr(
+            getattr(self, "core", None), "crawl_config", None
+        )
         originals = self._install_unit_progress_wrappers()
         timeout_attempt = 0
         try:
@@ -153,10 +199,59 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
         finally:
             for name, original in originals.items():
                 setattr(self.core, name, original)
+            self._restore_source_timeouts()
             self._desktop_overview_complete = False
             self._desktop_detail_plan = None
             self._desktop_detail_plan_by_month = None
             self._desktop_current_unit = None
+
+    # ------------------------------------------------------------------
+    # Per-unit sleep/retry for transient portal failures.
+    # ------------------------------------------------------------------
+    def _should_retry_unit(self, error, attempt: int) -> bool:
+        return bool(getattr(error, "retryable", False)) and attempt < self.UNIT_RETRY_ATTEMPTS
+
+    def _unit_retry_delay(self, error, attempt: int) -> float:
+        base = max(
+            self.UNIT_RETRY_MIN_DELAY_SECONDS,
+            float(getattr(error, "retry_delay_seconds", 0) or 0),
+        )
+        return min(base * (2 ** max(0, attempt - 1)), self.UNIT_RETRY_MAX_DELAY_SECONDS)
+
+    def _extend_source_timeouts(self, attempt: int) -> None:
+        base = getattr(self, "_desktop_base_crawl_config", None)
+        if base is None:
+            return
+        multiplier = min(float(2 ** attempt), self.UNIT_TIMEOUT_MULTIPLIER_CAP)
+        self.core.crawl_config = scale_crawl_timeouts(base, multiplier)
+
+    def _restore_source_timeouts(self) -> None:
+        base = getattr(self, "_desktop_base_crawl_config", None)
+        if base is not None and getattr(self, "core", None) is not None:
+            self.core.crawl_config = base
+
+    def _run_unit_with_retry(self, job, stage, operation):
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return operation()
+            except TaskExecutionError as error:
+                if not self._should_retry_unit(error, attempt):
+                    raise
+                delay = self._unit_retry_delay(error, attempt)
+                logger.warning(
+                    "desktop_unit_retry_wait job_id=%s stage=%s attempt=%s/%s "
+                    "code=%s retry_in_seconds=%s",
+                    getattr(job, "job_id", None), stage, attempt,
+                    self.UNIT_RETRY_ATTEMPTS, getattr(error, "code", None), int(delay),
+                )
+                if hasattr(self, "_state"):
+                    self._state["message"] = f"{stage}:retry_wait"
+                    self._persist(force=True)
+                # Interruptible: user cancel/shutdown is honoured while waiting.
+                self._wait_before_source_retry(getattr(job, "job_id", ""), delay)
+                self._extend_source_timeouts(attempt)
 
     def _wait_before_source_retry(self, job_id: str, delay_seconds: float) -> None:
         """Wait for the portal without making cancellation wait for backoff."""
@@ -278,13 +373,12 @@ class OptimizedInvoiceCrawlPipeline(InvoiceCrawlPipeline):
                             self._state["overview_post_total"] = int(total)
                         self._persist(force=True)
                     kwargs["progress_callback"] = overview_progress
-                try:
-                    outcome = _original(job, payload, *args, **kwargs)
-                except Exception:
-                    # Preserve the source retry/lease decision. The current item
-                    # remains running; the terminal job status lets the desktop
-                    # present it as failed only if the source gives up.
-                    raise
+                # Transient source failures sleep and retry here; the current
+                # item remains running. Only after the retry budget is spent
+                # does the source classification reach the durable job status.
+                outcome = self._run_unit_with_retry(
+                    job, _stage, lambda: _original(job, payload, *args, **kwargs)
+                )
                 if _stage == "ensure_xml":
                     state = (
                         "failed"

@@ -3,9 +3,11 @@ import logo from '../../assets/figma/logo.png';
 import type { OfflineAuthState } from '../../lib/runtime-bridge';
 import '../../styles/offline-auth.css';
 import { InlineErrorWithSupport } from '../../components/ExportSupportLogButton';
+import { ipcErrorCode, ipcErrorMessage } from '../../lib/ipc-error';
+import { DEFAULT_RECOVERY_CODE_MINUTES, recoveryCodeMinutes } from '../licensing/LicenseGate';
 
 function errorText(error: unknown) {
-  const value = error as { code?: string; message?: string };
+  const code = ipcErrorCode(error, '');
   const messages: Record<string, string> = {
     offline_password_invalid: 'Mật khẩu phải có từ 8 đến 128 ký tự.',
     offline_password_confirmation_mismatch: 'Mật khẩu xác nhận không khớp.',
@@ -20,7 +22,8 @@ function errorText(error: unknown) {
     recovery_rate_limited: 'Đã yêu cầu quá nhiều mã. Vui lòng thử lại sau.',
     recovery_email_unavailable: 'Không thể gửi email xác nhận lúc này.',
   };
-  return messages[value?.code || ''] || value?.message?.replace(/^\[[^\]]+\]\s*/, '') || 'Không thể xác thực mật khẩu trên máy.';
+  const fallback = 'Không thể xác thực mật khẩu trên máy.';
+  return messages[code] || (code ? fallback : ipcErrorMessage(error)) || fallback;
 }
 
 function PasswordInput({ label, value, onChange, autoComplete, autoFocus = false }: {
@@ -39,6 +42,7 @@ export function PasswordRecovery({ onRecovered, onCancel }: { onRecovered?(state
   const bridge = window.miaRuntime?.offlineAuth;
   const [challenge, setChallenge] = useState('');
   const [maskedEmail, setMaskedEmail] = useState('');
+  const [minutes, setMinutes] = useState(DEFAULT_RECOVERY_CODE_MINUTES);
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -49,7 +53,7 @@ export function PasswordRecovery({ onRecovered, onCancel }: { onRecovered?(state
     setBusy(true); setMessage('');
     try {
       const result = await bridge.requestRecovery();
-      setChallenge(result.challenge_id); setMaskedEmail(result.masked_email);
+      setChallenge(result.challenge_id); setMaskedEmail(result.masked_email); setMinutes(recoveryCodeMinutes(result.expires_in));
     } catch (error) { setMessage(errorText(error)); }
     finally { setBusy(false); }
   }
@@ -67,7 +71,7 @@ export function PasswordRecovery({ onRecovered, onCancel }: { onRecovered?(state
     <div><button type="button" onClick={onCancel}>Hủy</button><button type="button" disabled={busy} onClick={() => void requestCode()}>{busy ? 'Đang gửi…' : 'Gửi mã xác nhận'}</button></div>
   </div>;
   return <form className="offline-recovery-panel" onSubmit={(event) => void recover(event)}>
-    <h2>Tạo mật khẩu mới</h2><p>Nhập mã 6 số đã gửi tới <strong>{maskedEmail}</strong>.</p>
+    <h2>Tạo mật khẩu mới</h2><p>Nhập mã 6 số đã gửi tới <strong>{maskedEmail}</strong>. Mã có hiệu lực trong {minutes} phút, hết hạn thì bấm gửi lại mã mới.</p>
     <div className="offline-password-field"><label>Mã xác nhận</label><span><input autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} /></span></div>
     <PasswordInput label="Mật khẩu mới" value={password} onChange={setPassword} autoComplete="new-password" />
     <PasswordInput label="Nhập lại mật khẩu mới" value={confirmation} onChange={setConfirmation} autoComplete="new-password" />
