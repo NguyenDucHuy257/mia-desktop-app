@@ -1,6 +1,6 @@
 {
   "name": "mia-desktop-app",
-  "version": "4.2.2",
+  "version": "4.2.3",
   "private": true,
   "author": "Nguyễn Đức Huy",
   "description": "MIA TOOL 2026 local desktop client for mia-crawl-service",
