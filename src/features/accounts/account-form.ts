@@ -23,7 +23,11 @@ export interface BulkParseResult {
 }
 
 export const MAX_BULK_ACCOUNTS = 100;
-const TAX_CODE_PATTERN = /^(?:\d{10}(?:-\d{3})?|\d{12})$/;
+// The portal accepts more login formats than the classic 10/12-digit MST
+// (branches, delegated users such as 0104998537-U001, ...). Do not enforce a
+// tax-code shape here; only reject characters that cannot be a login name or a
+// safe local data folder name.
+export const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 
 export function normalizeTaxCode(value: string) {
   return value.trim();
@@ -35,8 +39,8 @@ export function validateCredentials(credentials: AccountCredentials): Credential
 
   if (!username) {
     errors.username = 'Vui lòng nhập mã số thuế.';
-  } else if (!TAX_CODE_PATTERN.test(username)) {
-    errors.username = 'Mã số thuế phải gồm 10 số, 12 số hoặc dạng 10 số-3 số.';
+  } else if (!USERNAME_PATTERN.test(username)) {
+    errors.username = 'Mã số thuế không hợp lệ: chỉ gồm chữ, số và các ký tự . _ @ -, tối đa 64 ký tự.';
   }
 
   if (!credentials.password) {
