@@ -20,6 +20,8 @@ BASE_DIR = Path(__file__).resolve().parent
 EMAIL_RE = re.compile(r"^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$", re.I)
 CODE_RE = re.compile(r"^[0-9]{6}$")
 CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
+# One verification code stays valid for 5 minutes; the client shows this value.
+CODE_TTL_SECONDS = 300
 
 
 class RecoveryError(RuntimeError):
@@ -121,7 +123,7 @@ class RecoveryService:
             code = f"{secrets.randbelow(1_000_000):06d}"
             db.execute(
                 "INSERT INTO recovery_challenges VALUES (?,?,?,?,?,?,?,?,NULL,?)",
-                (challenge_id, device_hash, purpose, email, self._digest(challenge_id, code), now, now + 600, 0, requester_hash),
+                (challenge_id, device_hash, purpose, email, self._digest(challenge_id, code), now, now + CODE_TTL_SECONDS, 0, requester_hash),
             )
             db.commit()
         try:
@@ -131,7 +133,7 @@ class RecoveryService:
                 db.execute("DELETE FROM recovery_challenges WHERE challenge_id=?", (challenge_id,))
                 db.commit()
             raise RecoveryError("recovery_email_unavailable", 503) from error
-        return {"challenge_id": challenge_id, "masked_email": mask_email(email), "expires_in": 600, "resend_after": 60}
+        return {"challenge_id": challenge_id, "masked_email": mask_email(email), "expires_in": CODE_TTL_SECONDS, "resend_after": 60}
 
     def request_contact(self, device_id: str, email: str, requester: str = "") -> dict:
         return self._new_challenge(self._device_hash(device_id), normalize_email(email), "contact", requester)
@@ -185,12 +187,12 @@ class RecoveryService:
         message["Subject"] = f"{code} là mã xác nhận MIA TOOL 2026"
         message["From"] = f"MIA TOOL 2026 <{username}>"
         message["To"] = target
-        message.set_content(f"Mã xác nhận MIA TOOL 2026 của bạn là: {code}. Mã có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.")
+        message.set_content(f"Mã xác nhận MIA TOOL 2026 của bạn là: {code}. Mã có hiệu lực trong {CODE_TTL_SECONDS // 60} phút. Nếu bạn không yêu cầu, hãy bỏ qua email này.")
         message.add_alternative(f"""<!doctype html><html><body style="margin:0;background:#f3f7f4;font-family:Arial,sans-serif;color:#173c29">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:32px 12px">
 <table role="presentation" width="560" style="max-width:100%;background:#fff;border-radius:16px;border:1px solid #dce8e0;box-shadow:0 8px 24px rgba(18,82,49,.08)">
 <tr><td style="padding:30px"><div style="font-size:13px;font-weight:700;color:#168447">MIA TOOL 2026</div>
-<h1 style="font-size:24px;margin:12px 0">Xác nhận khôi phục mật khẩu</h1><p style="color:#52685b;line-height:1.6">Nhập mã dưới đây trong ứng dụng. Mã có hiệu lực trong 10 phút.</p>
+<h1 style="font-size:24px;margin:12px 0">Xác nhận khôi phục mật khẩu</h1><p style="color:#52685b;line-height:1.6">Nhập mã dưới đây trong ứng dụng. Mã có hiệu lực trong {CODE_TTL_SECONDS // 60} phút.</p>
 <div style="margin:24px 0;padding:18px;text-align:center;background:#eff8f2;border-radius:12px;font-size:34px;font-weight:800;letter-spacing:9px;color:#126433">{html.escape(code)}</div>
 <p style="font-size:13px;color:#718078">MIA không bao giờ yêu cầu bạn gửi lại mã này. Nếu bạn không yêu cầu, hãy bỏ qua email.</p></td></tr></table>
 </td></tr></table></body></html>""", subtype="html")
