@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -106,6 +107,11 @@ def classify_task_error(
     if status is not None and 400 <= status < 500:
         return ErrorClassification(f'source_business_http_{status}', False, 0)
 
+    if any(_is_json_decode_error(item) for item in chain):
+        # ``requests.JSONDecodeError`` inherits from OSError. Classify it before
+        # the storage checks: an HTML/empty body on HTTP 200 is a transient
+        # portal response that must be retried, not a local disk failure.
+        return ErrorClassification('source_invalid_response', attempt_count < 8, 15)
     if any(isinstance(item, sqlite3.Error) for item in chain):
         return ErrorClassification('storage_database_failure', True, 20)
     if any(isinstance(item, OSError) for item in chain):
@@ -126,6 +132,10 @@ def classify_task_error(
     if any(marker in text for marker in ('missing', 'does not contain')):
         return ErrorClassification('source_parse_failure', False, 0)
     return ErrorClassification('unexpected_task_failure', False, 0)
+
+
+def _is_json_decode_error(item: BaseException) -> bool:
+    return isinstance(item, json.JSONDecodeError) or type(item).__name__ == 'JSONDecodeError'
 
 
 def _exception_chain(error: BaseException):
