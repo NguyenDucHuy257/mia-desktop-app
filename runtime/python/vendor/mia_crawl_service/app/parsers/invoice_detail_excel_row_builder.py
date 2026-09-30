@@ -157,6 +157,16 @@ def format_vietnamese_date(value: Any) -> str:
     return parsed.strftime('%d/%m/%Y')
 
 
+def _is_invoice_document(data_ct: Mapping[str, Any]) -> bool:
+    """True when the detail body identifies one invoice (symbol + number)."""
+    if not isinstance(data_ct, Mapping):
+        return False
+    return all(
+        str(data_ct.get(key) if data_ct.get(key) is not None else '').strip()
+        for key in ('khhdon', 'shdon')
+    )
+
+
 class InvoiceDetailExcelRowBuilder:
     """Flatten one persisted invoice detail into one row per product/service."""
 
@@ -268,6 +278,13 @@ class InvoiceDetailExcelRowBuilder:
         """Keep a valid empty result distinct from a missing/malformed result."""
         data_ct = self._unwrap_detail(detail_payload)
         products = data_ct.get('hdhhdvu')
+        if products is None:
+            # The portal returns ``hdhhdvu: null`` for invoices that really carry
+            # no line items, e.g. cash-register adjustment invoices (tthai=3)
+            # whose totals are all zero. That is a complete invoice with zero
+            # lines, not a truncated response; only a payload that is not an
+            # invoice object at all stays incomplete.
+            return [], ('valid_empty' if _is_invoice_document(data_ct) else 'incomplete')
         if not isinstance(products, list):
             return [], 'incomplete'
         rows = self.build_rows(detail_payload, detail_record)
