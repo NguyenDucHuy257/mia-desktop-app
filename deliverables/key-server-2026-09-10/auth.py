@@ -622,23 +622,63 @@ def _is_legacy_key_for_tool(tool: str, key: str) -> bool:
 def _ensure_legacy_seed(tool: str, paths: dict[str, Path]) -> None:
     """Merge eligible original rows into the per-tool migration allow-list.
 
-    GSOFT keeps its previous legacy selection unchanged. MIA additionally
-    supports its confirmed lowercase V1 key format. The source vip.txt is never
-    rewritten here, so legacy desktop builds continue to use /verify-key.
+    GSOFT keeps its previous append-only legacy selection unchanged.
+
+    For MIA the snapshot (``legacy_vip.txt``) is only a cache of what support
+    maintains by hand in ``MIA/vip.txt`` and ``MIA<n>/vip.txt``:
+
+    * a row that still exists in a registry is refreshed from it, so a renewed
+      expiry or a changed plan applies on the next verification;
+    * a row that support removed from every registry is dropped, so the device
+      falls back to ``key_not_activated`` (activation screen with its KEYV2)
+      instead of a stale ``legacy_key_expired``;
+    * eligible legacy rows that are not in the snapshot yet are still added.
+
+    The source vip.txt is never rewritten here, so legacy desktop builds
+    continue to use /verify-key.
     """
     legacy_lines = _read_lines(paths["legacy"])
-    existing = {line.split("|", 1)[0].strip() for line in legacy_lines}
-    changed = False
     sources = [paths["vip"], *paths.get("legacy_sources", [])]
+    if tool != "MIA":
+        existing = {line.split("|", 1)[0].strip() for line in legacy_lines}
+        changed = False
+        for line in [row for source in sources for row in _read_lines(source)]:
+            key = line.split("|", 1)[0].strip()
+            if not _is_legacy_key_for_tool(tool, key) or key in existing:
+                continue
+            legacy_lines.append(line)
+            existing.add(key)
+            changed = True
+        if changed or not paths["legacy"].exists():
+            _atomic_write(paths["legacy"], "\n".join(legacy_lines) + ("\n" if legacy_lines else ""))
+        return
+
+    # MIA/vip.txt wins, then MIA<n> in numeric order; first row per key wins.
+    source_by_key: dict[str, str] = {}
     for line in [row for source in sources for row in _read_lines(source)]:
-        key = line.split("|", 1)[0].strip()
-        if not _is_legacy_key_for_tool(tool, key) or key in existing:
+        key = _line_key(line)
+        if key:
+            source_by_key.setdefault(key, line)
+
+    output: List[str] = []
+    seen: set[str] = set()
+    for line in legacy_lines:
+        key = _line_key(line)
+        if not key or key in seen:
             continue
-        legacy_lines.append(line)
-        existing.add(key)
-        changed = True
-    if changed or not paths["legacy"].exists():
-        _atomic_write(paths["legacy"], "\n".join(legacy_lines) + ("\n" if legacy_lines else ""))
+        seen.add(key)
+        source_line = source_by_key.get(key)
+        if source_line is None:
+            # Support deleted this key from every registry: forget it.
+            continue
+        output.append(source_line)
+    for key, line in source_by_key.items():
+        if key in seen or not _is_legacy_key_for_tool(tool, key):
+            continue
+        output.append(line)
+        seen.add(key)
+    if output != legacy_lines or not paths["legacy"].exists():
+        _atomic_write(paths["legacy"], "\n".join(output) + ("\n" if output else ""))
 
 
 def _line_key(line: str) -> str:
@@ -732,14 +772,17 @@ def _reconcile_mia_migrations(
         # rows, the first row in MIA -> snapshot -> MIA<n> order is authoritative.
         selected_line = canonical_lines.get(canonical_key) or first_by_key.get(canonical_key)
         if not selected_line:
-            stored_line = str(migration.get("canonical_line") or "").strip()
-            if "|" in stored_line and _line_key(stored_line) == canonical_key:
-                selected_line = stored_line
-        if not selected_line:
             legacy_line = first_by_key.get(legacy_key)
             if legacy_line and "|" in legacy_line:
                 selected_line = _canonical_line(canonical_key, legacy_line)
         if not selected_line:
+            # Neither the KEYV2 row nor the original legacy row exists in any
+            # registry: support removed this customer's key by hand. Never
+            # resurrect it from the migration snapshot. Forget the migration
+            # so the device is treated as not activated again; the device
+            # binding is kept so re-adding the same KEYV2 row re-activates it.
+            del migrations[legacy_key]
+            migration_changed = True
             continue
 
         # If corrupt state maps more than one legacy key to the same KEYV2,
