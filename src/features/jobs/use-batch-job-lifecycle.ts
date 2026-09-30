@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CreateJobRequest, JobStatusResponse } from '../../lib/api/contracts';
 import type { PersistedJob } from '../../lib/runtime-bridge';
 import { diagnosticLog } from '../../lib/diagnostic-logger';
+import { ipcErrorCode } from '../../lib/ipc-error';
 import { TERMINAL_JOB_STATUSES, backoffDelay } from './job-state-machine';
 import { normalizeBatch } from './batch-scheduler';
 
@@ -37,6 +38,12 @@ export function jobFailureMessage(code?: string) {
   if (code === 'source_token_missing') return 'Cổng hóa đơn không trả về phiên đăng nhập hợp lệ.';
   if (code === 'source_rate_limited') return 'Cổng hóa đơn đang giới hạn truy cập. Vui lòng thử lại sau.';
   if (code?.startsWith('source_http_')) return 'Dịch vụ cổng hóa đơn đang tạm thời không khả dụng.';
+  if (code === 'source_authentication_failed' || code === 'source_auth_wait_timeout') return 'Cổng hóa đơn chưa xác thực được tài khoản. Vui lòng thử lại sau.';
+  if (code === 'source_timeout') return 'Cổng hóa đơn phản hồi quá chậm. Vui lòng thử lại sau.';
+  if (code === 'source_connect_failure' || code === 'proxy_connection_failure') return 'Không kết nối được tới cổng hóa đơn. Vui lòng kiểm tra mạng rồi thử lại.';
+  if (code === 'source_invalid_response') return 'Cổng hóa đơn trả về dữ liệu không hợp lệ. Vui lòng thử lại sau.';
+  if (code === 'source_parse_failure' || code === 'source_schema_failure') return 'Có hóa đơn cổng trả về không đúng định dạng. Vui lòng tải log lỗi gửi kỹ thuật.';
+  if (code === 'storage_database_failure' || code === 'storage_filesystem_failure') return 'Không ghi được dữ liệu xuống máy. Vui lòng kiểm tra ổ đĩa rồi thử lại.';
   if (code === 'portal_auth_failed') return 'Không thể xác thực lại tài khoản.';
   if (code === 'overview_failed') return 'Không thể tải dữ liệu tổng quan.';
   if (code === 'detail_failed') return 'Không thể tải dữ liệu chi tiết.';
@@ -218,7 +225,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
         finishStoppingIfDone();
         return;
       }
-      const code = (error as { code?: string })?.code;
+      const code = ipcErrorCode(error);
       diagnosticLog('job_start_failed', { connection_id: intent.connection_id, code, name: (error as Error)?.name }, 'error');
       updateItems((current) => ({
         ...current,
@@ -305,7 +312,7 @@ export function useBatchJobLifecycle({ hydrateExisting = true }: { hydrateExisti
       const timer = setTimeout(() => { timers.current.delete(timer); void poll(jobId, connectionId, 0, token); }, POLL_MS);
       timers.current.add(timer);
     } catch (error) {
-      const code = (error as { code?: string })?.code;
+      const code = ipcErrorCode(error);
       diagnosticLog('job_poll_failed', { job_id: jobId, connection_id: connectionId, attempt, code }, 'warn');
       if (attempt >= retryLimit.current) {
         updateItems((current) => ({
