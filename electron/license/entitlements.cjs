@@ -6,6 +6,10 @@ const MESSAGES = {
   license_tax_code_denied: 'MST này không nằm trong danh sách được cấp phép của key. Không thể đồng bộ hoặc tải dữ liệu tài khoản này.',
   license_date_denied: 'Key dùng thử chỉ cho phép dữ liệu từ 01/08/2026 đến 31/08/2026. Vui lòng chọn lại khoảng thời gian.',
 };
+// The portal accepts more login formats than the classic 10/12-digit MST
+// (branches, delegated users such as 0303761733-U001, ...). Mirror the account
+// form USERNAME_PATTERN and the key server MST_RE instead of a tax-code shape.
+const TAX_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/;
 function policyError(code) {
   return Object.assign(new Error(MESSAGES[code] || code), { code });
 }
@@ -16,7 +20,7 @@ function validateEntitlements(value) {
   const ids = value.allowed_tax_codes;
   if (value.version !== 1 || !['V', 'VIP'].includes(value.plan) && !trial && !paidLimited
     || value.trial !== Boolean(trial) || !Array.isArray(ids)
-    || ids.some((id) => typeof id !== 'string' || !/^(?:\d{10}|\d{12})(?:-U?\d{3})?$/.test(id))
+    || ids.some((id) => typeof id !== 'string' || !TAX_CODE_PATTERN.test(id))
     || new Set(ids).size !== ids.length
     || (trial && (value.max_tax_codes !== Number(trial[1] || 1) || !ids.length
       || ids.length > value.max_tax_codes || value.date_from !== '2026-08-01' || value.date_to !== '2026-08-31'))

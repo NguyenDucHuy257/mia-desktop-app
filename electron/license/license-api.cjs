@@ -1,12 +1,28 @@
 class LicenseApiError extends Error {
-  constructor(code, message, { status = null, transient = false, requestId = null } = {}) {
+  constructor(code, message, { status = null, transient = false, requestId = null, causeCode = null } = {}) {
     super(message);
     this.name = 'LicenseApiError';
     this.code = code;
     this.status = status;
     this.transient = transient;
     this.requestId = requestId;
+    // Short machine-readable reason for transport failures (ENOTFOUND,
+    // ECONNREFUSED, CERT_HAS_EXPIRED, ...). Never the raw error message.
+    this.causeCode = causeCode;
   }
+}
+
+// Undici wraps socket/TLS failures as TypeError('fetch failed') with the real
+// reason in error.cause; Chromium's net.fetch reports a net:: error message.
+function transportCauseCode(error) {
+  // Node may report an AggregateError (IPv4 + IPv6 attempts); use the first inner code.
+  const inner = Array.isArray(error?.cause?.errors) ? error.cause.errors[0] : null;
+  const candidates = [error?.cause?.code, inner?.code, error?.cause?.errno, error?.code, error?.cause?.name, error?.name];
+  for (const value of candidates) {
+    if (typeof value === 'string' && /^[A-Z0-9_]{3,40}$/i.test(value) && !/^(TypeError|Error)$/.test(value)) return value;
+  }
+  const match = /net::[A-Z0-9_]{3,60}/.exec(String(error?.message || ''));
+  return match ? match[0] : null;
 }
 
 function parseErrorResponse(data) {
@@ -76,7 +92,10 @@ function createLicenseApi({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = 1
     } catch (error) {
       if (error instanceof LicenseApiError) throw error;
       const timeout = error?.name === 'AbortError';
-      throw new LicenseApiError(timeout ? 'license_timeout' : 'license_network_error', timeout ? 'Key verification timed out' : 'Key server is unavailable', { transient: true });
+      throw new LicenseApiError(timeout ? 'license_timeout' : 'license_network_error', timeout ? 'Key verification timed out' : 'Key server is unavailable', {
+        transient: true,
+        causeCode: timeout ? null : transportCauseCode(error),
+      });
     } finally {
       clearTimeout(timer);
     }
@@ -91,4 +110,4 @@ function createLicenseApi({ baseUrl, fetchImpl = globalThis.fetch, timeoutMs = 1
   });
 }
 
-module.exports = { LicenseApiError, createLicenseApi, parseErrorResponse, validateServerUrl };
+module.exports = { LicenseApiError, createLicenseApi, parseErrorResponse, transportCauseCode, validateServerUrl };

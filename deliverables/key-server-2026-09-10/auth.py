@@ -65,7 +65,11 @@ MIA_V1_RE = re.compile(r"^key[0-9a-fA-F]{29}$")
 MIA_V2_PHONE_RE = re.compile(r"^KEY[0-9a-fA-F]{29}0[0-9]{9}$")
 POLICY_RE = re.compile(r"^(VIP|TEST)([1-9][0-9]*)?$", re.IGNORECASE)
 SEMVER_RE = re.compile(r"(?<![0-9])(\d+)\.(\d+)\.(\d+)(?![0-9])")
-MST_RE = re.compile(r"^(?:[0-9]{10}(?:-[0-9]{3})?|[0-9]{12})$")
+# The portal accepts more login formats than the classic 10/12-digit MST
+# (branches, delegated users such as 0303761733-U001, ...). Do not enforce a
+# tax-code shape here; only reject characters that cannot be a login name.
+# Must stay in sync with USERNAME_PATTERN in the desktop account form.
+MST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
 PHONE_RE = re.compile(r"^0[0-9]{9}$")
 TEST_DATE_FROM = "2026-08-01"
 TEST_DATE_TO = "2026-08-31"

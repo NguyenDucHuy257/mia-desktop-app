@@ -303,6 +303,50 @@ class DeliverableServerSecurityTests(unittest.TestCase):
         self.assertFalse(denied["authorized"])
         self.assertEqual(denied["reason"], "mst_not_authorized")
 
+    def test_vip1_row_accepts_portal_login_formats_beyond_plain_tax_codes(self):
+        # Error report 2026-10-01: a VIP1 row scoped to a delegated-user login
+        # such as 0303761733-U001 was rejected with license_policy_invalid.
+        phone = "0908911107"
+        for allowed_mst in ("0303761733-U001", "0104998537-u002", "0100109106-001", "0303761733.KT@x"):
+            with self.subTest(allowed_mst=allowed_mst):
+                (self.base / "MIA" / "vip.txt").write_text(
+                    f"{key(phone)}|VIP1|12/09/2030|{phone}|{allowed_mst}|12/09/2025|\n",
+                    encoding="utf-8",
+                )
+                granted = AUTH.verify_key_v2(
+                    "MIA", key=key(phone), device_id=DEVICE_ID,
+                    phone=phone, hardware=hardware(), legacy_keys=[],
+                    current_version="4.2.3",
+                )
+                self.assertTrue(granted["valid"], granted)
+                self.assertEqual(granted["reason"], "ok")
+                self.assertEqual(granted["entitlements"]["allowed_tax_codes"], [allowed_mst])
+
+                allowed = AUTH.verify_key_v2(
+                    "MIA", key=key(phone), device_id=DEVICE_ID,
+                    phone=phone, hardware=hardware(), legacy_keys=[], mst=allowed_mst,
+                    current_version="4.2.3",
+                )
+                self.assertTrue(allowed["authorized"], allowed)
+
+                denied = AUTH.verify_key_v2(
+                    "MIA", key=key(phone), device_id=DEVICE_ID,
+                    phone=phone, hardware=hardware(), legacy_keys=[], mst="0303761733",
+                    current_version="4.2.3",
+                )
+                self.assertFalse(denied["authorized"])
+                self.assertEqual(denied["reason"], "mst_not_authorized")
+
+        # Characters that can never be a portal login still fail closed.
+        (self.base / "MIA" / "vip.txt").write_text(
+            f"{key(phone)}|VIP1|12/09/2030|{phone}|0303761733/U001|\n", encoding="utf-8",
+        )
+        malformed = AUTH.verify_key_v2(
+            "MIA", key=key(phone), device_id=DEVICE_ID,
+            phone=phone, hardware=hardware(), legacy_keys=[], current_version="4.2.3",
+        )
+        self.assertEqual(malformed["reason"], "license_policy_invalid")
+
     def test_limited_mia_policy_requires_fixed_desktop_version(self):
         for index, plan in enumerate(("VIP1", "TEST1", "TEST"), start=5):
             phone = f"090000100{index}"

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, safeStorage, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, session, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -107,6 +107,11 @@ function licenses() {
       : process.env.MIA_LICENSE_API_URL || process.env.MIA_KEY_SERVER_URL || 'https://gotax.vn';
     api = createLicenseApi({
       baseUrl,
+      // Chromium's network stack honours the Windows proxy settings and the
+      // Windows certificate store (corporate proxies, antivirus TLS inspection).
+      // Node's fetch ignores both and fails with license_network_error on such
+      // machines even though the browser can open the key server.
+      fetchImpl: (input, init) => net.fetch(input, init),
       allowInsecureLocalhost: !app.isPackaged && process.env.MIA_LICENSE_ALLOW_INSECURE_LOCALHOST === 'true',
     });
   }
