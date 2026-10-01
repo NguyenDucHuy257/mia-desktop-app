@@ -60,6 +60,20 @@ describe('license data boundary', () => {
     await expect(vipGuard('source.accounts.create', { username: '0240590043' }, call)).resolves.toBeDefined();
     await expect(vipGuard('source.accounts.create', { username: '0240590044' }, call)).rejects.toMatchObject({ code: 'license_tax_code_denied' });
   });
+  it('accepts portal login formats beyond plain tax codes in allowed_tax_codes', async () => {
+    // Error report 2026-10-01: VIP1 scoped to a delegated user such as 0303761733-U001.
+    for (const id of ['0303761733-U001', '0104998537-u002', '0100109106-001', '0303761733.KT@x', '123456789012']) {
+      const vip1 = { version: 1, plan: 'VIP1', trial: false, max_tax_codes: 1, allowed_tax_codes: [id], date_from: null, date_to: null };
+      expect(validateEntitlements(vip1)).toMatchObject({ allowed_tax_codes: [id] });
+      const vipGuard = guard(vip1);
+      await expect(vipGuard('source.accounts.create', { username: id }, call)).resolves.toBeDefined();
+      await expect(vipGuard('source.accounts.create', { username: '0303761733' }, call)).rejects.toMatchObject({ code: 'license_tax_code_denied' });
+    }
+    for (const id of ['', '0303761733 U001', '-0303761733', 'a'.repeat(65)]) {
+      expect(() => validateEntitlements({ version: 1, plan: 'VIP1', trial: false, max_tax_codes: 1, allowed_tax_codes: [id], date_from: null, date_to: null }))
+        .toThrowError(expect.objectContaining({ code: 'license_policy_invalid' }));
+    }
+  });
   it('returns a useful Vietnamese broker error instead of internal_error', async () => {
     const result = await runBrokerCommand(() => guard()('source.accounts.create', { username: '0987654321' }, call));
     expect(result.error.code).toBe('license_tax_code_denied');

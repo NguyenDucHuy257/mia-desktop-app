@@ -243,7 +243,7 @@ describe('MIA shared-key-server client', () => {
     (setup.instance as any).logger = logger;
     expect((await setup.instance.initialize()).reason).toBe('mia_v2_not_deployed');
     expect(logger.info).toHaveBeenCalledWith('license_init_failed', {
-      code: 'mia_v2_not_deployed', error_type: 'LicenseApiError', status: 400, transient: false,
+      code: 'mia_v2_not_deployed', error_type: 'LicenseApiError', status: 400, transient: false, cause: null,
     });
     expect(JSON.stringify(logger.info.mock.calls)).not.toContain('sensitive upstream detail');
   });

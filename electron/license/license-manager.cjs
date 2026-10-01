@@ -334,6 +334,7 @@ class LicenseManager {
         code: error.code || 'license_request_failed', error_type: error?.name || 'Error',
         status: Number.isInteger(error?.status) ? error.status : null,
         transient: Boolean(error?.transient),
+        cause: error?.causeCode || null,
       });
       this.current = safeState('error', { valid: false, expired: false, reason: 'license_policy_missing' });
       return this.current;
@@ -392,6 +393,7 @@ class LicenseManager {
         error_type: error?.name || 'Error',
         status: Number.isInteger(error?.status) ? error.status : null,
         transient: Boolean(error?.transient),
+        cause: error?.causeCode || null,
       });
       this.current = safeState('error', { reason });
       return this.current;
@@ -422,7 +424,7 @@ class LicenseManager {
       return this.current;
     } catch (error) {
       const reason = error.code || 'license_request_failed';
-      this.log('license_submit_failed', { code: reason, error_type: error?.name || 'Error' });
+      this.log('license_submit_failed', { code: reason, error_type: error?.name || 'Error', cause: error?.causeCode || null });
       this.current = safeState('error', { valid: false, expired: false, reason });
       return this.current;
     }
