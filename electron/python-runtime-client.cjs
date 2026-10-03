@@ -22,6 +22,15 @@ class RuntimeProtocolError extends Error {
   }
 }
 
+// Python logging prefixes every forwarded stderr record with its level
+// ("WARNING mia_optimized_source_pipeline desktop_source_timeout_wait ...").
+// Map it so a transient retry is not exported to support as an ERROR.
+function runtimeStderrLevel(message) {
+  const match = /^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b/.exec(String(message || '').trimStart());
+  if (!match) return 'error';
+  return { DEBUG: 'info', INFO: 'info', WARNING: 'warn', WARN: 'warn' }[match[1]] || 'error';
+}
+
 function sanitizeRuntimeStderr(value) {
   return String(value || '')
     .replace(/\b\d{10,14}\b/g, '[redacted-id]')
@@ -127,7 +136,8 @@ class PythonRuntimeClient {
       const message = sanitizeRuntimeStderr(chunk.toString('utf8'));
       if (!message) return;
       this.stderrTail = sanitizeRuntimeStderr(`${this.stderrTail}\n${message}`);
-      this.logger?.error('python_runtime_stderr', { message });
+      const level = runtimeStderrLevel(message);
+      (this.logger?.[level] || this.logger?.error)?.call(this.logger, 'python_runtime_stderr', { message });
     });
     child.once('error', (error) => {
       this.logger?.error('python_runtime_process_error', { name: error?.name, message: error?.message, stack: error?.stack });
@@ -288,4 +298,5 @@ module.exports = {
   runtimeEnvironment,
   sanitizeRuntimeStderr,
   validateRuntimeNotification,
+  runtimeStderrLevel,
 };

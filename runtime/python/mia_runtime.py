@@ -746,10 +746,22 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
         global _artifact_task
         if data_directory is None:
             raise RpcError(-32011, "storage_not_initialized")
+        task_id = f"artifact_{uuid.uuid4().hex}"
+
+        def batch_activity(_state: Any = None) -> None:
+            # Heartbeat for the inactivity watchdog. Every coordinator state
+            # change (account started, package ready, invoice exported or
+            # skipped, PDF render started) proves the worker is still alive, so
+            # ARTIFACT_TASK_TIMEOUT_SECONDS measures stalls, not total runtime.
+            with _artifact_task_lock:
+                if _artifact_task and _artifact_task.get("task_id") == task_id:
+                    _artifact_task["last_activity_monotonic"] = time.monotonic()
+
         try:
             from mia_artifact_pipeline import ArtifactBatchCoordinator
             coordinator = ArtifactBatchCoordinator(
                 _production_backend(), dict(params), logger=logger,
+                state_callback=batch_activity, activity_callback=batch_activity,
             )
         except (KeyError, TypeError, ValueError):
             raise RpcError(-32602, "invalid_params") from None
@@ -759,11 +771,12 @@ def dispatch(method: str, params: Any) -> tuple[Any, bool]:
                 "running", "cancelling"
             }:
                 raise RpcError(-32064, "artifact_task_active")
-            task_id = f"artifact_{uuid.uuid4().hex}"
+            started = time.monotonic()
             _artifact_task = {
                 "task_id": task_id, "status": "running", "result": None,
                 "error": None, "coordinator": coordinator,
-                "started_monotonic": time.monotonic(),
+                "started_monotonic": started,
+                "last_activity_monotonic": started,
             }
         worker = threading.Thread(
             target=_run_unified_artifact_task,

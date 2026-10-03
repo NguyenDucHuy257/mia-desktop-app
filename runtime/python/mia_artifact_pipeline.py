@@ -933,12 +933,16 @@ class ArtifactBatchCoordinator:
     def __init__(
         self, backend: Any, raw: dict[str, Any], *,
         state_callback: Callable[[dict[str, Any]], None] | None = None,
+        activity_callback: Callable[[], None] | None = None,
         logger: Any | None = None,
     ) -> None:
         self.backend = backend
         self.data_root = Path(backend.data_root)
         self.value = _validate_request(dict(raw), destination=True)
         self.callback = state_callback
+        # Liveness signal for the runtime watchdog. Called on every state
+        # emit and at the start of long steps (package ready, PDF render).
+        self.activity_callback = activity_callback
         self.logger = logger
         self.lock = threading.RLock()
         self.global_cancel = threading.Event()
@@ -997,7 +1001,19 @@ class ArtifactBatchCoordinator:
             values = list(self.failures[connection_id].values())
             return [dict(item) for item in values[offset:offset + limit]], len(values)
 
+    def _touch(self) -> None:
+        # Tests build partial coordinators via __new__; never let the liveness
+        # signal itself raise inside the export path.
+        callback = getattr(self, "activity_callback", None)
+        if callback:
+            try:
+                callback()
+            except Exception:
+                if self.logger is not None:
+                    self.logger.debug("artifact_activity_callback_failed", exc_info=True)
+
     def _emit(self) -> None:
+        self._touch()
         if self.callback:
             self.callback(self.view())
 
@@ -1128,6 +1144,7 @@ class ArtifactBatchCoordinator:
         exported_asset_roots: set[Path] = set()
 
         def ready(target: dict[str, Any], state: str, outcome: str) -> None:
+            self._touch()
             key = target["artifact_key"]
             export_basename = build_invoice_export_basename(target)
             display = " - ".join(str(target.get(name) or "") for name in ("khhdon", "shdon", "nbmst"))
@@ -1348,6 +1365,7 @@ class ArtifactBatchCoordinator:
             if not pdf_cache_valid(self.data_root, tax_code, target["artifact_key"], html_path):
                 if self.logger is not None:
                     self.logger.info("pdf_started invoice_ref=%s", _safe_filename(display)[:80])
+                self._touch()
                 get_renderer(html_path.parent).render_pdf(html_path, pdf_path)
                 _atomic_json(metadata_path, {
                     "artifact_key": target["artifact_key"],

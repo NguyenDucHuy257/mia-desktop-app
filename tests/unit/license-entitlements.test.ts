@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { describe, it, expect, vi } from 'vitest';
 const require = createRequire(import.meta.url);
-const { createLicenseRequestGuard, isLicenseDataRequest, validateEntitlements } = require('../../electron/license/entitlements.cjs');
+const { createLicenseRequestGuard, isLicenseDataRequest, validateEntitlements, localStateErrorCode } = require('../../electron/license/entitlements.cjs');
 const { runBrokerCommand } = require('../../electron/account-connection-broker.cjs');
 const trial = (ids = ['0123456789'], plan = 'TEST1') => ({ version: 1, plan, trial: true,
   max_tax_codes: Number(plan.replace('TEST', '') || 1), allowed_tax_codes: ids,
@@ -22,7 +22,6 @@ describe('license data boundary', () => {
   });
   it('rejects absent policy and trial configurations that silently broaden scope', () => {
     expect(() => validateEntitlements(null)).toThrow();
-    expect(() => validateEntitlements(trial([]))).toThrow();
     expect(() => validateEntitlements(trial(['0123456789', '0987654321']))).toThrow();
     expect(() => validateEntitlements({ ...trial(), date_to: '2026-09-01' })).toThrow();
   });
@@ -51,6 +50,17 @@ describe('license data boundary', () => {
     expect(await createLicenseRequestGuard(() => ({ active: true, reason: 'ok', entitlements: paid }))('results.details', request, call)).toEqual(request);
     expect(await guard()('source.jobs.cancel', { job_id: 'old' }, call)).toEqual({ job_id: 'old' });
   });
+  it('accepts a limited plan whose dynamic quota is not filled yet and keeps it scoped', async () => {
+    expect(validateEntitlements(trial([])).allowed_tax_codes).toEqual([]);
+    const vip20 = { version: 1, plan: 'VIP20', trial: false, max_tax_codes: 20, allowed_tax_codes: [], date_from: null, date_to: null };
+    expect(validateEntitlements(vip20)).toMatchObject({ max_tax_codes: 20, allowed_tax_codes: [] });
+    // Nothing bound yet: every MST is still denied locally. The server binds
+    // the MST when the account is created, then it appears in the list.
+    await expect(guard(vip20)('source.accounts.create', { username: '0123456789' }, call)).rejects.toMatchObject({ code: 'license_tax_code_denied' });
+    await expect(guard(trial([]))('results.details', { connection_id: 'conn_ok' }, call)).rejects.toMatchObject({ code: 'license_tax_code_denied' });
+    await expect(guard({ ...vip20, allowed_tax_codes: ['0123456789'] })('source.accounts.create', { username: '0123456789' }, call)).resolves.toBeDefined();
+    expect(() => validateEntitlements({ ...vip20, plan: 'VIP2', max_tax_codes: 2, allowed_tax_codes: ['1', '2', '3'] })).toThrow();
+  });
   it('preserves existing numbered VIP policies without applying the TEST month', () => {
     expect(validateEntitlements({ version: 1, plan: 'VIP2', trial: false, max_tax_codes: 2, allowed_tax_codes: ['0123456789'], date_from: null, date_to: null })).toMatchObject({ plan: 'VIP2', trial: false });
   });
@@ -73,6 +83,14 @@ describe('license data boundary', () => {
       expect(() => validateEntitlements({ version: 1, plan: 'VIP1', trial: false, max_tax_codes: 1, allowed_tax_codes: [id], date_from: null, date_to: null }))
         .toThrowError(expect.objectContaining({ code: 'license_policy_invalid' }));
     }
+  });
+  it('names a local state write failure instead of blaming the key server', async () => {
+    expect(localStateErrorCode({ reason: 'EPERM' })).toBe('license_local_state_failed');
+    expect(localStateErrorCode({ reason: 'license_network_error' })).toBeNull();
+    const local = createLicenseRequestGuard(() => ({ active: false, state: 'error', reason: 'EPERM' }));
+    await expect(local('results.materialStatus', { connection_id: 'conn_ok' }, call)).rejects.toMatchObject({ code: 'license_local_state_failed' });
+    const remote = createLicenseRequestGuard(() => ({ active: false, state: 'error', reason: 'license_network_error' }));
+    await expect(remote('results.materialStatus', { connection_id: 'conn_ok' }, call)).rejects.toMatchObject({ code: 'license_policy_missing' });
   });
   it('returns a useful Vietnamese broker error instead of internal_error', async () => {
     const result = await runBrokerCommand(() => guard()('source.accounts.create', { username: '0987654321' }, call));
