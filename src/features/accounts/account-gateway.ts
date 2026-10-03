@@ -157,7 +157,9 @@ export function accountErrorMessage(error: unknown) {
   const messages: Record<string, string> = {
     client_update_required: 'Key giới hạn VIP/TEST yêu cầu MIA TOOL 2026 phiên bản 4.0.8 trở lên.',
     license_tax_code_denied: 'MST này không nằm trong danh sách được cấp phép của key VIP/TEST hiện tại. Không thể thêm tài khoản.',
+    license_mst_limit_reached: 'Key đã dùng hết số lượng MST được cấp. Không thể thêm tài khoản mới; vui lòng liên hệ hỗ trợ để nâng gói.',
     license_policy_missing: 'Chưa xác minh được giới hạn tài khoản của key. Vui lòng kiểm tra mạng và thử lại.',
+    license_local_state_failed: 'Không ghi được trạng thái bản quyền trên máy. Kiểm tra quyền thư mục dữ liệu hoặc phần mềm diệt virus rồi thử lại; không cần cấp lại key.',
     license_policy_invalid: 'Cấu hình VIP/TEST và danh sách MST trên máy chủ key không hợp lệ.',
     source_account_data_invalid: 'Dữ liệu tài khoản hoặc phản hồi đăng nhập không đúng định dạng. Kiểm tra Nhật ký runtime để xác định bước đọc dữ liệu bị lỗi.',
     source_captcha_missing: 'Cổng hóa đơn không trả về CAPTCHA đầy đủ. Vui lòng thử lại sau.',

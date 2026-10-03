@@ -4,8 +4,16 @@ const MESSAGES = {
   license_policy_missing: 'Máy chủ chưa trả quyền sử dụng. Cần cập nhật máy chủ key trước khi sử dụng phiên bản này.',
   license_policy_invalid: 'Cấu hình quyền key không hợp lệ. Vui lòng kiểm tra loại key và danh sách MST trên máy chủ.',
   license_tax_code_denied: 'MST này không nằm trong danh sách được cấp phép của key. Không thể đồng bộ hoặc tải dữ liệu tài khoản này.',
+  license_mst_limit_reached: 'Key đã dùng hết số lượng MST được cấp. Không thể thêm tài khoản mới; vui lòng liên hệ hỗ trợ để nâng gói.',
   license_date_denied: 'Key dùng thử chỉ cho phép dữ liệu từ 01/08/2026 đến 31/08/2026. Vui lòng chọn lại khoảng thời gian.',
+  license_local_state_failed: 'Không ghi được trạng thái bản quyền trên máy. Kiểm tra quyền thư mục dữ liệu hoặc phần mềm diệt virus rồi thử lại; không cần cấp lại key.',
 };
+// Node fs error codes (EPERM, EBUSY, EACCES, ENOSPC, ...) stored as the
+// license reason mean a local write failed after the server already answered.
+const LOCAL_FS_CODE = /^E[A-Z0-9]{2,20}$/;
+function localStateErrorCode(state) {
+  return LOCAL_FS_CODE.test(String(state?.reason || '')) ? 'license_local_state_failed' : null;
+}
 // The portal accepts more login formats than the classic 10/12-digit MST
 // (branches, delegated users such as 0303761733-U001, ...). Mirror the account
 // form USERNAME_PATTERN and the key server MST_RE instead of a tax-code shape.
@@ -22,9 +30,11 @@ function validateEntitlements(value) {
     || value.trial !== Boolean(trial) || !Array.isArray(ids)
     || ids.some((id) => typeof id !== 'string' || !TAX_CODE_PATTERN.test(id))
     || new Set(ids).size !== ids.length
-    || (trial && (value.max_tax_codes !== Number(trial[1] || 1) || !ids.length
+    // A limited plan may carry an empty list right after activation: dynamic
+    // quota, the server binds the first max_tax_codes MSTs used on the key.
+    || (trial && (value.max_tax_codes !== Number(trial[1] || 1)
       || ids.length > value.max_tax_codes || value.date_from !== '2026-08-01' || value.date_to !== '2026-08-31'))
-    || (paidLimited && (value.max_tax_codes !== Number(paidLimited[1]) || !ids.length || ids.length > value.max_tax_codes))
+    || (paidLimited && (value.max_tax_codes !== Number(paidLimited[1]) || ids.length > value.max_tax_codes))
     || (!trial && (value.date_from !== null || value.date_to !== null))
     || (!trial && !paidLimited && value.max_tax_codes !== (ids.length || null))) {
     throw policyError('license_policy_invalid');
@@ -44,17 +54,20 @@ function createLicenseRequestGuard(getState) {
   return async (method, params, call) => {
     if (!isLicenseDataRequest(method)) return params;
     const state = getState();
-    if (!state?.active || state.reason !== 'ok') throw policyError('license_policy_missing');
+    if (!state?.active || state.reason !== 'ok') throw policyError(localStateErrorCode(state) || 'license_policy_missing');
     const policy = validateEntitlements(state.entitlements);
     const query = method === 'source.jobs.start' ? params.intent : params;
+    // A limited plan (max_tax_codes set) is always scoped to the MSTs the
+    // server has declared or bound, even while that list is still empty.
+    const restricted = policy.max_tax_codes !== null || policy.allowed_tax_codes.length > 0;
     const checkTaxCode = (id) => {
-      if (policy.allowed_tax_codes.length && !policy.allowed_tax_codes.includes(String(id || '').trim())) {
+      if (restricted && !policy.allowed_tax_codes.includes(String(id || '').trim())) {
         throw policyError('license_tax_code_denied');
       }
     };
     if (query.username) checkTaxCode(query.username);
     const connectionIds = query.connection_ids || (query.connection_id ? [query.connection_id] : []);
-    for (const id of policy.allowed_tax_codes.length ? connectionIds : []) {
+    for (const id of restricted ? connectionIds : []) {
       const account = await call('source.accounts.get', { connection_id: id });
       checkTaxCode(account.username);
     }
@@ -69,4 +82,4 @@ function createLicenseRequestGuard(getState) {
   };
 }
 
-module.exports = { MESSAGES, policyError, validateEntitlements, isLicenseDataRequest, createLicenseRequestGuard };
+module.exports = { MESSAGES, policyError, validateEntitlements, isLicenseDataRequest, createLicenseRequestGuard, localStateErrorCode };

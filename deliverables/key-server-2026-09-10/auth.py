@@ -75,6 +75,12 @@ TEST_DATE_FROM = "2026-08-01"
 TEST_DATE_TO = "2026-08-31"
 MIN_LIMITED_MIA_VERSION = (4, 0, 8)
 MIN_LIMITED_GSOFT_VERSION = (2, 8, 0)
+# Dynamic quota: a limited plan (VIP<N>/TEST<N>) whose field #5 is "o"/empty
+# binds the first N MSTs used on the key and rejects the rest with
+# mst_limit_reached. Desktops older than these floors cannot display or
+# enforce a partially-filled quota, so they receive client_update_required.
+MIN_DYNAMIC_MIA_VERSION = (4, 2, 5)
+MIN_DYNAMIC_GSOFT_VERSION = (2, 9, 1)
 
 
 def _path(relative: str) -> Path:
@@ -430,19 +436,20 @@ def _test_date_state(policy: dict, date_from: str = "", date_to: str = "") -> di
 
 def _entitlements_from_state(
     line: str, paths: dict[str, Path], key: str, policy: dict,
-    *, require_declared_scope: bool = False,
 ) -> dict:
-    declared_msts, unlimited_scope = _declared_msts(line)
+    """Return the desktop entitlement contract.
+
+    Field #5 either declares a fixed MST list, or is ``o``/empty. For a limited
+    policy an empty field #5 means *dynamic quota*: ``allowed_tax_codes`` is
+    the list of MSTs the server has already bound to this key (empty right
+    after activation) and ``max_tax_codes`` is the ceiling.
+    """
+    declared_msts, _unlimited_scope = _declared_msts(line)
     _lines, _records, bound_msts = _binding_state(paths, key)
     allowed = declared_msts or sorted(bound_msts)
     limit = policy["limit"]
-    if limit is not None and (
-            not allowed or len(allowed) > limit
-            or require_declared_scope and unlimited_scope
-    ):
+    if limit is not None and len(allowed) > limit:
         raise ValueError("Invalid limited license MST scope")
-    if policy["test"] and unlimited_scope and not bound_msts:
-        raise ValueError("TEST license requires an MST")
     return {
         "version": 1,
         # Keep the V2 response canonical even when vip.txt still uses the
@@ -467,9 +474,10 @@ def _limited_client_supported(tool: str, policy: dict, current_version: str) -> 
     # explicitly scopes MSTs, old clients must not be allowed to ignore it.
     if policy.get("limit") is None and not policy.get("declared_msts"):
         return True
+    dynamic_quota = policy.get("limit") is not None and not policy.get("declared_msts")
     minimum = {
-        "MIA": MIN_LIMITED_MIA_VERSION,
-        "GSOFT": MIN_LIMITED_GSOFT_VERSION,
+        "MIA": MIN_DYNAMIC_MIA_VERSION if dynamic_quota else MIN_LIMITED_MIA_VERSION,
+        "GSOFT": MIN_DYNAMIC_GSOFT_VERSION if dynamic_quota else MIN_LIMITED_GSOFT_VERSION,
     }.get(tool)
     if minimum is None:
         return True
@@ -541,12 +549,10 @@ def _finalize_v2_response(
         })
         return result
 
-    # Limited plans must be explicitly scoped in field #5. Reject before the
-    # quota helper can create any dynamic mst_bindings row.
-    if policy["limit"] is not None and (
-            not policy["declared_msts"]
-            or len(policy["declared_msts"]) > policy["limit"]
-    ):
+    # A declared field #5 list may never exceed the plan ceiling. An empty
+    # field #5 on a limited plan is the dynamic quota mode: the first N MSTs
+    # used on this key are bound automatically in mst_bindings.txt.
+    if policy["limit"] is not None and len(policy["declared_msts"]) > policy["limit"]:
         result.update({
             "valid": False,
             "license_valid": False,
@@ -582,10 +588,7 @@ def _finalize_v2_response(
     result.update(date_state)
 
     try:
-        result["entitlements"] = _entitlements_from_state(
-            line, paths, key, policy,
-            require_declared_scope=policy["limit"] is not None,
-        )
+        result["entitlements"] = _entitlements_from_state(line, paths, key, policy)
     except ValueError:
         result.update({
             "valid": False, "license_valid": False, "authorized": False,
@@ -1215,14 +1218,10 @@ def verify_key_v2(
                 candidate_policy = _policy_from_line(
                     selected_legacy_line, preserve_bare_test=True,
                 )
-                declared_msts, unlimited_scope = _declared_msts(selected_legacy_line)
+                declared_msts, _unlimited_scope = _declared_msts(selected_legacy_line)
                 candidate_policy["declared_msts"] = declared_msts
-                if candidate_policy["limit"] is not None and (
-                        not declared_msts or len(declared_msts) > candidate_policy["limit"]
-                ):
+                if candidate_policy["limit"] is not None and len(declared_msts) > candidate_policy["limit"]:
                     raise ValueError("Invalid limited license MST scope")
-                if candidate_policy["test"] and unlimited_scope:
-                    raise ValueError("TEST license requires an MST")
             except ValueError:
                 return {
                     "valid": False, "key": expected_key, "device_id": device_id,

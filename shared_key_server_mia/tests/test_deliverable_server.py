@@ -264,18 +264,91 @@ class DeliverableServerSecurityTests(unittest.TestCase):
         self.assertEqual(raised.exception.detail["code"], "recovery_license_invalid")
         self.assertRegex(raised.exception.detail["request_id"], r"^[0-9a-f]{16}$")
 
-    def test_limited_policies_require_an_explicit_scope(self):
+    def test_limited_policies_reject_only_an_over_limit_declared_scope(self):
+        phone = "0900001010"
         for plan in ("VIP1", "TEST1", "TEST"):
-            for scope in ("", "o", f"{MST},0111380276"):
-                with self.subTest(plan=plan, scope=scope):
-                    phone = "0900001010"
+            with self.subTest(plan=plan, scope="over-limit"):
+                (self.base / "MIA" / "vip.txt").write_text(
+                    f"{key(phone)}|{plan}|31/12/2099|SECURITY-QA|{MST},0111380276\n",
+                    encoding="utf-8",
+                )
+                response = self.verify(phone, current_version="4.2.5")
+                self.assertFalse(response["valid"])
+                self.assertEqual(response["reason"], "license_policy_invalid")
+            for scope in ("", "o"):
+                with self.subTest(plan=plan, scope=scope or "<empty>"):
                     (self.base / "MIA" / "vip.txt").write_text(
                         f"{key(phone)}|{plan}|31/12/2099|SECURITY-QA|{scope}\n",
                         encoding="utf-8",
                     )
-                    response = self.verify(phone)
-                    self.assertFalse(response["valid"])
-                    self.assertEqual(response["reason"], "license_policy_invalid")
+                    response = self.verify(phone, current_version="4.2.5")
+                    self.assertTrue(response["valid"], response)
+                    self.assertEqual(response["mst_limit"], 1)
+                    self.assertEqual(response["mst_used"], 0)
+                    self.assertEqual(response["entitlements"]["allowed_tax_codes"], [])
+                    self.assertEqual(response["entitlements"]["max_tax_codes"], 1)
+
+    def test_dynamic_quota_binds_first_msts_then_blocks_the_rest(self):
+        phone = "0900001011"
+        (self.base / "MIA" / "vip.txt").write_text(
+            f"{key(phone)}|VIP2|31/12/2099|SECURITY-QA|o\n", encoding="utf-8",
+        )
+        first, second, third = MST, "0111380276", "0303761733-U001"
+
+        def verify_mst(mst):
+            return AUTH.verify_key_v2(
+                "MIA", key=key(phone), device_id=DEVICE_ID, phone=phone,
+                hardware=hardware(), legacy_keys=[], mst=mst, current_version="4.2.5",
+            )
+
+        bound_first = verify_mst(first)
+        self.assertTrue(bound_first["authorized"], bound_first)
+        self.assertTrue(bound_first["mst_newly_bound"])
+        self.assertEqual((bound_first["mst_used"], bound_first["mst_remaining"]), (1, 1))
+
+        bound_second = verify_mst(second)
+        self.assertTrue(bound_second["authorized"])
+        self.assertEqual((bound_second["mst_used"], bound_second["mst_remaining"]), (2, 0))
+        self.assertEqual(bound_second["entitlements"]["allowed_tax_codes"], sorted([first, second]))
+
+        blocked = verify_mst(third)
+        self.assertFalse(blocked["valid"])
+        self.assertFalse(blocked["authorized"])
+        self.assertEqual(blocked["reason"], "mst_limit_reached")
+        self.assertEqual(blocked["mst_used"], 2)
+
+        again = verify_mst(first)
+        self.assertTrue(again["authorized"])
+        self.assertFalse(again["mst_newly_bound"])
+
+        base = self.verify(phone, current_version="4.2.5")
+        self.assertTrue(base["valid"])
+        self.assertEqual(base["entitlements"]["allowed_tax_codes"], sorted([first, second]))
+        self.assertEqual(base["mst_remaining"], 0)
+
+        bindings = (self.base / "MIA" / "mst_bindings.txt").read_text(encoding="utf-8")
+        self.assertEqual(bindings.count("|VIP2|"), 2)
+        self.assertNotIn(third, bindings)
+
+        # Support later pins the scope by hand: the declared list wins.
+        (self.base / "MIA" / "vip.txt").write_text(
+            f"{key(phone)}|VIP2|31/12/2099|SECURITY-QA|{third}\n", encoding="utf-8",
+        )
+        self.assertTrue(verify_mst(third)["authorized"])
+        self.assertEqual(verify_mst(first)["reason"], "mst_not_authorized")
+
+    def test_dynamic_quota_requires_a_desktop_that_can_show_it(self):
+        phone = "0900001012"
+        (self.base / "MIA" / "vip.txt").write_text(
+            f"{key(phone)}|VIP20|31/12/2099|SECURITY-QA|o\n", encoding="utf-8",
+        )
+        for current_version in ("4.0.8", "4.2.4"):
+            with self.subTest(current_version=current_version):
+                response = self.verify(phone, current_version=current_version)
+                self.assertFalse(response["valid"])
+                self.assertEqual(response["reason"], "client_update_required")
+        self.assertFalse((self.base / "MIA" / "mst_bindings.txt").exists())
+        self.assertTrue(self.verify(phone, current_version="4.2.5")["valid"])
 
     def test_vip1_row_authorizes_only_its_fifth_field_mst(self):
         phone = "0977030925"
@@ -439,13 +512,29 @@ class DeliverableServerSecurityTests(unittest.TestCase):
             f"{gsoft_key}|VIP1|09/09/2031|{phone}|o|\n",
             encoding="utf-8",
         )
-        malformed = AUTH.verify_key_v2(
+        # Taxsoft < 2.9.1 cannot display a dynamic quota: it must update first.
+        old_client = AUTH.verify_key_v2(
             "GSOFT", key=gsoft_key, device_id=device_id, phone=phone,
             hardware=hardware(), legacy_keys=[], mst="0240590043",
             current_version="2.8.0",
         )
-        self.assertFalse(malformed["valid"])
-        self.assertEqual(malformed["reason"], "license_policy_invalid")
+        self.assertFalse(old_client["valid"])
+        self.assertEqual(old_client["reason"], "client_update_required")
+        # Dynamic quota: the first MST used is bound, the next one is blocked.
+        dynamic = AUTH.verify_key_v2(
+            "GSOFT", key=gsoft_key, device_id=device_id, phone=phone,
+            hardware=hardware(), legacy_keys=[], mst="0240590043",
+            current_version="2.9.1",
+        )
+        self.assertTrue(dynamic["authorized"], dynamic)
+        self.assertTrue(dynamic["mst_newly_bound"])
+        blocked = AUTH.verify_key_v2(
+            "GSOFT", key=gsoft_key, device_id=device_id, phone=phone,
+            hardware=hardware(), legacy_keys=[], mst="0240590044",
+            current_version="2.9.1",
+        )
+        self.assertFalse(blocked["valid"])
+        self.assertEqual(blocked["reason"], "mst_limit_reached")
 
     def test_gsoft_vip1_test1_vip_and_test_policy_matrix(self):
         device_id = "gsoft-four-policy-matrix"
@@ -579,7 +668,7 @@ class DeliverableServerSecurityTests(unittest.TestCase):
         self.assertEqual(upgraded["key"], expected)
         self.assertEqual(upgraded["reason"], "interim_v2_upgraded")
 
-    def test_gsoft_bare_test_requires_explicit_field_five_scope(self):
+    def test_gsoft_bare_test_without_scope_binds_one_mst_dynamically(self):
         device_id = "gsoft-test-policy-device"
         phone = "0900001070"
         canonical = AUTH._new_key("GSOFT", device_id, phone)
@@ -590,11 +679,20 @@ class DeliverableServerSecurityTests(unittest.TestCase):
             "GSOFT", key=canonical, device_id=device_id, phone=phone,
             hardware=hardware(), legacy_keys=[], mst=MST,
             date_from="2026-08-01", date_to="2026-08-31",
-            current_version="2.8.0",
+            current_version="2.9.1",
         )
-        self.assertFalse(response["valid"])
-        self.assertEqual(response["reason"], "license_policy_invalid")
-        self.assertFalse((self.base / "GSOFT" / "mst_bindings.txt").exists())
+        self.assertTrue(response["valid"], response)
+        self.assertTrue(response["authorized"])
+        self.assertEqual(response["entitlements"]["allowed_tax_codes"], [MST])
+        self.assertEqual(response["entitlements"]["max_tax_codes"], 1)
+        self.assertTrue((self.base / "GSOFT" / "mst_bindings.txt").exists())
+        blocked = AUTH.verify_key_v2(
+            "GSOFT", key=canonical, device_id=device_id, phone=phone,
+            hardware=hardware(), legacy_keys=[], mst="0111380276",
+            date_from="2026-08-01", date_to="2026-08-31",
+            current_version="2.9.1",
+        )
+        self.assertEqual(blocked["reason"], "mst_limit_reached")
 
     def test_gsoft_keeps_long_device_ids_but_fails_closed_on_bad_state(self):
         device_id = "g" * 129

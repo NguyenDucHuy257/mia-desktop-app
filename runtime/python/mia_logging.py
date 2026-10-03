@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -55,6 +56,33 @@ def _file_handler(filename: Path) -> RotatingFileHandler:
     return handler
 
 
+STDERR_FORMAT = "%(levelname)s %(name)s %(message)s"
+_STDERR_MARKER = "_mia_stderr_handler"
+
+
+def _stderr_handler() -> logging.StreamHandler:
+    """Replace Python's bare ``lastResort`` output for unconfigured loggers.
+
+    Modules outside LOGGER_NAMES (for example the optimized source pipeline)
+    only reach Electron through stderr. Electron maps the leading level token
+    to its own log level, so a retry WARNING is no longer reported as ERROR.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.WARNING)
+    handler.addFilter(RedactingFilter())
+    handler.setFormatter(RedactingFormatter(STDERR_FORMAT))
+    setattr(handler, _STDERR_MARKER, True)
+    return handler
+
+
+def _reset_root_stderr_handler() -> None:
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if getattr(handler, _STDERR_MARKER, False):
+            root.removeHandler(handler)
+    root.addHandler(_stderr_handler())
+
+
 def close_logging() -> None:
     """Detach and close every file handler owned by the desktop runtime loggers."""
     handlers: dict[int, logging.Handler] = {}
@@ -102,5 +130,6 @@ def configure_logging(log_directory: Path, level: str = "INFO") -> logging.Logge
     _reset_logger("mia.job_engine", resolved_level, crawler_handler)
     _reset_logger("app.crawl_diagnostics", resolved_level,
                   _file_handler(log_directory / "crawl-diagnostics.log"))
+    _reset_root_stderr_handler()
 
     return runtime
