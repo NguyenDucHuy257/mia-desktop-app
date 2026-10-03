@@ -322,3 +322,92 @@ class ArtifactExportTaskTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatchExportWatchdogHeartbeatTests(unittest.TestCase):
+    """Error report 2026-10-03: PDF exports were reaped after ~122s although they
+    were still progressing (33/79), because artifacts.batch.start never refreshed
+    last_activity_monotonic."""
+
+    def test_batch_start_heartbeats_watchdog_from_coordinator_activity(self):
+        import mia_artifact_pipeline
+
+        previous = (mia_runtime.data_directory, mia_runtime._artifact_task)
+        captured = {}
+        release = threading.Event()
+
+        class FakeCoordinator:
+            def __init__(self, backend, raw, *, logger=None, state_callback=None, activity_callback=None):
+                captured["state_callback"] = state_callback
+                captured["activity_callback"] = activity_callback
+
+            def run(self):
+                release.wait(5)
+                return {"status": "completed"}
+
+            def view(self):
+                return {"status": "running"}
+
+            def cancel(self, kind=None):
+                release.set()
+
+        try:
+            mia_runtime.data_directory = Path(tempfile.gettempdir())
+            mia_runtime._artifact_task = None
+            with patch.object(mia_artifact_pipeline, "ArtifactBatchCoordinator", FakeCoordinator), \
+                    patch.object(mia_runtime, "_production_backend", return_value=Mock()):
+                started, _ = mia_runtime.dispatch(
+                    "artifacts.batch.start",
+                    {"destination": str(Path(tempfile.gettempdir())), "connection_ids": ["conn_1"], "kinds": ["pdf"]},
+                )
+                task = mia_runtime._artifact_task
+                self.assertEqual(task["task_id"], started["task_id"])
+                self.assertIn("last_activity_monotonic", task)
+                self.assertTrue(callable(captured["state_callback"]))
+                self.assertTrue(callable(captured["activity_callback"]))
+
+                stale = time.monotonic() - mia_runtime.ARTIFACT_TASK_TIMEOUT_SECONDS - 1
+                for heartbeat in (
+                    lambda: captured["state_callback"]({"status": "running"}),
+                    captured["activity_callback"],
+                ):
+                    with mia_runtime._artifact_task_lock:
+                        task["last_activity_monotonic"] = stale
+                    heartbeat()
+                    self.assertGreater(task["last_activity_monotonic"], stale + 1)
+                    mia_runtime._reap_stale_artifact_task()
+                    self.assertEqual(task["status"], "running")
+
+                # Without any heartbeat the inactivity timeout still applies.
+                with mia_runtime._artifact_task_lock:
+                    task["last_activity_monotonic"] = stale
+                mia_runtime._reap_stale_artifact_task()
+                self.assertEqual(task["status"], "failed")
+                self.assertEqual(task["error"], "artifact_export_timeout")
+                self.assertTrue(release.is_set())
+                task["worker"].join(5)
+        finally:
+            mia_runtime.data_directory, mia_runtime._artifact_task = previous
+
+
+class CoordinatorActivityTests(unittest.TestCase):
+    def test_coordinator_reports_activity_on_every_state_emit(self):
+        from mia_artifact_pipeline import ArtifactBatchCoordinator, ArtifactInspector
+
+        with tempfile.TemporaryDirectory() as directory:
+            backend = Mock()
+            backend.data_root = Path(directory)
+            beats = []
+            snapshot = {"accounts": [{
+                "connection_id": "conn_1", "ready": False, "missing_ranges": [],
+                "total": 0, "cached": {"xml": 0, "html": 0, "pdf": 0},
+            }]}
+            with patch.object(ArtifactInspector, "snapshot", return_value=snapshot):
+                result = ArtifactBatchCoordinator(backend, {
+                    "destination": str(Path(directory) / "output"), "connection_ids": ["conn_1"],
+                    "directions": ["purchase"], "kinds": ["pdf"],
+                    "date_from": "2026-01-01", "date_to": "2026-01-31",
+                    "pdf_concurrency": 1,
+                }, activity_callback=lambda: beats.append(time.monotonic())).run()
+            self.assertEqual(result["status"], "completed")
+            self.assertGreaterEqual(len(beats), 2)

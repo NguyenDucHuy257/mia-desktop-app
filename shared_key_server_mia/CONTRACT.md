@@ -77,8 +77,14 @@ Binding/migration JSON vẫn chỉ nằm dưới `/opt/keys_app/MIA`.
 - `TEST` / `TEST1`: tối đa 1 MST khai báo ở trường thứ 5 của dòng key.
 - `TEST2`, `TEST<n>`: tối đa n MST trong danh sách trường thứ 5, phân cách dấu phẩy.
 - Các key TEST chỉ cho phép dữ liệu **01/08/2026–31/08/2026**, độc lập ngày hết hạn key.
-- `VIP1`, `VIP<n>`: không giới hạn ngày dữ liệu, nhưng chỉ cho phép tối đa n MST
-  cụ thể trong danh sách trường thứ 5; không cho phép `o` hoặc scope trống.
+- `VIP1`, `VIP<n>`: không giới hạn ngày dữ liệu, tối đa n MST. Trường thứ 5 là
+  danh sách MST cụ thể (khóa cứng) **hoặc** `o`/trống = quota động (bản sửa
+  03/10/2026): server tự ghi n MST đầu tiên khách thêm vào `mst_bindings.txt`
+  (`mst_newly_bound: true`), MST thứ n+1 trả `mst_limit_reached`;
+  `entitlements.allowed_tax_codes` là danh sách đã ghi, `mst_used`/`mst_remaining`
+  là số đã dùng/còn lại. Quota động yêu cầu MIA ≥ 4.2.5, TAXSOFT ≥ 2.9.1; client
+  cũ nhận `client_update_required`. Nếu sau đó kỹ thuật ghi danh sách MST vào
+  trường 5 thì danh sách đó thắng.
 - Riêng MIA, mọi policy giới hạn (`VIP1+`, `TEST/TEST1+`) yêu cầu desktop gửi
   `current_version` từ `4.0.8` trở lên. Client cũ hoặc thiếu phiên bản nhận
   `client_update_required`; quy tắc này không áp dụng cho GSOFT/Taxsoft.

@@ -6,6 +6,7 @@ const require = (await import('node:module')).createRequire(import.meta.url);
 const {
   PythonRuntimeClient,
   runtimeEnvironment,
+  runtimeStderrLevel,
   validateRuntimeNotification,
 } = require('../../electron/python-runtime-client.cjs');
 
@@ -14,6 +15,17 @@ const fixture = (name: string) => path.join(testDirectory, '..', 'fixtures', 'py
 const PROCESS_TEST_TIMEOUT_MS = 15_000;
 
 describe('PythonRuntimeClient', () => {
+  it('maps the Python logging level prefix of stderr lines to the diagnostics level', () => {
+    // Error report 2026-10-03: desktop_source_timeout_wait is a WARNING retry
+    // in Python but was exported to support as ERROR.
+    expect(runtimeStderrLevel('WARNING mia_optimized_source_pipeline desktop_source_timeout_wait job_id=x attempt=7 retry_in_seconds=60')).toBe('warn');
+    expect(runtimeStderrLevel('INFO mia_runtime started')).toBe('info');
+    expect(runtimeStderrLevel('ERROR app.crawl boom')).toBe('error');
+    expect(runtimeStderrLevel('CRITICAL app.crawl boom')).toBe('error');
+    expect(runtimeStderrLevel('Traceback (most recent call last):')).toBe('error');
+    expect(runtimeStderrLevel('')).toBe('error');
+  });
+
   it('starts, exchanges JSON-RPC messages and shuts down cleanly', async () => {
     const client = new PythonRuntimeClient();
     await client.start();

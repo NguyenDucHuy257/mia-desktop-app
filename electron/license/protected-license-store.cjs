@@ -7,6 +7,27 @@ const LICENSE_FILE = 'license-state.bin';
 const MIGRATION_FILE = 'migration-state.json';
 const FIRST_USE_FILE = 'first-use.txt';
 
+// Windows antivirus/indexing briefly holds freshly written files, which makes
+// the final rename fail with EPERM/EBUSY/EACCES. Error report 2026-10-03.
+const TRANSIENT_FS_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
+const RENAME_ATTEMPTS = 6;
+
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function renameWithRetry(from, to, attempts = RENAME_ATTEMPTS) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      fs.renameSync(from, to);
+      return attempt;
+    } catch (error) {
+      if (!TRANSIENT_FS_CODES.has(error?.code) || attempt >= attempts) throw error;
+      sleepSync(25 * attempt);
+    }
+  }
+}
+
 function atomicWrite(filename, content, mode = 0o600) {
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
   const temporary = `${filename}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
@@ -17,7 +38,12 @@ function atomicWrite(filename, content, mode = 0o600) {
     fs.fsyncSync(descriptor);
     fs.closeSync(descriptor);
     descriptor = undefined;
-    fs.renameSync(temporary, filename);
+    renameWithRetry(temporary, filename);
+  } catch (error) {
+    // Name the file (never its content) so diagnostics can tell which local
+    // state write failed.
+    if (error && typeof error === 'object' && !error.licenseFile) error.licenseFile = path.basename(filename);
+    throw error;
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
@@ -92,4 +118,4 @@ function createProtectedLicenseStore(directory, protector) {
   });
 }
 
-module.exports = { atomicWrite, createProtectedLicenseStore };
+module.exports = { atomicWrite, createProtectedLicenseStore, renameWithRetry, TRANSIENT_FS_CODES };

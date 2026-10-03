@@ -129,6 +129,11 @@ function licenses() {
       .map((directory) => path.join(directory, '__pycache__', 'sdt.txt')),
     logger: electronLog(),
     requireRecoveryEmail: true,
+    // Error report 2026-10-03: every results.materialStatus poll re-verified
+    // with the server (2-3s) and rewrote the license files. Server-side policy
+    // changes still apply within a minute; account create/reconnect and
+    // retry() always verify immediately.
+    verifyIntervalMs: 60_000,
   });
   return licenseManagerInstance;
 }
@@ -517,7 +522,10 @@ function localAccounts() {
       // A server-side VIP -> VIP1/TEST policy change must take effect without
       // relying on a desktop restart or a stale encrypted license snapshot.
       const state = await licenses().verifyTaxCode(username);
-      if (['mst_not_authorized', 'mst_limit_reached', 'invalid_mst'].includes(state.reason)) {
+      if (state.reason === 'mst_limit_reached') {
+        throw Object.assign(new Error('MST quota exhausted.'), { code: 'license_mst_limit_reached' });
+      }
+      if (['mst_not_authorized', 'invalid_mst'].includes(state.reason)) {
         throw Object.assign(new Error('MST is not licensed.'), { code: 'license_tax_code_denied' });
       }
       const guard = createLicenseRequestGuard(() => state);

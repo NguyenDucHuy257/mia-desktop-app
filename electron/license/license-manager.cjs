@@ -107,8 +107,14 @@ function normalizeUpdateInfo(value, currentVersion = '') {
 }
 
 class LicenseManager {
-  constructor({ enabled, store, api, currentVersion = '', securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID(), requireRecoveryEmail = false }) {
+  constructor({ enabled, store, api, currentVersion = '', securityDirectory, ensureIdentity, collectEvidence, logger, now = () => new Date(), legacyPhonePaths = [], createDeviceId = () => crypto.randomUUID(), requireRecoveryEmail = false, verifyIntervalMs = 0 }) {
     this.enabled = Boolean(enabled);
+    // Status polls (results.materialStatus every few seconds) re-enter
+    // initialize(). While the license is active, reuse the last server answer
+    // for this long instead of a 2-3s network round trip plus four file writes.
+    this.verifyIntervalMs = Math.max(0, Number(verifyIntervalMs) || 0);
+    this.lastVerifiedAtMs = null;
+    this.persistFailure = null;
     this.store = store;
     this.api = api;
     this.securityDirectory = securityDirectory;
@@ -131,6 +137,22 @@ class LicenseManager {
   }
 
   log(event, fields = {}) { this.logger?.info?.(event, fields); }
+  warn(event, fields = {}) { (this.logger?.warn || this.logger?.info)?.call(this.logger, event, fields); }
+
+  // The server already granted the license. A failed local write (Windows
+  // EPERM/EBUSY from antivirus or folder permissions) must not be reported as
+  // "server missing policy"; keep the in-memory state and record which file.
+  persistSafely(step, run) {
+    try {
+      return { ok: true, value: run() };
+    } catch (error) {
+      this.persistFailure = { step, code: error?.code || 'unknown', file: error?.licenseFile || null };
+      this.warn('license_persist_failed', {
+        step, code: this.persistFailure.code, file: this.persistFailure.file, error_type: error?.name || 'Error',
+      });
+      return { ok: false, value: null };
+    }
+  }
   status() { return this.current; }
 
   details() {
@@ -214,8 +236,10 @@ class LicenseManager {
     try { firstUseDate = this.store.loadFirstUseDate?.() || null; } catch { firstUseDate = null; }
     if (!firstUseDate) {
       firstUseDate = this.now().toISOString().slice(0, 10);
-      firstUseDate = this.store.saveFirstUseDate?.(firstUseDate) || firstUseDate;
+      const saved = this.persistSafely('first_use', () => this.store.saveFirstUseDate?.(firstUseDate));
+      firstUseDate = saved.value || firstUseDate;
     }
+    this.persistFailure = null;
     this.profile = {
       ...this.profile,
       version: 3,
@@ -227,8 +251,8 @@ class LicenseManager {
         ? { ...response.hardware_profile }
         : { ...this.evidence.hardware },
     };
-    this.store.saveProfile(this.profile);
-    this.store.saveLicense({
+    this.persistSafely('profile', () => this.store.saveProfile(this.profile));
+    this.persistSafely('license', () => this.store.saveLicense({
       version: 2,
       canonical_key: response.key,
       device_id: response.device_id,
@@ -239,8 +263,9 @@ class LicenseManager {
       last_verified_at: this.now().toISOString(),
       source,
       entitlements,
-    });
-    this.store.saveMigrationState({ status: 'completed', reason: source, updated_at: this.now().toISOString() });
+    }));
+    this.persistSafely('migration', () => this.store.saveMigrationState({ status: 'completed', reason: source, updated_at: this.now().toISOString() }));
+    this.lastVerifiedAtMs = Date.now();
     const contactReady = !this.requireRecoveryEmail || (this.profile.email_verified === true && Boolean(this.profile.email));
     this.current = safeState(contactReady ? 'active' : 'email_required', {
       entitlements,
@@ -285,9 +310,13 @@ class LicenseManager {
     return safeState('error', { reason });
   }
 
-  initialize() {
+  initialize({ force = false } = {}) {
     if (!this.enabled) return Promise.resolve(this.current);
     if (this.inFlight) return this.inFlight;
+    if (!force && this.verifyIntervalMs > 0 && this.current.active && this.lastVerifiedAtMs !== null
+        && Date.now() - this.lastVerifiedAtMs < this.verifyIntervalMs) {
+      return Promise.resolve(this.current);
+    }
     this.inFlight = this.initializeOnce().finally(() => { this.inFlight = null; });
     return this.inFlight;
   }
@@ -487,7 +516,7 @@ class LicenseManager {
 
   retry() {
     if (this.current.state === 'activation_required' && this.profile?.phone) return this.submitPhone(this.profile.phone);
-    return this.initialize();
+    return this.initialize({ force: true });
   }
 }
 

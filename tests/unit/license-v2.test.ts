@@ -54,6 +54,7 @@ function createHarness(options: Record<string, any> = {}) {
     legacyPhonePaths: options.legacyPhonePaths || [],
     logger: options.logger || { info: vi.fn() },
     now: () => new Date('2026-08-30T00:00:00.000Z'),
+    ...(options.managerOptions || {}),
   });
   return { directory, instance, server, store };
 }
@@ -67,6 +68,36 @@ function savedLicense(deviceId = FIXTURE_DEVICE_ID, phone = FIXTURE_PHONE) {
 }
 
 describe('MIA License V2 full synthetic acceptance', () => {
+  it('keeps a server-granted license active when a local state file cannot be written', async () => {
+    // Error report 2026-10-03 15:58:46: valid/ok 6/6 hardware, then
+    // license_init_failed EPERM and the UI blamed the key server.
+    const store = memoryStore(savedLicense(), profile());
+    const eperm = Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM', licenseFile: 'license-state.bin' });
+    store.saveLicense = () => { throw eperm; };
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const server = new FakeLicenseServer((request) => activeResponse(request));
+    const harness = createHarness({ server, store, logger });
+    const state = await harness.instance.initialize();
+    expect(state).toMatchObject({ state: 'active', active: true, reason: 'ok' });
+    expect(logger.warn).toHaveBeenCalledWith('license_persist_failed', expect.objectContaining({ step: 'license', code: 'EPERM', file: 'license-state.bin' }));
+    expect(logger.info.mock.calls.some(([event]) => event === 'license_init_failed')).toBe(false);
+    expect(harness.instance.persistFailure).toMatchObject({ step: 'license', code: 'EPERM' });
+  });
+
+  it('reuses the last server answer within verifyIntervalMs and lets retry() force a fresh one', async () => {
+    const server = new FakeLicenseServer((request) => activeResponse(request));
+    const harness = createHarness({ server, store: memoryStore(savedLicense(), profile()), managerOptions: { verifyIntervalMs: 60_000 } });
+    expect((await harness.instance.initialize()).state).toBe('active');
+    expect((await harness.instance.initialize()).state).toBe('active');
+    expect((await harness.instance.initialize()).state).toBe('active');
+    expect(harness.server.requests).toHaveLength(1);
+    expect((await harness.instance.retry()).state).toBe('active');
+    expect(harness.server.requests).toHaveLength(2);
+    // verifyTaxCode (account create) always asks the server.
+    await harness.instance.verifyTaxCode('0123456789');
+    expect(harness.server.requests).toHaveLength(3);
+  });
+
   it('fails closed when an older server omits policy and preserves the existing key', async () => {
     const server = new FakeLicenseServer((request) => activeResponse(request, { entitlements: undefined }));
     const store = memoryStore(savedLicense(), profile());
@@ -250,6 +281,25 @@ describe('MIA License V2 full synthetic acceptance', () => {
     }
   });
 
+  it('records a short transport cause code for network failures without leaking messages', async () => {
+    const cases: Array<[Error, string | null]> = [
+      [Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ENOTFOUND gotax.vn'), { code: 'ENOTFOUND' }) }), 'ENOTFOUND'],
+      [Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' }) }), 'CERT_HAS_EXPIRED'],
+      [Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new AggregateError([Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })], 'all failed')) }), 'ECONNREFUSED'],
+      [new TypeError('net::ERR_CERT_AUTHORITY_INVALID'), 'net::ERR_CERT_AUTHORITY_INVALID'],
+      [new TypeError('connection refused'), null],
+    ];
+    for (const [thrown, cause] of cases) {
+      const api = createLicenseApi({ baseUrl: 'https://gotax.vn', timeoutMs: 10, fetchImpl: vi.fn(async () => { throw thrown; }) });
+      await expect(api.verifyKeyV2({})).rejects.toMatchObject({ code: 'license_network_error', transient: true, causeCode: cause });
+    }
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const api = createLicenseApi({ baseUrl: 'https://gotax.vn', timeoutMs: 10, fetchImpl: vi.fn(async () => { throw cases[0][0]; }) });
+    const harness = createHarness({ server: api, store: memoryStore(savedLicense(), profile()), logger });
+    await harness.instance.initialize();
+    const entry = logger.info.mock.calls.find(([event]) => event === 'license_init_failed');
+    expect(entry?.[1]).toMatchObject({ code: 'license_network_error', cause: 'ENOTFOUND' });
+  });
   it('X/Y: corrupt protected profile and license state are rejected and managers fail closed', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mia-license-corrupt-'));
     directories.push(directory);

@@ -199,3 +199,40 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StderrLevelPrefixTests(unittest.TestCase):
+    """Electron used to log every Python stderr line as ERROR; the level prefix
+    lets it keep WARNING retries (desktop_source_timeout_wait) as warnings."""
+
+    def test_unconfigured_logger_warning_reaches_stderr_with_level_prefix(self):
+        import io
+        import logging
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        import mia_logging
+
+        with tempfile.TemporaryDirectory() as directory:
+            mia_logging.configure_logging(Path(directory))
+            try:
+                buffer = io.StringIO()
+                root = logging.getLogger()
+                handler = next(h for h in root.handlers if getattr(h, mia_logging._STDERR_MARKER, False))
+                with patch.object(handler, "stream", buffer):
+                    logging.getLogger("mia_optimized_source_pipeline").warning(
+                        "desktop_source_timeout_wait job_id=%s attempt=%s retry_in_seconds=%s", "job-1", 7, 60,
+                    )
+                    logging.getLogger("mia_optimized_source_pipeline").info("not_forwarded")
+                lines = buffer.getvalue().splitlines()
+                self.assertEqual(lines, [
+                    "WARNING mia_optimized_source_pipeline desktop_source_timeout_wait job_id=job-1 attempt=7 retry_in_seconds=60",
+                ])
+                # Reconfiguring must not stack a second stderr handler.
+                mia_logging.configure_logging(Path(directory))
+                self.assertEqual(
+                    sum(1 for h in logging.getLogger().handlers if getattr(h, mia_logging._STDERR_MARKER, False)), 1,
+                )
+            finally:
+                mia_logging.close_logging()
